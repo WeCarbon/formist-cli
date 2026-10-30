@@ -209,8 +209,7 @@ def add_parser(sub) -> None:
         help="install a local SKILL.md (+ attachments) as a NEW skill in a space (WRITE)",
         description=(
             "Reads SOURCE/SKILL.md and creates a brand-new Skill in the target "
-            "space (POST .../skills/import, parsed server-side, same "
-            "services.skills.parse_skill_md scripts/sync_default_skills.py used). "
+            "space (POST .../skills/import; the server parses SKILL.md). "
             "Every OTHER file directly under SOURCE is uploaded and registered as "
             "a template attachment (the same mechanism `fm skill-attach` uses).\n\n"
             "SOURCE is a local directory holding SKILL.md, or a .zip of one.\n\n"
