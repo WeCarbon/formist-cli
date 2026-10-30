@@ -1,19 +1,12 @@
-"""``fm skills-add`` / ``fm skills-update`` (``formist_cli/skills.py``): the client
-half of installing/replacing a project's own skill from a local ``SKILL.md``,
-now that ``data/default_skills/`` no longer ships one (2026-09-08: skills are
-data in the database, not files in the code repository; deployments install
-them with fm skills-add and fm skills-update).
+"""Tests for ``fm skills-add`` / ``fm skills-update`` (``formist_cli/skills.py``):
+the client half of installing or replacing a project's own skill from a
+local ``SKILL.md``. Skills are data in the database, not files shipped with
+the code, so deployments install them with these two commands.
 
-Same convention as `tests/test_formist_cli_uploads.py` (this module's own sibling —
-`formist_cli/skills.py` calls straight into `formist_cli/uploads.py`'s
-`upload_file`/`attach_file_to_skill` for attachments): an injected fake
-transport, never a live socket or a mock that merely records "was called".
-
-RED-FIRST: this file, `formist_cli/skills.py`, and the two server routes it talks
-to (`routes/skills.py::import_skill`/`import_skill_update`) did not exist
-before this branch.
-
-Run: uv run pytest tests/test_formist_cli_skills.py -q
+``formist_cli/skills.py`` calls straight into ``formist_cli/uploads.py``'s
+`upload_file`/`attach_file_to_skill` for attachments, so these tests use
+the same convention: an injected fake transport, never a live socket or a
+mock that merely records "was called".
 """
 
 from __future__ import annotations
@@ -144,8 +137,7 @@ def _fake_patch(response: dict):
 
 def _fake_attachment_pair():
     """upload_file/attach_file_to_skill fakes that record the real bytes
-    handed to them: not just "was called" (the project rules' own naming of that
-    trap)."""
+    handed to them, not just that they were called."""
     uploaded = []
     attached = []
 

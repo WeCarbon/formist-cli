@@ -1,10 +1,5 @@
 """``api.stream``: the transport half of ``fm logs``, driven for real.
 
-Its own file, not an addition to ``test_formist_cli_api_and_tokens.py``: ``api.py`` is
-being edited by four lanes at once and a new file cannot conflict with any of them.
-
-WHAT THESE TESTS ARE FOR
--------------------------
 Everything else about ``fm logs`` is tested over a list of strings, which proves
 the parsing and proves nothing about the socket. The one behaviour that only
 exists at the transport is the one that matters most here: **a connection that
@@ -223,7 +218,7 @@ class TestStreamPost:
         assert request.get_method() == "POST"
         assert json.loads(request.data.decode()) == {"content": "hi"}
         # urllib.request.Request.add_header stores under key.capitalize() and
-        # get_header does an EXACT lookup (no capitalize() on the read side) —
+        # get_header does an exact lookup (no capitalize() on the read side),
         # so this has to ask for the same capitalization add_header produced.
         assert request.get_header("Content-type") == "application/json"
         assert request.get_header("Authorization") == "Bearer s3cret"

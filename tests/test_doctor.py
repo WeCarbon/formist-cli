@@ -75,33 +75,31 @@ def test_rollup_exit_code_is_worst_status_not_first():
 
 
 def test_a_health_payload_that_is_not_a_dict_is_not_reported_as_healthy():
-    """A shape ev did not expect is a fact about the deployment, not a pass. The
-    retired we-carbon stack answers 200 with a DIFFERENT health schema, and a
-    rollup that shrugs and prints ok would launder exactly that."""
+    """A shape the client did not expect is a fact about the deployment,
+    not a pass. The retired we-carbon stack answers 200 with a different
+    health schema, and a rollup that shrugs and prints ok would launder
+    exactly that."""
     report = EnvReport.from_health("ae", "OK")
     assert report.status is not Status.OK
 
 
 # --- the credential annotation --------------------------------------------------
 #
-# Found 2026-09-09: `_with_credential` (formist_cli/cli.py) called `tokens.describe`
-# on the STORED credential as though it were a JWT. Since `fm login` moved to the
-# OAuth flow (formist_cli/login.py), every stored access token is opaque
-# (``crst_at_…``, no dots: mcp_app/oauth/provider.py::ACCESS_PREFIX), so
-# `describe` raised `TokenError("not a JWT")` on every real login and `fm doctor`
-# reported "unreadable" for every logged-in user, with no test catching it.
+# Every stored access token from the OAuth login flow is opaque
+# (``crst_at_...``, no dots), so `_with_credential` must describe it, never
+# decode it as a JWT.
 #
-# These store a credential through the SAME path `fm login` uses
-# (`login.store_payload`, mirroring tests/test_formist_cli_login.py) rather than
-# hand-writing a JSON fixture, so the test fails the way a real login would.
+# These store a credential through the same path `fm login` uses
+# (`login.store_payload`) rather than hand-writing a JSON fixture, so the
+# test fails the way a real login would.
 
 
 @pytest.fixture(autouse=True)
 def config_dir(monkeypatch, tmp_path):
-    """Never the operator's ~/.config/evane. Also never a real operator's
-    $FORMIST_TOKEN leaking from the runner's own shell into the "environment
-    origin" tests below."""
-    monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "ev-config"))
+    """Never the operator's real ~/.config/evane. Also never a real
+    operator's $FORMIST_TOKEN leaking from the runner's own shell into the
+    "environment origin" tests below."""
+    monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "fm-config"))
     monkeypatch.delenv(tokens.ENV_TOKEN_VAR, raising=False)
 
 
