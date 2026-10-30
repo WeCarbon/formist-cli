@@ -1,28 +1,18 @@
-"""``fm meeting`` — meeting-bot client operations: refresh a transcript, join now.
+"""``fm meeting`` - meeting-bot client operations: refresh a transcript, join now.
 
-Absorbs two scripts (EV-ABSORB.md §3.1, both "no new endpoint" — an existing
-route already does the work):
+``fm meeting transcript-refresh <task-id> --space <id>`` refreshes one
+task's transcript through ``GET /projects/{id}/meetings/{task_id}/transcript``,
+which already best-effort re-ingests before answering, so this command is
+a bare client, not a re-implementation of the ingest logic. ``--all``
+sweeps every task with a recording by listing meetings first
+(``GET /projects/{id}/meetings``) and refreshing each one whose
+``has_recording`` is true.
 
-* the retired ``ingest_transcript.py`` looped every APPOINTMENT task with a
-  ``bot_id`` in one hardcoded project and force-refreshed its transcript from
-  Attendee. ``fm meeting transcript-refresh <task-id> --space <id>`` does the
-  SAME thing for ONE named task through
-  ``GET /projects/{id}/meetings/{task_id}/transcript`` — that route already
-  best-effort re-ingests before answering (see its own docstring in
-  ``routes/meetings_center.py``), so this command is a bare client, not a
-  re-implementation of the ingest logic. ``--all`` restores the script's
-  "every task with a recording" sweep by listing meetings first
-  (``GET /projects/{id}/meetings``) and refreshing each one whose
-  ``has_recording`` is true.
-
-* the retired ``join_meeting.py`` classified a pasted join URL (Teams/Zoom/Meet)
-  and immediately dispatched a named Attendee bot into it.
-  ``fm meeting join <url> --space <id>`` does the SAME thing through
-  ``POST /projects/{id}/meetings/join-now``
-  (``services/meeting_join.py::join_meeting_now``). Unlike the script — which
-  ran straight through — this is a WRITE that can dispatch a real bot into a
-  live meeting, so it follows ``fm``'s write convention: DRY RUN by default,
-  ``--apply`` to actually do it.
+``fm meeting join <url> --space <id>`` classifies a pasted join URL
+(Teams/Zoom/Meet) and dispatches an Attendee bot into it, through
+``POST /projects/{id}/meetings/join-now``. This can dispatch a real bot
+into a live meeting, so it follows `fm`'s write convention: dry run by
+default, ``--apply`` to actually do it.
 """
 
 from __future__ import annotations
@@ -37,8 +27,8 @@ from formist_cli.cli_support import build_standalone_parser as _build_standalone
 SUBJECTS = ("transcript-refresh", "join")
 
 #: Meetings the server considers "with a recording" carry no `bot_id` in the
-#: list payload (routes/meetings_center.py's `_meeting_dict` publishes
-#: `has_recording`, not the raw id) — this is the field `--all` filters on.
+#: list payload, only a `has_recording` flag; this is the field `--all`
+#: filters on.
 _LIST_PAGE_SIZE = 200
 
 
@@ -128,7 +118,7 @@ def _run_transcript_refresh(ctx: context.Context, args) -> int:
         items = payload.get("items") if isinstance(payload, dict) else None
         items = [i for i in (items or []) if isinstance(i, dict) and i.get("has_recording")]
         if not items:
-            print("0 meeting(s) with a recording — nothing to refresh.")
+            print("0 meeting(s) with a recording, nothing to refresh.")
             return 0
         print(f"refreshing {len(items)} meeting(s) with a recording:")
         for item in items:
@@ -136,7 +126,7 @@ def _run_transcript_refresh(ctx: context.Context, args) -> int:
             try:
                 refreshed = _refresh_one(ctx, task_id)
             except api.ApiError as exc:
-                print(f"- {item.get('subject')} ({task_id}): FAILED — {exc}")
+                print(f"- {item.get('subject')} ({task_id}): FAILED: {exc}")
                 continue
             print(f"- {item.get('subject')} ({task_id}): file_id={refreshed.get('file_id')}")
         return 0
@@ -144,7 +134,7 @@ def _run_transcript_refresh(ctx: context.Context, args) -> int:
     if not args.arg:
         raise MeetingsError(
             "`fm meeting transcript-refresh` needs a task id, or --all.\n"
-            "→ fm meeting transcript-refresh <task-id> --space <id>"
+            "-> fm meeting transcript-refresh <task-id> --space <id>"
         )
     payload = _refresh_one(ctx, args.arg)
     if args.json:
@@ -160,7 +150,7 @@ def _run_transcript_refresh(ctx: context.Context, args) -> int:
 def _run_join(ctx: context.Context, args) -> int:
     if not args.arg:
         raise MeetingsError(
-            "`fm meeting join` needs a URL.\n→ fm meeting join <url> --space <id> [--apply]"
+            "`fm meeting join` needs a URL.\n-> fm meeting join <url> --space <id> [--apply]"
         )
     url = args.arg
     body: dict = {"url": url}
@@ -172,7 +162,7 @@ def _run_join(ctx: context.Context, args) -> int:
     if not args.apply:
         bot_name_note = f", bot_name={args.bot_name!r}" if args.bot_name else ""
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would dispatch a bot into {url!r} in space {ctx.space} ({ctx.target.name})"
             f"{bot_name_note}.\n"
             f"To apply: re-run with --apply.",
@@ -195,7 +185,7 @@ def _run_join(ctx: context.Context, args) -> int:
         else:
             print(f"bot_id={payload.get('bot_id')}")
     if payload.get("dispatch_error"):
-        print(f"DISPATCH FAILED (task IS saved — fix and retry): {payload['dispatch_error']}")
+        print(f"DISPATCH FAILED (task IS saved, fix and retry): {payload['dispatch_error']}")
         return 2
     return 0
 
