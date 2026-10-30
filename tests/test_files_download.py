@@ -1,21 +1,17 @@
-"""``fm files download``: every file under a folder, recursively, into a
-local directory.
+"""Tests for ``fm files download``: every file under a folder, recursively,
+into a local directory.
 
-Its own file, matching `test_formist_cli_files.py`'s own docstring reasoning
-("ENTERED THROUGH cmd_files, NOT the reevaluate half directly": a third
-subcommand is exactly the risk that dispatch line exists to catch, so this
-file goes through `cmd_files` too, never calling `_run_download` directly).
+Goes through ``cmd_files`` rather than calling ``_run_download`` directly,
+matching how the other ``fm files`` subcommand is tested, so a future
+third subcommand cannot silently swallow the dispatch.
 
-WHAT THIS FILE IS ACTUALLY ABOUT. `GET /projects/{id}/files?folder=...`
-(`routes/entities.py::list_files`) exists and is exact-match only: by owner
-directive it deliberately does NOT cascade into subfolders (see
-`formist_cli/files.py`'s module docstring). So `fm files download` cannot use that
-filter for "under a folder, recursively" and instead pages through the WHOLE
-listing and filters by path client-side: the property these tests are built
-around is that this recursive filter is neither too narrow (misses a nested
-file) nor too wide (matches a sibling folder with a similar name prefix).
-
-Run: uv run pytest tests/test_formist_cli_files_download.py -q
+The listing endpoint's folder filter is exact-match only; it deliberately
+does not cascade into subfolders. So ``fm files download`` cannot use
+that filter for "under a folder, recursively" and instead pages through
+the whole listing and filters by path client-side. The property these
+tests are built around is that this recursive filter is neither too
+narrow (misses a nested file) nor too wide (matches a sibling folder with
+a similar name prefix).
 """
 
 from __future__ import annotations

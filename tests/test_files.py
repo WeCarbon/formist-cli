@@ -1,29 +1,24 @@
-"""``fm files reevaluate``: the client half of the file re-evaluation surface.
+"""Tests for ``fm files reevaluate``: the client half of the file
+re-evaluation surface.
 
-⚠️ ENTERED THROUGH ``cmd_files``, NOT ``run``. ``fm files`` carries TWO
-subcommands since the 2026-09-14 main/prod integration: ``merge`` (the prod
-line's duplicate-File repair, D455/D461) and ``reevaluate`` (this one): so the
-module's entry point dispatches on ``args.subject``. Calling the reevaluate
-half directly would stop covering that dispatch, which is the one line where a
-future third subcommand could silently swallow this one.
+Entered through ``cmd_files``, not ``run``: ``fm files`` carries more than
+one subcommand (``merge`` and ``reevaluate``), so the module's entry point
+dispatches on ``args.subject``. Calling the reevaluate half directly
+would stop covering that dispatch, which is the one line where a future
+new subcommand could silently swallow this one.
 
-Absorbs ``scripts/reevaluate_files.py`` (EV-ABSORB.md §3.1, no new endpoint):
-that script re-applied the CURRENT processing criteria to File rows judged
-under older ones, over a direct DB session. ``fm files reevaluate`` does the
-same job through the routes ``services/file_reevaluation.py`` already exposes —
+``fm files reevaluate`` re-applies the current processing criteria to
+File rows judged under older ones:
 
-* no ``--file`` -> ``POST /projects/{id}/files/reevaluate`` (the project-wide
-  sweep, ``ReevaluateSweepRequest``)
-* ``--file <id>`` -> ``POST /projects/{id}/files/{file_id}/reevaluate`` (one
-  row, ``ReevaluateRequest``)
+* no ``--file`` -> ``POST /projects/{id}/files/reevaluate`` (the
+  project-wide sweep)
+* ``--file <id>`` -> ``POST /projects/{id}/files/{file_id}/reevaluate``
+  (one row)
 
-DRY RUN by default on BOTH forms: the sweep route already defaults
-``dry_run: true`` server-side, but the single-file route does NOT
-(``ReevaluateRequest.dry_run: bool = False``), so the CLIENT sends the same
-default on every call rather than inheriting whichever the server happens to
-pick for the shape it was asked to hit.
-
-Run: uv run pytest tests/test_formist_cli_files.py -q
+Dry run by default on both forms: the sweep route already defaults to a
+dry run server-side, but the single-file route does not, so the client
+sends the same default on every call rather than inheriting whichever
+the server happens to pick for the shape it was asked to hit.
 """
 
 from __future__ import annotations
