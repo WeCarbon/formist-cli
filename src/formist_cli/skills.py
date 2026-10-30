@@ -1,43 +1,30 @@
-"""``fm skills-add`` / ``fm skills-update`` — install or replace ONE project's
+"""``fm skills-add`` / ``fm skills-update`` - install or replace ONE project's
 own skill from a local ``SKILL.md`` (+ optional attachments), never from a
 repo-shipped tree.
 
-WHY THIS EXISTS. Owner (2026-09-08, widening D357 from Airtable-only to every
-skill, verbatim): 「所有的 skills 都是 data，都是在数据库里而不是代码 repo 里
-面的」, then, on how a deployment gets a skill's starting text at all
-(verbatim): 「对的，部署的时候可以 ev skills-add 和 ev skills-update，不要把
-skills 放在 repo 里面」. ``data/default_skills/`` was gone for six days
-(D357/DECISIONS.md D366, 2026-09-08) and came back narrowly on 2026-09-14 —
-see ``evtool/default_skills.py``'s module docstring for why, and for the ONE
-new bulk command it added (``fm default-skills install``, a repo-tree reader
-by construction, unlike these two). These two commands stay what they always
-were: the operator's per-space replacement for what a repo-shipped tree used
-to do automatically — they read a ``SKILL.md`` off a LOCAL directory (or a
-``.zip`` of one, never ``data/default_skills/``) and write it into ONE named
-space,
-through the same two routes a member's own "create skill" / "edit skill" UI
-action uses underneath (``routes/skills.py::import_skill`` /
-``import_skill_update``, ``POST``/``PATCH .../skills/{,{id}/}import``) — parsed
-server-side by ``services.skills.parse_skill_md``, never by this module (an
-HTTP client, stdlib only — no ``services/`` import, same rule every other
-``evtool`` module follows).
+Skills are data, stored in the database rather than shipped as files in a
+repo; these two commands are the operator's per-space way to put a skill's
+starting text there. They read a ``SKILL.md`` off a local directory (or a
+``.zip`` of one) and write it into one named space, through the same two
+routes a member's own "create skill" / "edit skill" UI action uses
+underneath, parsed server-side, never by this module (an HTTP client,
+stdlib only).
 
-``skills-add`` ALWAYS creates a new row; ``skills-update`` ALWAYS replaces an
+``skills-add`` always creates a new row; ``skills-update`` always replaces an
 existing one (resolved by id or exact name, the same resolver ``fm get SKILL``
-uses) and never creates a second. Deliberately no bulk "seed every space"
-verb — see ``scratchpad/0908/skills-data/README.md``.
+uses) and never creates a second. Deliberately no bulk "seed every space" verb.
 
-Attachments (any file in SOURCE besides ``SKILL.md``) are registered the SAME
-way ``fm skill-attach`` already does — this module calls that mechanism
+Attachments (any file in SOURCE besides ``SKILL.md``) are registered the same
+way ``fm skill-attach`` already does: this module calls that mechanism
 directly (``formist_cli.uploads.upload_file`` + ``attach_file_to_skill``) rather
 than re-implementing it.
 
-DRY RUN by default, same contract as every other write command here
+Dry run by default, same contract as every other write command here
 (``fm upload``, ``fm skill-attach``); ``--apply`` performs the write.
 
 Run:
-  ev skills-add    --space <id> <dir-or-zip>
-  ev skills-update --space <id> --skill <id-or-name> <dir-or-zip>
+  fm skills-add    --space <id> <dir-or-zip>
+  fm skills-update --space <id> --skill <id-or-name> <dir-or-zip>
 """
 
 from __future__ import annotations
@@ -51,11 +38,9 @@ from pathlib import Path
 
 from formist_cli import api
 
-#: Deliberately NOT named `SKILL_FILENAME` — that name already exists in
-#: `services/skills.py`, and `evtool/` must never import `services/` (pure
-#: HTTP client, stdlib only). Same literal value, two independent constants —
-#: tests/cross_module_drift_baseline.py's own scan would otherwise flag the
-#: name collision as undeclared drift.
+#: Deliberately not named `SKILL_FILENAME`: that name already exists
+#: server-side, and this module must never import server code (pure HTTP
+#: client, stdlib only). Same literal value, two independent constants.
 SKILL_MD_NAME = "SKILL.md"
 
 
@@ -65,7 +50,7 @@ class SkillSourceError(SystemExit):
 
 def _read_skill_dir(path: Path) -> tuple[str, list[Path]]:
     """``(markdown text, [attachment file paths])`` from a directory holding
-    ``SKILL.md`` — every OTHER file directly inside it is an attachment,
+    ``SKILL.md``: every OTHER file directly inside it is an attachment,
     exactly the shape ``fm skill-attach`` registers one file at a time."""
     md_path = path / SKILL_MD_NAME
     if not md_path.is_file():
@@ -79,12 +64,12 @@ def _read_skill_dir(path: Path) -> tuple[str, list[Path]]:
 
 def resolve_source(source: str) -> tuple[str, list[Path], tempfile.TemporaryDirectory | None]:
     """``source`` (a directory, or a ``.zip`` of one) -> ``(markdown,
-    attachments, cleanup)`` — ``cleanup`` is the extracted-zip tempdir the
+    attachments, cleanup)``, where ``cleanup`` is the extracted-zip tempdir the
     caller must ``.cleanup()`` when not ``None``, or ``None`` for a plain
     directory (nothing to clean up).
 
     A zip may wrap its ``SKILL.md`` in one top-level directory (how most zip
-    tools produce one) or not — both are accepted; anything else refuses
+    tools produce one) or not; both are accepted; anything else refuses
     rather than guessing which nested directory was meant.
     """
     path = Path(source)
@@ -123,7 +108,7 @@ def _attach_all(
     reusing ``fm skill-attach``'s own functions rather than a second copy.
 
     ``upload_file``/``attach_file_to_skill`` are injectable (default: the real
-    ``formist_cli.uploads`` functions) — the SAME dependency-injection shape those
+    ``formist_cli.uploads`` functions), the same dependency-injection shape those
     two functions themselves already accept, so a test can pass a fake
     transport all the way through without patching module globals.
     """
@@ -149,9 +134,9 @@ def add_skill_from_source(
     attach_file_to_skill=None,
 ) -> dict:
     """The testable core of ``fm skills-add``: read SOURCE, POST it, attach
-    whatever else SOURCE held. ``post`` is injectable (default: ``formist_cli.api.post``)
-    — the fake-transport convention every other ``evtool`` write command in
-    this test suite uses (see ``tests/test_evtool_uploads.py::FakeServer``)."""
+    whatever else SOURCE held. ``post`` is injectable (default:
+    ``formist_cli.api.post``), the fake-transport convention every other
+    write command in this test suite uses."""
     post = post or api.post
     markdown, attachments, tmp = resolve_source(source)
     try:
@@ -184,8 +169,8 @@ def update_skill_from_source(
     attach_file_to_skill=None,
 ) -> dict:
     """The testable core of ``fm skills-update``: read SOURCE, PATCH the
-    ALREADY-RESOLVED ``skill`` dict (see ``formist_cli.uploads.resolve_skill``),
-    attach whatever else SOURCE held. Never resolves ``skill`` itself — same
+    already-resolved ``skill`` dict (see ``formist_cli.uploads.resolve_skill``),
+    attach whatever else SOURCE held. Never resolves ``skill`` itself: same
     split ``formist_cli.uploads.attach_file_to_skill`` uses, so a caller controls
     exactly when the resolve-by-name network round trip happens."""
     patch = patch or api.patch
@@ -214,8 +199,7 @@ def update_skill_from_source(
 
 
 # ===========================================================================
-# The CLI surface. Per-module `add_parser` is the convention (team-lead
-# ruling, 2026-08-27, see evtool/chats.py).
+# The CLI surface. Per-module `add_parser` is the convention, see chats.py.
 # ===========================================================================
 def add_parser(sub) -> None:
     from formist_cli.cli import _add_env, _add_space
@@ -225,7 +209,7 @@ def add_parser(sub) -> None:
         help="install a local SKILL.md (+ attachments) as a NEW skill in a space (WRITE)",
         description=(
             "Reads SOURCE/SKILL.md and creates a brand-new Skill in the target "
-            "space (POST .../skills/import — parsed server-side, same "
+            "space (POST .../skills/import, parsed server-side, same "
             "services.skills.parse_skill_md scripts/sync_default_skills.py used). "
             "Every OTHER file directly under SOURCE is uploaded and registered as "
             "a template attachment (the same mechanism `fm skill-attach` uses).\n\n"
@@ -246,11 +230,11 @@ def add_parser(sub) -> None:
         help="replace an EXISTING skill's content from a local SKILL.md (+ attachments) (WRITE)",
         description=(
             "Reads SOURCE/SKILL.md and REPLACES --skill's content/description/etc "
-            "in place (PATCH .../skills/{id}/import) — never creates a second "
+            "in place (PATCH .../skills/{id}/import), never creates a second "
             "row. --skill is a skill id (UUID) or its exact name (resolved the "
             "same way `fm get SKILL --name ...` does; refuses on more than one "
             "match). Attachments under SOURCE are uploaded and registered "
-            "additively (existing ones are never removed) — same as "
+            "additively (existing ones are never removed), same as "
             "`fm skill-attach`.\n\n"
             "SOURCE is a local directory holding SKILL.md, or a .zip of one.\n\n"
             "DRY RUN by default: prints what would change and touches nothing. "
@@ -276,7 +260,7 @@ def cmd_skills_add(args) -> int:
         if tmp is not None:
             tmp.cleanup()
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would create a new skill in space {eff.space} ({eff.target.name}) "
             f"from {args.source} ({len(markdown)} chars of {SKILL_MD_NAME}"
             + (f", {len(attachments)} attachment(s)" if attachments else "")
@@ -306,7 +290,7 @@ def cmd_skills_update(args) -> int:
         if tmp is not None:
             tmp.cleanup()
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would replace skill {skill['id']} ({skill.get('name')!r}) in "
             f"space {eff.space} ({eff.target.name}) from {args.source} "
             f"({len(markdown)} chars of {SKILL_MD_NAME}"
