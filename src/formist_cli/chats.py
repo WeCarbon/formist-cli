@@ -1,65 +1,38 @@
-"""Reading an agent run — and never overstating how much of it you read.
+"""Reading an agent run, and never overstating how much of it you read.
 
-WHAT A BACKGROUND AGENT RUN IS
-------------------------------
-Every agent run persists as an ordinary chat: same ``chat``/``chatmessage``
-tables, same transcript, ``kind=BACKGROUND_AGENT`` (``models/Chat.py``). The
-frontend lists them under "BACKGROUND AGENTS" and renders them read-mostly.
+A background agent run persists as an ordinary chat, same tables and
+transcript shape as an interactive conversation, just a different kind.
+They are not uniformly space-wide: a scheduler- or webhook-initiated run is
+workspace-scoped, while a run a person asked for is private to them. Both
+are background agents, so "I can see it in the list" and "I can read its
+transcript" are different questions with different answers, routinely, for
+the same kind of row. A space-wide run is in turn readable only by project
+admins and owners, not by every member, so a member session can see an
+empty list in a space that plainly has agent runs, and nothing is wrong.
+That is a third answer to "why did I see nothing", alongside "no runs
+exist" and "they are someone else's private runs", and it is
+indistinguishable from either without knowing your role.
 
-They are NOT uniformly space-wide. ``services/agent_sessions.py:240-249``:
+This reads the member route rather than the admin one, because the admin
+listing has no privacy predicate and returns metadata only, with no admin
+route for chat messages at all; a listing from there could show a chat
+whose transcript then 404s. The member route lists exactly what the
+transcript route will serve. A 404 on another member's private chat is
+deliberate (never a 403, so the API never reveals that the chat exists),
+and `fm` does not route around it; what it adds is saying so, because a
+404 on an id you were just shown otherwise reads as a broken tool.
 
-    private = triggered_by_user_id is not None
-
-so a scheduler- or webhook-initiated run gets ``user_id=None``,
-``owner_scope=WORKSPACE``, while a run a person asked for gets
-``owner_scope=USER`` and is private to them. Both are background agents. So "I can
-see it in the list" and "I can read its transcript" are different questions with
-different answers, routinely, for the same kind of row.
-
-⚠️ AND SINCE 2026-08-28 A WORKSPACE RUN IS NOT "READABLE BY EVERY MEMBER" — this
-paragraph said so until that date. A space-wide BACKGROUND_AGENT run is readable
-by project ADMINs/OWNERs only (``models/Chat.py::readable_by_sql``,
-``routes/chats.py::get_readable_chat``). So the run of ``fm chats`` that matters
-most is the one where the SPACE has agent runs and YOUR session is not an admin
-of it: the list comes back empty and nothing is wrong. That is a third answer to
-"why did I see nothing", alongside "no runs exist" and "they are someone else's
-private runs", and it is indistinguishable from both without knowing your role.
-
-WHY THIS GOES THROUGH THE MEMBER ROUTE
--------------------------------------
-``GET /admin/spaces/{id}/conversations`` (``routes/admin.py:868``) would show
-more — it has no privacy predicate at all, only ``require_platform_admin`` — but
-it returns METADATA ONLY, and there is no admin route for chat messages. So a
-listing from there can show a chat whose transcript then 404s, which is the
-confusing shape ``evtool/api.py`` exists to translate away. The member route
-(``routes/chats.py:239``) lists exactly what the transcript route will serve,
-carries ``agent_status`` and ``triggered_by_name``, and applies ``?kind=``
-*inside* its privacy predicate rather than over it.
-
-``require_project_member`` (``routes/chats.py:78-96``) has NO platform-admin
-bypass, and ``get_readable_chat`` (``routes/chats.py:108-125``) answers 404 —
-never 403 — for another member's private chat, deliberately, so the API never
-reveals that it exists. ``ev`` does not route around either. What it adds is
-saying so, because a 404 on an id you were just shown reads as a broken tool.
-
-THE FAILURE THIS MODULE IS ACTUALLY BUILT AROUND
-------------------------------------------------
-``list_messages`` pages through ``run_list_query`` → ``parse_pagination``, capped
-at ``MAX_LIMIT = 200`` (``utils/list_query.py:60``). Agent runs exceed that.
-
-``evtool/resolve.py`` rule 2 already names the hazard — *a page is not a table* —
-but the consequence here is worse than there. A resolver that measured its page
-REFUSES; a transcript that measured its page PRINTS, and two hundred turns of
-real transcript are indistinguishable from a whole one. Nothing in the output
-contradicts a confident misreading unless something is put there on purpose.
-
-So completeness is treated as a CLAIM, sourced from ``total`` and from nothing
-else. :attr:`Transcript.complete` is False when ``total`` is absent, because "I
-could not tell" and "it is complete" are different facts — and the natural
-shorthand (``len(messages) >= (total or 0)``) collapses them in the unsafe
+The other thing this module is built around: the message-listing endpoint
+caps a page, and an agent run can exceed it in turns. A page that measured
+itself must say so rather than let a capped page read as the whole
+transcript. So completeness is treated as a claim, sourced from the
+server's reported total and from nothing else. :attr:`Transcript.complete`
+is False when that total is absent, because "I could not tell" and "it is
+complete" are different facts, and the natural shorthand
+(``len(messages) >= (total or 0)``) collapses them in the unsafe
 direction, reporting complete for every truncated page it cannot measure.
 
-Stdlib only — ``ev`` must add no runtime dependency.
+Stdlib only: `fm` must add no runtime dependency.
 """
 
 from __future__ import annotations
@@ -156,20 +129,20 @@ class Transcript:
         lines.append("")
         if self.total is None:
             lines.append(
-                f"⚠️ {len(self.messages)} turn(s) shown. The server reported no "
+                f"{len(self.messages)} turn(s) shown. The server reported no "
                 "total, so fm could not tell whether this is the whole "
                 "transcript.\n"
-                "→ `--all-messages` pages until the server stops adding rows."
+                "-> `--all-messages` pages until the server stops adding rows."
             )
         elif not self.complete:
             lines.append(
-                f"⚠️ showing {len(self.messages)} of {self.total} turns — this "
+                f"showing {len(self.messages)} of {self.total} turns: this "
                 f"transcript is INCOMPLETE. The list endpoint caps a page at "
-                f"{MESSAGE_PAGE} (utils/list_query.py:60).\n"
-                "→ `--all-messages` to page through the rest."
+                f"{MESSAGE_PAGE}.\n"
+                "-> `--all-messages` to page through the rest."
             )
         else:
-            lines.append(f"{self.total} turn(s) — the whole transcript.")
+            lines.append(f"{self.total} turn(s), the whole transcript.")
         return "\n".join(lines)
 
 
@@ -195,11 +168,11 @@ def list_chats(
     offset: int = 0,
     fetch: Fetcher | None = None,
 ) -> tuple[list[dict], int | None]:
-    """The chats this session may READ in ``space``, newest first.
+    """The chats this session may read in ``space``, newest first.
 
-    Filtered server-side. ``routes/chats.py:239`` takes ``?kind=`` and applies it
-    as a view filter *layered on* the privacy predicate — it never widens what is
-    visible. Re-deriving that filter here would both measure the page and put a
+    Filtered server-side. The ``?kind=`` filter is applied as a view filter
+    layered on the privacy predicate; it never widens what is visible.
+    Re-deriving that filter here would both measure the page and put a
     second copy of a rule next to the one the server owns.
     """
     space = require_space_id(space)
@@ -228,14 +201,14 @@ def latest_chat(
 ) -> dict:
     """The most recently updated readable chat, or a refusal.
 
-    Exists to remove a transcription: the common question is "what did the last
-    run do", and answering it by copying a UUID off the line above is the failure
-    ``evtool/resolve.py`` was written to end.
+    Exists to remove a transcription: the common question is "what did the
+    last run do", and answering it by copying a UUID off the line above is
+    the failure this is meant to end.
 
-    The ordering is the SERVER's (``routes/chats.py:288`` — ``updated_at`` desc,
-    then ``created_at`` desc, then ``id``), and this takes the first row rather
-    than re-sorting locally. A second ordering is a second answer, and when the
-    two disagree the operator is shown a different run than the one they asked
+    The ordering is the server's (``updated_at`` desc, then ``created_at``
+    desc, then ``id``), and this takes the first row rather than re-sorting
+    locally. A second ordering is a second answer, and when the two
+    disagree the operator is shown a different run than the one they asked
     for, with nothing indicating it.
     """
     items, _total = list_chats(
@@ -246,7 +219,7 @@ def latest_chat(
         raise ChatsError(
             f"no readable chat{described} in this space ({target.name}).\n"
             "A background run triggered by another member is private to them and "
-            "is not listed here — see `fm chats --help`."
+            "is not listed here, see `fm chats --help`."
         )
     return items[0]
 
@@ -261,20 +234,14 @@ def get_chat(
 ) -> dict:
     """One chat's metadata, translating a 404 into the rule that caused it.
 
-    ⚠️ ``GET /chats/{id}`` returns an ENVELOPE — ``{"chat": {...}, "messages":
-    [...]}`` (``routes/chats.py:366-371``) — not a bare chat, unlike the list
-    endpoint's items. Returning the envelope unwrapped made every field render as
-    ``None``, and no unit test could catch it: the fake fetcher returned whatever
-    shape this module assumed, so the test and the code agreed with each other and
-    not with the server. It was found by running the command.
-
-    Hence the refusal below rather than a ``.get("chat", payload)`` fallback.
-    Accepting both shapes would restore exactly the failure that hid this one — a
-    missing key rendering as a row of ``None`` — and the next envelope change
-    would again be invisible. The ``messages`` the envelope carries are the
-    RECENT tail (``_recent_messages``, capped, no ``total``) and are deliberately
-    ignored: a transcript comes from the paginated endpoint, which can say how
-    much of it you have.
+    ``GET /chats/{id}`` returns an envelope, ``{"chat": {...}, "messages":
+    [...]}``, not a bare chat, unlike the list endpoint's items. This
+    refuses rather than falling back to ``.get("chat", payload)``, because
+    accepting both shapes would let a mismatch between the two render every
+    field as ``None`` instead of raising. The ``messages`` the envelope
+    carries are a capped recent tail with no ``total`` and are deliberately
+    ignored: a transcript comes from the paginated endpoint, which can say
+    how much of it you have.
     """
     space = require_space_id(space)
     fetch = fetch or _default_fetch
@@ -292,10 +259,8 @@ def get_chat(
         raise ChatsError(
             f"chat {chat_id}: the response has no 'chat' object "
             f"(keys: {sorted(payload)}).\n"
-            "GET /chats/{id} is expected to return {'chat': ..., 'messages': ...} "
-            "(routes/chats.py:366-371). Refusing rather than rendering every "
-            "field as None, which is how the previous shape mismatch stayed "
-            "invisible."
+            "GET /chats/{id} is expected to return {'chat': ..., 'messages': ...}. "
+            "Refusing rather than rendering every field as None."
         )
     return chat
 
@@ -312,9 +277,9 @@ def fetch_messages(
 ) -> Transcript:
     """A chat's turns, and whether they are all of them.
 
-    One page by default. A transcript is the largest thing this tool prints and
-    the endpoint caps a page anyway, so paging is opt-in — but a partial result is
-    always MARKED partial, which is the part that is not optional.
+    One page by default. A transcript is the largest thing this tool prints
+    and the endpoint caps a page anyway, so paging is opt-in, but a partial
+    result is always marked partial, which is the part that is not optional.
     """
     space = require_space_id(space)
     fetch = fetch or _default_fetch
@@ -354,9 +319,10 @@ def fetch_messages(
 def _explain_404(exc: Exception, target: Target, chat_id: str) -> None:
     """Re-raise a 404 as the access rule behind it. Anything else is left alone.
 
-    Only a 404 carries this meaning. Attaching the privacy explanation to any
-    other status would be a confident wrong answer, which costs more than the bare
-    status it replaced — the operator stops looking for the real cause.
+    Only a 404 carries this meaning. Attaching the privacy explanation to
+    any other status would be a confident wrong answer, which costs more
+    than the bare status it replaced: the operator stops looking for the
+    real cause.
     """
     from formist_cli import api
 
@@ -366,32 +332,29 @@ def _explain_404(exc: Exception, target: Target, chat_id: str) -> None:
         f"404 from {target.name} for chat {chat_id}.\n"
         "This is one of two things, and the server will not say which:\n"
         "  - no such chat in this space; or\n"
-        "  - the chat is PRIVATE to another member (owner_scope=USER, user_id "
+        "  - the chat is private to another member (owner_scope=USER, user_id "
         "not you).\n"
         "\n"
-        "The second is deliberate. routes/chats.py:108-125 answers 404 rather "
-        "than 403 so the API never reveals that another member's private chat "
-        "exists, and require_project_member (routes/chats.py:78-96) has NO "
-        "platform-admin bypass — being a platform admin does not widen this.\n"
+        "The second is deliberate: the API answers 404 rather than 403 so it "
+        "never reveals that another member's private chat exists, and being a "
+        "platform-admin does not widen this.\n"
         "\n"
-        "A background run is private when a person triggered it "
-        "(services/agent_sessions.py:240-249); scheduler- and webhook-initiated "
-        "runs are WORKSPACE-scoped. Both are BACKGROUND_AGENT rows, so this 404 "
-        "is an ordinary outcome, not an edge case.\n"
+        "A background run is private when a person triggered it directly; "
+        "scheduler- and webhook-initiated runs are workspace-scoped instead. "
+        "Both are background-agent rows, so this 404 is an ordinary outcome, "
+        "not an edge case.\n"
         "\n"
-        "Since 2026-08-28 a WORKSPACE background run is also 404 unless your "
-        "session is an ADMIN or OWNER of the space (project role, not "
-        "is_platform_admin). If `fm chats` shows you no runs at all in a space "
-        "that plainly has them, that is the likeliest reason.\n"
-        "→ `fm chats` lists what this session may actually read."
+        "A workspace-scoped background run is also 404 unless your session is "
+        "an admin or owner of the space. If `fm chats` shows you no runs at "
+        "all in a space that plainly has them, that is the likeliest reason.\n"
+        "-> `fm chats` lists what this session may actually read."
     ) from None
 
 
 # ===========================================================================
-# The CLI surface. Per-module `add_parser` is the convention (team-lead ruling,
-# 2026-08-27): it is the shape that survives a three-way merge, because adding a
-# command then costs cli.py ONE line instead of a forty-line block that two lanes
-# both land in the same place. This batch demonstrated the failure twice.
+# The CLI surface. Per-module `add_parser` is the convention: it is the shape
+# that survives a three-way merge, since adding a command then costs the
+# top-level parser one line instead of a block two branches both land in.
 # ===========================================================================
 def add_parser(sub) -> None:
     import argparse
@@ -401,19 +364,19 @@ def add_parser(sub) -> None:
         "chats",
         help="list a space's chats / agent runs, or read one's transcript",
         description=(
-            "Every agent run persists as a chat (models/Chat.py), so this reads "
-            "both the BACKGROUND AGENTS list and an interactive conversation.\n\n"
-            "Omit the id to LIST; give one to SHOW it. --messages adds the "
+            "Every agent run persists as a chat, so this reads both the "
+            "background agents list and an interactive conversation.\n\n"
+            "Omit the id to list; give one to show it. --messages adds the "
             "transcript.\n\n"
-            "Scope: this reads the MEMBER route, so it shows exactly what your "
-            "session may read — your own chats plus every WORKSPACE-scoped one. A "
-            "background run someone else triggered is private to them "
-            "(services/agent_sessions.py:240-249) and answers 404, deliberately, "
-            "so the API never reveals it exists. Platform-admin does NOT bypass "
-            "that; there is no admin route for chat messages at all.\n\n"
-            "A transcript can be long and the list endpoint caps a page at 200 "
-            "(utils/list_query.py:60). A partial transcript is always MARKED "
-            "partial; --all-messages pages through the rest."
+            "Scope: this reads the member route, so it shows exactly what your "
+            "session may read: your own chats plus every workspace-scoped one. A "
+            "background run someone else triggered is private to them and "
+            "answers 404, deliberately, so the API never reveals it exists. "
+            "Platform-admin does not bypass that; there is no admin route for "
+            "chat messages at all.\n\n"
+            "A transcript can be long and the list endpoint caps a page at 200. "
+            "A partial transcript is always marked partial; --all-messages "
+            "pages through the rest."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -443,7 +406,7 @@ def add_parser(sub) -> None:
 
 
 def cmd_chats(args) -> int:
-    """List the space's chats, or show one — and never overstate a transcript.
+    """List the space's chats, or show one, and never overstate a transcript.
 
     Listing and showing are one command because they are one question asked at two
     zoom levels, and because the id that identifies a chat comes from the listing
@@ -451,14 +414,14 @@ def cmd_chats(args) -> int:
     case ("what did the last run do"), and prints the id it resolved to so the
     answer is checkable.
 
-    There is no resolve-by-title. Chat titles are auto-generated and duplicate
-    heavily — every run of one connector sync shares a title — so `resolve.py`'s
-    exactly-one-or-refuse rule would correctly refuse almost every time, which is a
-    command that looks broken rather than one that is careful.
+    There is no resolve-by-title. Chat titles are auto-generated and
+    duplicate heavily, since every run of one connector sync shares a
+    title, so an exactly-one-or-refuse rule would correctly refuse almost
+    every time, which is a command that looks broken rather than one that
+    is careful.
     """
-    # Lazy, like evtool/diff.py: `cli` imports this module, so a
-    # module-level import here would be a cycle. One provenance banner
-    # in the tool, not one per command.
+    # Lazy: `cli` imports this module, so a module-level import here would
+    # be a cycle.
 
     eff = context.resolve(args, need_space=True, need_token=True)
     token = eff.token
@@ -467,7 +430,7 @@ def cmd_chats(args) -> int:
     if args.latest:
         if chat_id:
             raise ChatsError(
-                "give a chat id or --latest, not both — they are two ways of "
+                "give a chat id or --latest, not both; they are two ways of "
                 "naming the same argument, and if they disagree there is no "
                 "sensible winner."
             )
@@ -548,7 +511,7 @@ def _list_chats(args, eff, token) -> int:
     # measured itself must not read as the table.
     if isinstance(total, int) and total > len(items):
         print(
-            f"\nshowing {len(items)} of {total} — raise --limit to see more.",
+            f"\nshowing {len(items)} of {total}, raise --limit to see more.",
             file=sys.stderr,
         )
     return 0
