@@ -1,37 +1,27 @@
-"""``fm users`` — platform user rows, over routes that already exist.
-
-Step 1 of retiring ``az containerapp exec``. The operator read ``public.user`` and
-``project_user_rel`` through the exec channel, at roughly one call per two minutes
-and with a 404-on-oversize failure mode. Both are already served:
+"""``fm users`` - platform user rows, over routes that already exist.
 
   GET /admin/users              every user, paginated
   GET /admin/users/{id}         one user
   GET /admin/users/{id}/spaces  their memberships, with region and role
 
-So this is a CLIENT and not an endpoint, which is why it is first: it retires the
-row-read half of the throttle with no server change and therefore no server risk.
+The defect this command can fall into is not the HTTP call: it is a
+report that is true about what it fetched and false about what exists.
+``/admin/users`` is paginated and capped by ``MAX_LIMIT``, so printing 50
+rows without saying there are 312 tells an operator the platform has 50
+users. Every number on screen is real and the conclusion is wrong.
 
-WHAT THIS COMMAND CAN GET WRONG, AND WHAT STOPS IT
-----------------------------------------------------
-Not the HTTP call. The defect available here is **a report that is true about what
-it fetched and false about what exists**: ``/admin/users`` is paginated and capped
-by ``MAX_LIMIT``, so printing 50 rows without saying there are 312 tells an operator
-the platform has 50 users. Every number on screen is real and the conclusion is
-wrong — the shape of ``applied_ids``, and of the bulk endpoint's ``changed`` field
-before it was fixed.
+:func:`render_list` therefore reports shown and total together, and names
+the flag that widens the view. It also stays quiet when nothing was
+truncated: an alarm that fires when nothing is wrong is an alarm nobody
+reads, and then it is not there for the case that matters.
 
-:func:`render_list` therefore reports SHOWN and TOTAL together, and names the flag
-that widens the view. It also stays quiet when nothing was truncated: an alarm that
-fires when nothing is wrong is an alarm nobody reads, and then it is not there for
-the case that matters.
+What the surface cannot do is said in ``--help`` because the operator
+meets that and not this file. ``/admin/users`` takes ``limit``/``offset``
+and nothing else: there is no ``q``. An empty page therefore does not
+mean "no such user", and a ``--help`` that stayed silent would invite
+exactly that reading.
 
-⚠️ WHAT THE SURFACE CANNOT DO, said in ``--help`` because the operator meets that
-and not this file. ``/admin/users`` takes ``limit``/``offset`` and NOTHING ELSE —
-there is no ``q``. An empty page therefore does not mean "no such user", and a
-``--help`` that stayed silent would invite exactly that reading.
-
-Follows ``routes/admin_instance.py``'s shape deliberately: report what can be
-known, and label how far each field can be trusted.
+Reports what can be known, and labels how far each field can be trusted.
 """
 
 from __future__ import annotations
@@ -51,7 +41,7 @@ SUBJECTS = (
 )
 DEFAULT_SUBJECT = "list"
 
-#: WRITE subjects — resolved with ``for_write=True`` (never inherits ``--env``
+#: Write subjects, resolved with ``for_write=True`` (never inherits ``--env``
 #: from ``fm use``), same reasoning as every other mutating command in this CLI.
 _WRITE_SUBJECTS = frozenset({"create", "set", "add-space", "remove-space"})
 
@@ -71,7 +61,7 @@ def canonical_subject(subject: str | None) -> str:
             "  show         one user by id\n"
             "  spaces       a user's space memberships, with region and role\n"
             "  grants       every credential this deployment holds for them (admin)\n"
-            "  create       provision a user by email (no password — magic-link/OAuth)\n"
+            "  create       provision a user by email (no password, magic-link/OAuth)\n"
             "  set          update name and/or --platform-admin on/off\n"
             "  add-space    assign (or re-role) a user in a space\n"
             "  remove-space unassign a user from a space"
@@ -146,7 +136,7 @@ def render_grants(payload: dict) -> str:
 
 
 def render_membership_change(payload: dict, *, removed: bool) -> str:
-    """The result of ``add-space`` / ``remove-space`` — an operator-facing line,
+    """The result of ``add-space`` / ``remove-space``, an operator-facing line,
     not a raw dict, because the interesting fact (which role, which space) is
     two keys the server already named."""
     if removed:
@@ -169,40 +159,35 @@ _HELP = "platform user rows: list, show one, or list a user's spaces (admin)"
 
 _DESCRIPTION = """Read platform user rows over the admin API.
 
-Replaces the `az containerapp exec` route to `public.user` and `project_user_rel`,
-which cost a ~120s-throttled round trip per query and answered 404 when the command
-exceeded ~1800 characters.
+THESE ROWS LIVE IN THE GLOBAL DATABASE regardless of which region a space
+is in: auth is not per-region. Pointing this at a regional API and seeing
+nothing would mean the admin surface is not served there, never that the
+user is absent. /admin is Global-only and `fm` refuses to send it
+elsewhere before opening a socket.
 
-⚠️ THESE ROWS LIVE IN THE **GLOBAL** DATABASE regardless of which region a space is
-in — auth is not per-region. Pointing this at a regional API and seeing nothing
-would mean the admin surface is not served there, never that the user is absent.
-/admin is Global-only and ev refuses to send it elsewhere before opening a socket.
+THERE IS NO SERVER-SIDE SEARCH. `/admin/users` accepts limit and offset and
+nothing else: no `q`, no email filter. So an empty page means "not on this
+page", NOT "no such user". Page with --offset, or pipe --json to a filter.
 
-⚠️ THERE IS NO SERVER-SIDE SEARCH. `/admin/users` accepts limit and offset and
-nothing else — no `q`, no email filter. So an empty page means "not on this page",
-NOT "no such user". Page with --offset, or pipe --json to a filter.
-
-Every listing reports how many rows it showed AND how many exist, because a page
-of 50 printed on its own reads as a platform with 50 users.
+Every listing reports how many rows it showed AND how many exist, because a
+page of 50 printed on its own reads as a platform with 50 users.
 
 WRITES (``create`` / ``set`` / ``add-space`` / ``remove-space``)
 ------------------------------------------------------------------
-These reach the SAME mutating ``/admin/users*`` routes the admin panel uses —
-D224 (2026-09-06): 「所有 admin 功能都要用 ev cli 可用」, all admin functionality
-must be reachable from ``ev``. Every mutating ``/admin`` route is wrapped in
-``AuditedAdminRouter`` (``routes/admin.py``), so each of these writes a
-``platform_audit_log`` row on the server regardless of which client called it —
-that is a server-side property, not something this CLI has to arrange.
+These reach the same mutating ``/admin/users*`` routes the admin panel
+uses. Every mutating ``/admin`` route writes a ``platform_audit_log`` row
+on the server regardless of which client called it; that is a server-side
+property, not something this CLI has to arrange.
 
-None of the four has a server-side dry run (unlike ``fm space-plan`` / ``ev
-i18n-backfill``, which were built with one) — each takes effect immediately, the
-same as clicking the equivalent button in the admin panel. ``--env`` therefore
-NEVER inherits from ``fm use`` on a write, same rule as everywhere else in this
-CLI: a write must be told, not remembered.
+None of the four has a server-side dry run (unlike ``fm space-plan``,
+which was built with one): each takes effect immediately, the same as
+clicking the equivalent button in the admin panel. ``--env`` therefore
+never inherits from ``fm use`` on a write, same rule as everywhere else in
+this CLI: a write must be told, not remembered.
 
-⚠️ ``set --platform-admin off`` on your OWN account is refused by the server
-(``cannot-self-demote``); revoking the platform's LAST admin is refused too
-(``last-platform-admin``) — both errors are printed verbatim, not swallowed.
+``set --platform-admin off`` on your own account is refused by the server
+(``cannot-self-demote``); revoking the platform's last admin is refused too
+(``last-platform-admin``); both errors are printed verbatim, not swallowed.
 """
 
 
@@ -230,7 +215,7 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--name", default=None, help="`create`/`set`: display name")
     parser.add_argument(
         "--platform-admin", dest="platform_admin", choices=("on", "off"), default=None,
-        help="`set`: grant/revoke User.is_platform_admin — the highest-blast-radius "
+        help="`set`: grant/revoke User.is_platform_admin, the highest-blast-radius "
              "flag on this whole surface",
     )
     parser.add_argument(
@@ -255,9 +240,9 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
 def build_standalone_parser() -> argparse.ArgumentParser:
     """The same parser, detached, so ``--help`` can be asserted in a test.
 
-    See :func:`formist_cli.cli_support.build_standalone_parser` for why the body lives
-    there — this stays a one-line, no-argument wrapper so
-    ``tests/test_evtool_users.py`` keeps calling ``users.build_standalone_parser()``.
+    See :func:`formist_cli.cli_support.build_standalone_parser` for why the
+    body lives there; this stays a one-line, no-argument wrapper so callers
+    keep calling ``users.build_standalone_parser()``.
     """
     return _build_standalone_parser(add_parser)
 
@@ -266,15 +251,13 @@ def run(args) -> int:
     subject = canonical_subject(getattr(args, "subject", None))
     if subject in _WRITE_SUBJECTS:
         return _run_write(subject, args)
-    # ⚠️ need_token is REDUNDANT for this command and kept on purpose. Every read
+    # need_token is redundant for this command and kept on purpose. Every read
     # below goes through api.admin_get, which has its own "no stored session"
-    # refusal — so a mutation removing this changes nothing observable, and it
-    # SURVIVED the mutation batch for exactly that reason. That is the layered
-    # guard GATE.md describes: covered, not dead.
+    # refusal, so removing this changes nothing observable here.
     #
-    # It stays because this is one command in a series, and the next ones (ev files,
-    # ev cache) reach api.get, which does NOT guard. A resolver that refuses for
-    # some commands and not others is the drift this module was extracted to end.
+    # It stays because this is one command in a series, and other commands
+    # reach api.get, which does not guard. A resolver that refuses for some
+    # commands and not others is the drift this module was extracted to end.
     ctx = context.resolve(args, need_token=True)
 
     params: dict[str, str] = {}
@@ -292,7 +275,7 @@ def run(args) -> int:
     if not user_id:
         raise UsersError(
             f"`fm users {subject}` needs a user id.\n"
-            "→ `fm users list` prints them (id is the last column)."
+            "-> `fm users list` prints them (id is the last column)."
         )
 
     if subject == "show":
@@ -316,7 +299,7 @@ def run(args) -> int:
 
 
 def _run_write(subject: str, args) -> int:
-    """The four mutating subjects. Resolved ``for_write=True`` — see the module
+    """The four mutating subjects. Resolved ``for_write=True``, see the module
     docstring: none of these has a server-side dry run, so ``--env`` must be told
     on every call rather than inherited from ``fm use``."""
     ctx = context.resolve(args, for_write=True, need_token=True)
@@ -336,7 +319,7 @@ def _run_write(subject: str, args) -> int:
     if not user_id:
         raise UsersError(
             f"`fm users {subject}` needs a user id.\n"
-            "→ `fm users list` prints them (id is the last column)."
+            "-> `fm users list` prints them (id is the last column)."
         )
 
     if subject == "set":
@@ -361,7 +344,7 @@ def _run_write(subject: str, args) -> int:
     if not space:
         raise UsersError(
             f"`fm users {subject}` needs --space <uuid>.\n"
-            "→ `fm spaces --host evane` prints them."
+            "-> `fm spaces --host evane` prints them."
         )
     space = require_space_id(space)
 
@@ -389,7 +372,7 @@ def _as_dict(payload: object) -> dict:
     """:func:`formist_cli.cli_support.as_dict`, bound to this command's error type.
 
     The body moved to ``cli_support`` when ``fm space-plan`` needed the identical
-    check; this stays as the one-line binding so the call sites here are unchanged
-    and ``tests/test_evtool_users.py`` keeps asserting on ``users._as_dict``.
+    check; this stays as the one-line binding so the call sites here, and callers
+    asserting on ``users._as_dict`` directly, are unchanged.
     """
     return _shared_as_dict(payload, what="/admin/users", error=UsersError)
