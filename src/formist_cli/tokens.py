@@ -1,31 +1,29 @@
-"""Session-token storage for ``fm`` — on disk at 0600, never on a terminal.
+"""Session-token storage for ``fm``: on disk at 0600, never on a terminal.
 
-Why this exists at all: during recent sessions a live prod owner session JWT was
-pasted into a chat transcript twice. A token that has to be handed around by hand
-ends up in scrollback, in history, and in transcripts. ``fm login`` puts it in a
-file only this user can read; ``fm logout`` removes it. Nothing here ever prints a
-token, and :func:`describe_meta` deliberately returns metadata rather than the
-credential.
+A token that has to be handed around by hand ends up in scrollback, in
+history, and in transcripts. ``fm login`` puts it in a file only this
+user can read; ``fm logout`` removes it. Nothing here ever prints a
+token, and :func:`describe_meta` deliberately returns metadata rather
+than the credential.
 
-The file is per-environment, so a local token can never be sent to prod by
-accident — the target picks the file, not the other way round.
+The file is per-environment, so a local token can never be sent to prod
+by accident: the target picks the file, not the other way round.
 
-The access token itself is OPAQUE (``crst_at_…`` — see
-``mcp_app/oauth/provider.py::ACCESS_PREFIX``): since ``fm login`` became an OAuth
-client (evtool/login.py) there is nothing in it to decode, which is exactly what
-makes it revocable. Anything worth reporting about a stored credential — expiry,
-scopes, who issued it — was already written to the metadata beside it at the
-moment ``fm login``/refresh minted it (:func:`formist_cli.login.store_payload`); see
-:func:`describe_meta`, which reads that instead of the token.
+The access token itself is opaque (``crst_at_...``): since ``fm login``
+is an OAuth client there is nothing in it to decode, which is exactly
+what makes it revocable. Anything worth reporting about a stored
+credential (expiry, scopes, who issued it) was already written to the
+metadata beside it at the moment ``fm login``/refresh minted it
+(:func:`formist_cli.login.store_payload`); see :func:`describe_meta`,
+which reads that instead of the token.
 
-THE ONE EXCEPTION TO "ON DISK, NEVER ON A TERMINAL": ``$EVANE_TOKEN`` (see
-:func:`env_token`). D301 (二 = C, owner decision 2026-09-09) sanctioned exactly one
-credential environment variable, for CI / unattended machines that have no browser
-to run ``fm login`` in. It is read fresh on every invocation, wins over whatever is
-on disk for that call, and is never written to a file and never refreshed — a CI
-token that expires gets re-issued by whoever owns it, the same as the file-based
-one needs a fresh ``fm login`` after 30 days. See evtool/login.py's module
-docstring for the argument the owner heard and accepted anyway.
+The one exception to "on disk, never on a terminal" is ``$EVANE_TOKEN``
+(see :func:`env_token`): one credential environment variable, for CI and
+unattended machines that have no browser to run ``fm login`` in. It is
+read fresh on every invocation, wins over whatever is on disk for that
+call, and is never written to a file and never refreshed; a CI token
+that expires gets re-issued by whoever owns it, the same as the
+file-based one needs a fresh ``fm login`` after 30 days.
 """
 
 from __future__ import annotations
@@ -49,12 +47,10 @@ CONFIG_DIR_VAR = "FORMIST_CONFIG_DIR"
 def config_dir() -> Path:
     """``$FORMIST_CONFIG_DIR``, else ``$XDG_CONFIG_HOME/formist``, else ``~/.config/formist``.
 
-    PUBLIC, and the only implementation. `evtool/prefs.py` had a line-for-line copy
-    whose docstring read "same directory as the tokens, resolved the same way" — a
-    promise that nothing enforced, in the one place where drift is not cosmetic:
-    this resolves WHERE THE CREDENTIALS LIVE. Two copies means `fm logout` could
-    one day clear a directory that `fm login` did not write to, and the symptom is
-    a token that survives a logout.
+    Public, and the only implementation: this resolves where the
+    credentials live, and a second copy of this logic elsewhere would risk
+    `fm logout` one day clearing a directory that `fm login` did not write
+    to, with the symptom being a token that survives a logout.
     """
     explicit = os.environ.get(CONFIG_DIR_VAR)
     if explicit:
@@ -74,11 +70,7 @@ def token_path(env: str) -> Path:
     return config_dir() / f"token-{_file_key(env)}.json"
 
 
-#: The ONE credential environment variable D301 (二 = C) sanctions. No CURIST_
-#: fallback: unlike the EVANE_*/CURIST_* pairs elsewhere in this repo (each one a
-#: rename of a var that was already deployed under the old brand), this name never
-#: existed under ``CURIST_`` — there is no live secret to stay compatible with, so
-#: only the primary name is read (project rules: EVANE_* is primary for anything new).
+#: The one credential environment variable this CLI reads.
 ENV_TOKEN_VAR = "FORMIST_TOKEN"
 
 #: The origin :func:`load_for` reports when the credential came from
@@ -90,15 +82,13 @@ ENV_TOKEN_ORIGIN = "env"
 
 
 def _looks_like_a_session_jwt(value: str) -> bool:
-    """True for a 3-segment dot-separated value — the shape the OLD pasted-browser
-    credential had (and ``EVANE_ADMIN_TOKEN`` still has, in scripts/watch_events.sh).
-    An `fm login` token is opaque (``crst_at_…``, no dots at all — see
-    ``mcp_app/oauth/provider.py::ACCESS_PREFIX``), so this shape is never a
-    legitimate value here.
+    """True for a 3-segment dot-separated value, the shape an old pasted-browser
+    credential had. An `fm login` token is opaque (``crst_at_...``, no dots at
+    all), so this shape is never a legitimate value here.
 
-    Refusing it is the one guard code can actually run: ``ev`` cannot tell a stolen
-    *opaque* token from a legitimate one — that is what "opaque" means — but it CAN
-    tell that a JWT landed in the wrong variable, which would hand `ev` a 7-day
+    Refusing it is the one guard code can actually run: `fm` cannot tell a stolen
+    *opaque* token from a legitimate one (that is what "opaque" means), but it can
+    tell that a JWT landed in the wrong variable, which would hand `fm` a 7-day
     whole-account credential instead of the scoped, revocable one the OAuth flow
     exists to provide.
     """
@@ -109,10 +99,10 @@ def _looks_like_a_session_jwt(value: str) -> bool:
 def env_token() -> str:
     """``$EVANE_TOKEN``, stripped; ``""`` when unset or blank.
 
-    Raises :class:`TokenError` — never silently ignores — a JWT-shaped value, so a
-    CI job that exported the wrong secret gets one clear message instead of a
-    hard-to-place 401 (or worse, a working-but-wrong request against someone else's
-    session).
+    Raises :class:`TokenError` rather than silently ignoring a JWT-shaped
+    value, so a CI job that exported the wrong secret gets one clear
+    message instead of a hard-to-place 401 (or worse, a working-but-wrong
+    request against someone else's session).
     """
     raw = (os.environ.get(ENV_TOKEN_VAR) or "").strip()
     if raw and _looks_like_a_session_jwt(raw):
@@ -134,7 +124,7 @@ def local_scopes(env: str) -> list | None:
     and this process never learns what it was granted, so a FILE's recorded scopes
     (if one happens to exist for the same env) describe a DIFFERENT credential than
     the one actually in use and must not be consulted. ``privileges.check`` already
-    treats ``None`` as "not recorded, defer to the server" — the correct answer
+    treats ``None`` as "not recorded, defer to the server", the correct answer
     here too, and the same answer an operator who never logged in locally at all
     would get.
     """
@@ -147,10 +137,10 @@ def store(env: str, token: str, meta: dict | None = None) -> Path:
     """Write ``token`` for ``env`` at 0600, creating the directory at 0700.
 
     The mode is set BEFORE the write where the platform allows it (``os.open``
-    with the mode argument), so the secret is never briefly world-readable — a
-    chmod after the fact leaves a window.
+    with the mode argument), so the secret is never briefly world-readable;
+    a chmod after the fact leaves a window.
 
-    ``meta`` holds what `fm login` learned at the same moment — the ``refresh_token``
+    ``meta`` holds what `fm login` learned at the same moment: the ``refresh_token``
     (a secret, and the reason this whole file is 0600), the granted ``scopes``, the
     absolute ``expires_at``, and the ``client_id`` / ``grant_id`` `fm logout` needs
     in order to revoke server-side. They live in the same file rather than a second
@@ -207,7 +197,7 @@ def load_meta(env: str) -> dict:
     """The non-secret facts stored beside the credential. Never the credential.
 
     Returns ``{}`` when there is no file, when it is unreadable, or when it was
-    written by a pre-``fm login``-flow version that stored only a token — a missing
+    written by a pre-``fm login``-flow version that stored only a token: a missing
     ``token_id`` must degrade to "revoke whatever credential this request carries",
     not to a crash.
     """
@@ -226,8 +216,8 @@ def load_meta(env: str) -> dict:
 def load_refresh(env: str) -> str | None:
     """The stored refresh token, or None. Same 0600 refusal as :func:`load`.
 
-    Separate from :func:`load_meta` on purpose: this IS a secret — it buys a fresh
-    access token for as long as the grant lives — so it is never in the dict that
+    Separate from :func:`load_meta` on purpose: this is a secret, it buys a fresh
+    access token for as long as the grant lives, so it is never in the dict that
     gets printed, logged or handed to `fm whoami`.
     """
     path = token_path(env)
@@ -263,7 +253,7 @@ def clear_all() -> list[str]:
 
 @dataclass(frozen=True)
 class TokenInfo:
-    """Non-secret facts about a stored token, as recorded in its metadata —
+    """Non-secret facts about a stored token, as recorded in its metadata,
     never decoded from the token (see :func:`describe_meta`)."""
 
     expires_at: datetime | None
@@ -284,18 +274,15 @@ class TokenInfo:
 
 
 def describe_meta(meta: dict) -> TokenInfo:
-    """Non-secret facts about a stored credential, read from :func:`load_meta`
-    — NEVER by decoding the token itself.
+    """Non-secret facts about a stored credential, read from :func:`load_meta`,
+    never by decoding the token itself.
 
-    An ``fm login`` access token is opaque (``crst_at_…``, no dots at all — see
-    ``mcp_app/oauth/provider.py::ACCESS_PREFIX``), so there is nothing in it to
-    decode; the previous version of this function tried to read it as a JWT and
-    raised ``TokenError`` on every real credential once the OAuth flow replaced
-    the old pasted-session-JWT login (`fm doctor` broke for every logged-in user
-    as a result). Everything worth reporting was already written beside the
-    token at the moment it was minted or refreshed
-    (:func:`formist_cli.login.store_payload`) — ``expires_at`` and ``obtained_at`` —
-    so this reads that instead of guessing at the token's shape.
+    An ``fm login`` access token is opaque (``crst_at_...``, no dots at
+    all), so there is nothing in it to decode. Everything worth reporting
+    was already written beside the token at the moment it was minted or
+    refreshed (:func:`formist_cli.login.store_payload`): ``expires_at`` and
+    ``obtained_at``, so this reads that instead of guessing at the token's
+    shape.
     """
     return TokenInfo(
         expires_at=_parse_iso(meta.get("expires_at")),
@@ -328,14 +315,14 @@ _SHARED_SECRET_ENVS = frozenset({"evane", "evane-ae"})
 def load_for(env: str) -> tuple[str | None, str | None]:
     """The token to use for ``env``, and where it came from.
 
-    ``$EVANE_TOKEN`` (:data:`ENV_TOKEN_VAR`) is checked FIRST and, when set, wins
-    over any stored file for THIS call — the origin comes back as
+    ``$EVANE_TOKEN`` (:data:`ENV_TOKEN_VAR`) is checked first and, when set, wins
+    over any stored file for THIS call; the origin comes back as
     :data:`ENV_TOKEN_ORIGIN`, never a real env name, so a caller comparing
     ``origin == env`` (the cross-region-borrow check) is unaffected.
 
     Absent that, falling back between the prod regions saves a second `fm login`
     for one credential. The origin is returned rather than hidden so the caller can
-    PRINT it — a credential silently sourced from somewhere else is exactly the
+    print it: a credential silently sourced from somewhere else is exactly the
     kind of invisible state this tool is otherwise built to refuse.
     """
     env_value = env_token()
