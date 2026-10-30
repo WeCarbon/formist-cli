@@ -1,16 +1,10 @@
-"""``fm project set-logo``: upload a project's logo (WRITE).
+"""Tests for ``fm project set-logo``: upload a project's logo (a write).
 
-Absorbs ``scripts/set_project_logo.py`` (EV-ABSORB.md §3.1, no new endpoint):
-that script uploaded a local image to blob and wrote the URL onto
-``Project.settings.logo`` over a direct DB session. ``fm project set-logo``
-does the same thing through ``POST /projects/{id}/logo``
-(``routes/projects.py::upload_project_logo``): a plain multipart upload, magic-
-byte sniffed server-side, never the declared Content-Type.
+A plain multipart upload to ``POST /projects/{id}/logo``, magic-byte
+sniffed server-side, never the declared Content-Type.
 
-Idempotent (re-running overwrites the stored URL), but still a WRITE: DRY RUN
-by default, ``--apply`` performs the upload.
-
-Run: uv run pytest tests/test_formist_cli_projects.py -q
+Idempotent (re-running overwrites the stored URL), but still a write: dry
+run by default, ``--apply`` performs the upload.
 """
 
 from __future__ import annotations
@@ -30,7 +24,7 @@ SPACE = "452093ea-7b91-491e-88b6-3285edd48a31"
 class RecordingApi:
     def __init__(self, *, response=None):
         self.calls: list[tuple[str, str, dict, dict]] = []
-        self._response = response or {"id": SPACE, "name": "GFSS 2026", "logo": "https://blob/x.png"}
+        self._response = response or {"id": SPACE, "name": "Acme Summit", "logo": "https://blob/x.png"}
 
     def post_multipart(self, target, path, *, fields, files, token=None, **kw):
         self.calls.append(("POST", path, fields, files))
@@ -85,7 +79,7 @@ def test_apply_uploads_the_exact_bytes_as_multipart(driven, tmp_path):
 
 
 def test_apply_prints_the_stored_logo_url(driven, tmp_path, capsys):
-    stub = RecordingApi(response={"id": SPACE, "name": "GFSS 2026", "logo": "https://blob/new.png"})
+    stub = RecordingApi(response={"id": SPACE, "name": "Acme Summit", "logo": "https://blob/new.png"})
     png = _write_png(tmp_path)
     driven(stub, path=str(png), apply=True)
     out = capsys.readouterr().out
@@ -106,11 +100,10 @@ def test_no_path_is_a_loud_error(driven):
 
 
 def test_project_id_positional_is_an_alternative_to_space_flag(monkeypatch, tmp_path):
-    """`fm project set-logo` reads the plan doc's `<id>` positional as an
-    alternative to --space, the same convention `fm connectors <space_id>` uses
-    (formist_cli/cli.py::cmd_connectors): merged into args.space BEFORE the
-    resolver runs, so a caller that only ever reads args.space (like
-    formist_cli.context.resolve) sees it regardless of which spelling was used."""
+    """`fm project set-logo` accepts the `<id>` positional as an alternative
+    to --space, the same convention `fm connectors <space_id>` uses: merged
+    into args.space before the resolver runs, so a caller that only ever
+    reads args.space sees it regardless of which spelling was used."""
     seen_args = {}
 
     def _fake_resolve(args, **kw):
