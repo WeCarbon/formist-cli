@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="878" height="598" viewBox="0 0 878 598" xml:space="preserve">
+<rect width="878" height="598" rx="12" fill="#16181d"/>
+<path d="M0 12a12 12 0 0 1 12-12h854a12 12 0 0 1 12 12v22h-878z" fill="#22252c"/>
+<circle cx="22" cy="17.0" r="6" fill="#ff5f57"/>
+<circle cx="42" cy="17.0" r="6" fill="#febc2e"/>
+<circle cx="62" cy="17.0" r="6" fill="#28c840"/>
+<text x="439.0" y="22.0" fill="#6b7280" font-family="Menlo, monospace" font-size="13" text-anchor="middle">fm</text>
+<g font-family="&apos;JetBrains Mono&apos;, &apos;SF Mono&apos;, Menlo, Consolas, monospace" font-size="14.5">
+<text x="22" y="71" fill="#a3d98b" font-weight="700">$ fm health</text>
+<text x="22" y="91" fill="#6b7280">-&gt; read formist  https://api.formist.ai   [host: default]</text>
+<text x="22" y="111" fill="#d8dee9">formist: ok  (2026-01-15T09:00:03Z)</text>
+<text x="22" y="131" fill="#6b7280">    database               ok     12ms [fatal]</text>
+<text x="22" y="151" fill="#6b7280">    scheduler              ok     last tick 4s ago</text>
+<text x="22" y="171" fill="#6b7280">    storage                ok     </text>
+<text x="22" y="191" fill="#d8dee9"></text>
+<text x="22" y="211" fill="#a3d98b" font-weight="700">$ fm spaces</text>
+<text x="22" y="231" fill="#6b7280">-&gt; read formist  https://api.formist.ai   [host: default]</text>
+<text x="22" y="251" fill="#6b7280">  token: environment (FORMIST_TOKEN), used as-is, not stored, not refreshed</text>
+<text x="22" y="271" fill="#d8dee9">region  members  name                             id</text>
+<text x="22" y="291" fill="#d8dee9">------- -------- -------------------------------- --------</text>
+<text x="22" y="311" fill="#d8dee9">ae      12       Product launch 2027              3f1b2c9a-7e4d-4b8a-9c21-5a6b7c8d9e0f</text>
+<text x="22" y="331" fill="#d8dee9">global  7        Annual partner summit            9d4e7a21-1f3c-4a6b-8e2d-0c5f9a1b3d7e</text>
+<text x="22" y="351" fill="#d8dee9"></text>
+<text x="22" y="371" fill="#d8dee9">2 of 2</text>
+<text x="22" y="391" fill="#d8dee9"></text>
+<text x="22" y="411" fill="#a3d98b" font-weight="700">$ fm kb search "venue contract" --space 3f1b2c9a-7e4d-4b8a-9c21-5a6b7c8d9e0f</text>
+<text x="22" y="431" fill="#6b7280">-&gt; read formist  https://api.formist.ai   [host: default]</text>
+<text x="22" y="451" fill="#6b7280">  space 3f1b2c9a-7e4d-4b8a-9c21-5a6b7c8d9e0f   [space: --space flag]</text>
+<text x="22" y="471" fill="#6b7280">  token: environment (FORMIST_TOKEN), used as-is, not stored, not refreshed</text>
+<text x="22" y="491" fill="#d8dee9">=== 2 hit(s) (of 2) ===</text>
+<text x="22" y="511" fill="#d8dee9">[file] Contracts/Venue Agreement - Riverside Hall.docx</text>
+<text x="22" y="531" fill="#6b7280">    ...the venue agreement for Riverside Hall confirms a deposit and catering for 150 guests...</text>
+<text x="22" y="551" fill="#d8dee9">[message] Carol -&gt; Bob: venue contract</text>
+<text x="22" y="571" fill="#6b7280">    ...the venue contract needs one more signature before Friday...</text>
+</g></svg>
