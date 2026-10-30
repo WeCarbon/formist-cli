@@ -1,16 +1,12 @@
-"""``fm upload DIR``: uploading every file under a directory, recursively.
+"""Tests for ``fm upload DIR``: uploading every file under a directory,
+recursively.
 
-Its own file (`test_formist_cli_uploads.py`'s docstring: several lanes edit
-``formist_cli/`` at once, and a new file cannot conflict with any of them).
-
-Reuses `formist_cli.uploads.upload_file` per file: the SAME resumable path
-`test_formist_cli_uploads.py::TestChunkedUploadSendsExactBytes` already proves sends
-exact bytes: so what is new here, and what these tests are built around, is
-the DIRECTORY layer on top of it: which files get walked, how a subfolder's
-path reaches the server (`relative_path`, not a client-side re-derivation of
-`--folder-path`), and that one file failing does not stop the rest.
-
-Run: uv run pytest tests/test_formist_cli_upload_dir.py -q
+Reuses `formist_cli.uploads.upload_file` per file, the same resumable
+path already proven to send exact bytes elsewhere. What is new here, and
+what these tests are built around, is the directory layer on top of it:
+which files get walked, how a subfolder's path reaches the server
+(`relative_path`, not a client-side re-derivation of `--folder-path`),
+and that one file failing does not stop the rest.
 """
 
 from __future__ import annotations
@@ -55,9 +51,9 @@ class TestWalkUploadDir:
 
 
 # ===========================================================================
-# The fake transport: same shape as test_formist_cli_uploads.py's FakeServer, kept
+# The fake transport: same shape as the plain-upload FakeServer, kept
 # minimal here: a directory upload's own logic (walking, per-file continue,
-# the empty-file label) is what these tests are FOR, not the chunk math
+# the empty-file label) is what these tests are for, not the chunk math
 # (already proven elsewhere).
 # ===========================================================================
 class FakeDirServer:
