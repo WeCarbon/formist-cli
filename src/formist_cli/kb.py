@@ -1,35 +1,20 @@
-"""``fm kb`` — ad-hoc knowledge-base search and read, from the operator's terminal.
+"""``fm kb`` - ad-hoc knowledge-base search and read, from the operator's terminal.
 
-Absorbs two scripts (EV-ABSORB.md §3.1, both "no new endpoint" — an existing
-route already does the work):
+A thin client over the same member-gated routes the product itself uses:
 
-* the retired ``kb_search.py`` — fanned several query terms over the project's
-  synced knowledge base, aggregating hits by file client-side.
-* the retired ``kb_read.py`` — matched a needle against a local Postgres query for
-  ``File.path``, then read ``File.cached_md_path`` straight off local disk.
-
-Both are now a thin client over the SAME member-gated routes the product uses:
-
-* ``fm kb search <term>... --space <id>`` -> ``GET /projects/{id}/search?q=...``
-  (``services/search.py::search_project`` via ``search_for_space``). The terms
-  are joined with spaces into ONE query string, not sent one call per term: that
-  module's own docstring says ranking is already per-term server-side (a hit
-  matching more of the terms scores higher), so client-side aggregation across
-  separate calls would just be redundant network round-trips for an answer the
-  server already computes in one.
-* ``fm kb read <needle> --space <id>`` -> the SAME search, then
-  ``GET /projects/{id}/files/{file_id}/content`` (``services/user_acl.py::
-  read_file_for_space``) for the first hit that actually carries a ``file_id``
-  (a message or SharePoint-native hit does not, and is skipped rather than sent
-  as a bogus UUID path param). This is a DELIBERATE change from the script it
-  replaces — EV-ABSORB.md calls this one out by name as the case where the
-  absorption should switch to the correct path rather than copy the old
-  mechanism: a local ``cached_md_path`` read only ever worked from a box with
-  that disk mounted (and in prod that disk has no volume behind it at all — see
-  ``routes/meetings_center.py``'s ``get_meeting_transcript_pdf`` docstring for
-  the same finding elsewhere), where the content route is blob-backed and
-  reachable from anywhere ``ev`` runs. A needle that names a file (e.g. a
-  filename fragment) still resolves it: filename hits are boosted server-side.
+* ``fm kb search <term>... --space <id>`` -> ``GET /projects/{id}/search?q=...``.
+  The terms are joined with spaces into one query string, not sent one call
+  per term, since ranking is already per-term server-side (a hit matching
+  more of the terms scores higher), so client-side aggregation across
+  separate calls would just be redundant network round-trips for an answer
+  the server already computes in one.
+* ``fm kb read <needle> --space <id>`` -> the same search, then
+  ``GET /projects/{id}/files/{file_id}/content`` for the first hit that
+  actually carries a ``file_id`` (a message or SharePoint-native hit does
+  not, and is skipped rather than sent as a bogus UUID path param). The
+  content route is blob-backed and reachable from anywhere `fm` runs. A
+  needle that names a file (e.g. a filename fragment) still resolves it:
+  filename hits are boosted server-side.
 
 Read-only. There is no flag that makes either subject write.
 """
@@ -44,10 +29,10 @@ from formist_cli.cli_support import build_standalone_parser as _build_standalone
 
 SUBJECTS = ("search", "read")
 
-#: Mirrors the retired ``kb_read.py``'s own default truncation length.
+#: Default truncation length for a printed file body.
 DEFAULT_MAX_CHARS = 4000
 
-#: Mirrors ``services/search.py``'s route-level default page size.
+#: Mirrors the search route's own default page size.
 DEFAULT_SEARCH_LIMIT = 20
 
 
@@ -64,7 +49,7 @@ def _subject_error(subject: object) -> KbError:
 
 
 _DESCRIPTION = """Ad-hoc knowledge-base search / read, over the SAME routes the
-product's own search box and file viewer use — never a local disk or DB read.
+product's own search box and file viewer use, never a local disk or DB read.
 
   fm kb search <term>... --space <id>   rank the KB by these terms
   fm kb read <needle> --space <id>      search, then print the top file's content
@@ -122,7 +107,7 @@ def render_search(payload: dict) -> str:
         label = item.get("path") or item.get("subject") or item.get("name") or "?"
         lines.append(f"[{item.get('source', '?')}] {label}")
         if item.get("snippet"):
-            lines.append(f"    …{item['snippet']}…")
+            lines.append(f"    ...{item['snippet']}...")
     return "\n".join(lines)
 
 
@@ -153,7 +138,7 @@ def _run_search(ctx: context.Context, args) -> int:
 # read
 # ===========================================================================
 def _top_file_hit(items: list) -> dict | None:
-    """The first hit that actually names a ``file_id`` — a message or
+    """The first hit that actually names a ``file_id``: a message or
     SharePoint-native hit does not, and cannot be read through
     ``/files/{id}/content`` (that path param is a UUID; sending anything else
     422s instead of cleanly not-found)."""
@@ -168,7 +153,7 @@ def _run_read(ctx: context.Context, args) -> int:
     payload = _search(ctx, needle, limit=args.limit)
     hit = _top_file_hit(payload.get("items") or [])
     if hit is None:
-        raise KbError(f"no file hit for {needle!r} — nothing to read.")
+        raise KbError(f"no file hit for {needle!r}, nothing to read.")
     file_id = str(hit["file_id"])
     content = api.get(
         ctx.target, f"/projects/{ctx.space}/files/{file_id}/content", token=ctx.token
@@ -186,7 +171,7 @@ def _run_read(ctx: context.Context, args) -> int:
     print(f"### {path}  ({len(text)} chars)\n")
     print(text[: args.max_chars])
     if len(text) > args.max_chars:
-        print(f"\n…[truncated, {len(text) - args.max_chars} more chars]")
+        print(f"\n...[truncated, {len(text) - args.max_chars} more chars]")
     return 0
 
 
