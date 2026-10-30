@@ -1,25 +1,20 @@
-"""Remembered defaults for ``fm`` — and the rule that stops one writing production.
+"""Remembered defaults for ``fm``, and the rule that stops one writing production.
 
-``evtool/targets.py:12`` refuses to have this module at all:
+A remembered target is a target someone forgets they set, which argues
+for having no memory at all. This module takes a narrower position: a
+remembered value is dangerous when it silently supplies the dangerous
+half of a decision, and the two halves are not equally dangerous.
 
-    **1. Default to local, and never infer prod.** There is no state file and no
-    "current environment" [...] A remembered target is a target someone forgets
-    they set.
+A space is a *what*: 36 characters nobody verifies by eye, and the half a
+transcribed-id mistake lives in. Worth remembering.
 
-The diagnosis is right and this module keeps it. What it rejects is the conclusion
-that the only cure is having no memory. A remembered value is dangerous when it
-silently supplies the DANGEROUS HALF of a decision — and the halves are not
-equally dangerous:
+An env is a *where*: one word, and the half that decides whether this is
+production. Not worth remembering.
 
-    a space is a WHAT. 36 characters nobody verifies by eye, and the half the
-      transcribed-id failure lives in. Worth remembering.
-    an env is a WHERE. One word, and the half that decides whether this is
-      production. Not worth remembering.
-
-So: **remember the what, require the where.** A write resolves its environment
-from the command line ONLY. A read may inherit it, because a read against the
-wrong environment is a wrong answer, while a write against the wrong environment
-is a wrong database.
+So: remember the what, require the where. A write resolves its
+environment from the command line only. A read may inherit it, because a
+read against the wrong environment is a wrong answer, while a write
+against the wrong environment is a wrong database.
 
 Three properties follow, and they are why this is a flag rather than a prompt:
 
@@ -29,11 +24,12 @@ Three properties follow, and they are why this is a flag rather than a prompt:
 - It cannot be satisfied by habit, because the operator types the environment in
   the same breath as the thing that makes it dangerous.
 
-The remaining hazard is a STALE default, which is handled by making staleness
-visible rather than by expiring it: :meth:`Effective.banner` prints where each
-half came from and how old it is, on every command including reads. Printing the
-target alone is close to useless — the operator already believes they know it.
-Printing *why it is what it is* is what breaks a wrong belief.
+The remaining hazard is a stale default, which is handled by making
+staleness visible rather than by expiring it: :meth:`Effective.banner`
+prints where each half came from and how old it is, on every command
+including reads. Printing the target alone is close to useless, since the
+operator already believes they know it. Printing why it is what it is is
+what breaks a wrong belief.
 
 Stdlib only.
 """
@@ -58,12 +54,12 @@ from formist_cli.targets import (
     resolve,
 )
 
-#: The owner asks for ``dev``; ``targets.py`` says ``local``. Both are accepted and
-#: ``local`` is canonical — it is what the host allow-list key, the token filename
-#: (``token-local.json``) and every existing string already say, and because "dev"
-#: is genuinely ambiguous in THIS project in a way that would bite:
-#: ``EMAIL_PROVIDER=dev``, the dev Attendee instance, ``.env.local``, and "the dev
-#: environment" which is emphatically not this laptop.
+#: Both ``dev`` and ``local`` are accepted and ``local`` is canonical: it is
+#: what the host allow-list key, the token filename (``token-local.json``) and
+#: every existing string already say, and "dev" is genuinely ambiguous in
+#: this project in a way that would bite (a dev email provider setting, a
+#: dev Attendee instance, a local env file, and "the dev environment" which
+#: is a different thing from this laptop).
 class PrefsError(Exception):
     """A refusal about remembered state."""
 
@@ -122,7 +118,7 @@ def load() -> Prefs:
         raw = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError) as exc:
         raise PrefsError(
-            f"could not read {path}: {exc}\n→ `fm use --clear` to start over."
+            f"could not read {path}: {exc}\n-> `fm use --clear` to start over."
         ) from exc
     if not isinstance(raw, dict):
         raise PrefsError(f"could not read {path}: expected a JSON object.")
@@ -177,7 +173,7 @@ def store(
     }
     directory = tokens.config_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    os.chmod(directory, stat.S_IRWXU)  # 0700 — it sits beside the tokens
+    os.chmod(directory, stat.S_IRWXU)  # 0700, it sits beside the tokens
     path = prefs_path()
     path.write_text(json.dumps(payload, indent=2))
     return path
@@ -209,7 +205,7 @@ class Effective:
         """
         mode = "WRITE" if self.for_write else "read"
         lines = [
-            f"→ {mode} {self.target.name}  {self.target.api_base}"
+            f"-> {mode} {self.target.name}  {self.target.api_base}"
             f"   [host: {self.env_source}]"
         ]
         if self.space:
@@ -242,10 +238,10 @@ def effective(
             "\n"
             "A remembered environment is one somebody forgets they set, and the "
             "cost of forgetting is a write to the wrong database. Naming it costs "
-            "one word and puts it in the command you just ran — and in the source "
+            "one word and puts it in the command you just ran, and in the source "
             "of any script that does this, where a reviewer sees it.\n"
             "\n"
-            f"→ Re-run with `--host {prefs.env}` if that is what you meant."
+            f"-> Re-run with `--host {prefs.env}` if that is what you meant."
         )
     elif prefs.env is not None:
         env, env_source = prefs.env, f"fm use default, set {prefs.age}"
@@ -271,14 +267,14 @@ def effective(
     # Two guards, and the second one is not obvious:
     #
     # A recorded region describes the REMEMBERED space only. Applying it to a space
-    # passed explicitly would refuse a correct write — or, worse, permit a wrong one
+    # passed explicitly would refuse a correct write, or, worse, permit a wrong one
     # by vouching for a space it never described.
     #
     # And `space_region` is DATA RESIDENCY (`global` / `ae`, a property of the row)
     # while `env` is a DEPLOYMENT TARGET (`local` / `ae` / `global`, a property of
     # the host). They share two of three tokens and are not the same vocabulary. A
-    # local dev server reports every space it holds as `region=global` — its own
-    # HOME_REGION — so comparing the two refused every local write, and the
+    # local dev server reports every space it holds as `region=global`, its own
+    # HOME_REGION, so comparing the two refused every local write, and the
     # refusal's remediation line said `--host evane`, which aims a dev payload at
     # PRODUCTION. A residency claim is only meaningful about a prod target.
     if (
@@ -297,11 +293,11 @@ def effective(
             "\n"
             "Nothing was sent. A space-scoped write must reach the region that owns "
             "the row; the server would answer 421 with where to retry, and fm does "
-            "not follow a redirect into a mutation — a redirect is the server "
+            "not follow a redirect into a mutation: a redirect is the server "
             "saying your belief about WHERE was wrong, which is the one belief a "
             "write must not be wrong about.\n"
             "\n"
-            f"→ `--host {_REGION_HOSTS.get(prefs.space_region, prefs.space_region)}`, or `fm use --space <id>` to re-record "
+            f"-> `--host {_REGION_HOSTS.get(prefs.space_region, prefs.space_region)}`, or `fm use --space <id>` to re-record "
             "the region if the space has moved."
         )
 
