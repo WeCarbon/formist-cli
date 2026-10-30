@@ -1,55 +1,38 @@
-"""``fm space-plan`` — read and set a space's USAGE PLAN (``space_plan``).
+"""``fm space-plan`` - read and set a space's usage plan (``space_plan``).
 
-WHY THIS EXISTS
----------------
-On 2026-09-02 a plan row for a production space was attempted through
-``az containerapp exec`` with an ad-hoc INSERT, because ``ev`` had no subcommand
-for it. The insert failed on ``space_plan_project_id_fkey`` — a foreign key was the
-only thing between the operator and a row in a database that does not own the
-space. The point of this command is not that one row: it is that a plan change
-becomes repeatable, auditable and reviewable instead of a paste into a container.
+``space_plan`` lives in a region database, keyed by the space's project id,
+and the only database it may go in is the one that owns that space's
+project row. There is deliberately no ``--region`` and no database flag
+here: the server resolves the database from the Global space registry and
+reports what it resolved to, and refuses if that database turns out not to
+hold the project.
 
-THE TARGET IS NOT YOURS TO CHOOSE
----------------------------------
-``space_plan`` lives in a REGION database, keyed by ``project.id``, and the only
-database it may go in is the one that owns that space's ``project`` row. So there
-is deliberately **no ``--region`` and no database flag here**: the server resolves
-it from the Global space registry and reports what it resolved to, and
-``routes/admin.py`` refuses (409 ``space-project-missing``) if that database turns
-out not to hold the project. A region an operator types is a region an operator can
-get wrong, and getting it wrong writes another database.
+``--env`` therefore does not name the database. It names which deployment's
+admin API to ask, and for the default product ``/admin`` is served from
+Global only in production, so the real choice is `local` or `global` even
+for an AE space.
 
-``--env`` therefore does NOT name the database. It names which deployment's admin
-API to ask — and for the default product, ``/admin`` is served from **Global only** in prod, so
-the real choice is `local` or `global` even for an AE space. ``evtool/api.py``
-refuses the other case before opening a socket.
+The `formist` host is a different deployment, not a third region: for a
+`formist` space ``--host formist`` is the only correct choice. It has no
+Global/AE split of its own, so its one deployment serves ``/admin``
+locally.
 
-THE `formist` ENV IS A DIFFERENT DEPLOYMENT, NOT A THIRD REGION — for a `formist`
-space ``--host formist`` is the only correct choice; it has no Global/AE split of
-its own, so its one deployment serves ``/admin`` locally (``evtool/targets.py::
-REGION_FORMIST``).
+Dry run first, always, same contract as `fm update`: the request body
+carries ``apply``, which defaults to false on the server model, so a body
+that merely forgets it cannot write. ``fm space-plan set`` runs the dry
+run, prints exactly what would change, and prints the revision of the row
+it was looking at. ``--apply <revision>`` re-runs the dry run, refuses if
+the revision has moved, and only then sends ``apply: true``, carrying the
+revision so the server re-checks it too. Both checks matter: the client's
+copy gives the operator a readable refusal without a write ever being
+attempted, while the server's copy is what actually holds for a caller
+that skips this CLI.
 
-DRY RUN FIRST, ALWAYS
----------------------
-Same contract as ``fm update``: the request body carries ``apply`` and it defaults
-to **false** on the server model, so a body that merely forgets it cannot write.
-``fm space-plan set`` runs the dry run, prints exactly what would change, and
-prints the ``revision`` of the row it was looking at. ``--apply <revision>``
-re-runs the dry run, refuses if the revision has moved, and only then sends
-``apply: true`` — carrying the revision, so the SERVER re-checks it too.
-
-⚠️ That double check is deliberate and neither half is dead. The client's copy
-gives the operator a readable refusal without a write ever being attempted; the
-server's copy is the one that actually holds, because a caller reaching the API
-without this CLI gets no protection from a check that lives here. Removing either
-leaves a working command, which is why this paragraph exists — see GATE.md on
-layered guards.
-
-⚠️ WHAT A PLAN ROW DOES, and why the output says it in capitals: a space with NO
-plan row is UNGATED — ``services/usage_gate.py`` allows every model call and settles
-nothing. Creating the first row flips that space from fail-open to fail-closed. The
-server measures the consequences on the deployment that will enforce them (is the
-gate even switched on; is there a catch-all multiplier) and this prints them.
+A space with no plan row is ungated: nothing settles any model call.
+Creating the first row flips that space from fail-open to fail-closed. The
+server measures the consequences on the deployment that will enforce them
+(whether the gate is switched on, whether there is a catch-all multiplier)
+and this command prints them.
 """
 
 from __future__ import annotations
@@ -69,7 +52,7 @@ DEFAULT_SUBJECT = "show"
 #: One table, so ``--help``, the request body and the "nothing to set" refusal
 #: cannot disagree about what is settable.
 SETTABLE = (
-    ("name", "--name", str, "plan label (NULL ⇒ the config default, '<product> Max')"),
+    ("name", "--name", str, "plan label (NULL -> the config default, '<product> Max')"),
     ("rolling_window_hours", "--rolling-window-hours", int, "length of the ROLLING window, in hours"),
     (
         "rolling_limit_standard_tokens",
@@ -83,12 +66,12 @@ SETTABLE = (
         int,
         "standard tokens allowed inside the ANCHORED weekly window",
     ),
-    ("tier", "--tier", str, "plan tier of this product (config/products/<id>.json billing.tiers), e.g. plus, pro, max"),
+    ("tier", "--tier", str, "plan tier of this product, e.g. plus, pro, max"),
     ("extra_seats", "--extra-seats", int, "members allowed beyond the tier's included members"),
 )
 
 #: The columns ``--use-tier-limits`` clears to NULL, so name and limits follow the
-#: tier's config (services/usage_gate.py::_effective_limits) instead of the row.
+#: tier's own config instead of the row.
 TIER_FOLLOWING = (
     "name",
     "rolling_window_hours",
@@ -109,7 +92,7 @@ def canonical_subject(subject: str | None) -> str:
         raise SpacePlanError(
             f"unknown subcommand {subject!r}. Valid: {', '.join(SUBJECTS)}.\n"
             "  show  this space's plan row, and the database it lives in\n"
-            "  set   create or change it — a DRY RUN unless --apply is given"
+            "  set   create or change it, a DRY RUN unless --apply is given"
         )
     return value
 
@@ -124,7 +107,7 @@ def render_target(target: dict, *, container_app: str | None) -> str:
     lines = [
         f"space     {target.get('space_name') or '?'}  ({target.get('space_id')})",
         f"region    {target.get('region')}   (resolved by the server from the "
-        "Global space registry — not from --env)",
+        "Global space registry, not from --env)",
         f"database  {database.get('database') or '?'} on "
         f"{database.get('host') or '?'}:{database.get('port') or '?'}",
     ]
@@ -132,7 +115,7 @@ def render_target(target: dict, *, container_app: str | None) -> str:
         lines.append(f"container {container_app}")
     if database.get("shared_with_global"):
         lines.append(
-            "  ⚠️ this region shares ONE database with global on this deployment, "
+            "  this region shares ONE database with global on this deployment, "
             "so 'region' here is a label and not evidence about where a row landed"
         )
     return "\n".join(lines)
@@ -141,7 +124,7 @@ def render_target(target: dict, *, container_app: str | None) -> str:
 def render_plan(plan: dict | None) -> str:
     if plan is None:
         return (
-            "plan      (none) — this space is UNGATED: every model call is allowed "
+            "plan      (none): this space is UNGATED, every model call is allowed "
             "and nothing is settled"
         )
     fields = (
@@ -157,7 +140,7 @@ def render_plan(plan: dict | None) -> str:
     )
     lines = ["plan"]
     for key, value in fields:
-        shown = "NULL (⇒ the configured default)" if value is None else value
+        shown = "NULL (-> the configured default)" if value is None else value
         lines.append(f"  {key:<34} {shown}")
     return "\n".join(lines)
 
@@ -167,8 +150,8 @@ def render_effects(effects: dict) -> str:
     lines = ["what a plan row does here", f"  {effects.get('billing_gate')}"]
     if effects.get("usage_gate_enabled_on_this_deployment") is False:
         lines.append(
-            "  ⚠️ EVANE_USAGE_GATE_ENABLED is OFF on this deployment, so the row "
-            "changes nothing until it is switched on — a quiet graph afterwards "
+            "  EVANE_USAGE_GATE_ENABLED is OFF on this deployment, so the row "
+            "changes nothing until it is switched on. A quiet graph afterwards "
             "will not mean the plan is working"
         )
     else:
@@ -186,7 +169,7 @@ def render_change(payload: dict) -> str:
     outcome = payload.get("outcome")
     applied = bool(payload.get("applied"))
     changes = payload.get("changes") or {}
-    lines = [f"outcome   {outcome}   (applied: {'yes' if applied else 'NO — dry run'})"]
+    lines = [f"outcome   {outcome}   (applied: {'yes' if applied else 'NO, dry run'})"]
     if changes:
         lines.append("changes")
         for key, pair in changes.items():
@@ -225,30 +208,29 @@ overage is allowed.
                      --rolling-window-hours 5 --rolling-limit 20000000 \\
                      --weekly-limit 120000000 --additional-usage off
 
-⚠️ A SPACE WITH NO PLAN ROW IS UNGATED. services/usage_gate.py allows every model
-call and settles nothing. Creating the first row flips that space from FAIL-OPEN to
-FAIL-CLOSED: the limits start being enforced, and a model with no configured
-multiplier becomes a 503 model-not-priced for that space. The command prints the
-live state of both of those before you apply anything.
+A SPACE WITH NO PLAN ROW IS UNGATED. Every model call is allowed and
+nothing is settled. Creating the first row flips that space from FAIL-OPEN
+to FAIL-CLOSED: the limits start being enforced, and a model with no
+configured multiplier becomes a 503 model-not-priced for that space. The
+command prints the live state of both of those before you apply anything.
 
-⚠️ `set` IS A DRY RUN unless you pass --apply <revision>. The dry run prints the
+`set` IS A DRY RUN unless you pass --apply <revision>. The dry run prints the
 revision of the row it read; --apply re-runs it, refuses if the row moved, and the
 server re-checks the revision before writing.
 
-⚠️ --env DOES NOT CHOOSE THE DATABASE. `space_plan` lives in whichever region
-database owns the space's `project` row, and the server derives that from the Global
-registry — there is no --region flag and there must never be one. /admin is served
-from the GLOBAL region only, so use `--host evane` for a default-product prod space in
-EITHER region; ev refuses to send an /admin call anywhere else before opening a
-socket.
+--env DOES NOT CHOOSE THE DATABASE. `space_plan` lives in whichever region
+database owns the space's `project` row, and the server derives that from
+the Global registry; there is no --region flag and there must never be
+one. /admin is served from the Global region only, so use `--host evane`
+for a default-product prod space in either region.
 
-⚠️ `--host formist` IS DIFFERENT, NOT AN EXCEPTION TO THE RULE ABOVE: `formist` is a
-whole separate deployment (its own subscription, database, container apps — see
-`evtool/targets.py::REGION_FORMIST`), not a second region of the default product. It has no
-Global/AE split, so its own single deployment serves /admin locally — `--env
-formist` is the ONLY correct target for a space on that deployment, never `--host evane`.
+`--host formist` is different, not an exception to the rule above:
+`formist` is a whole separate deployment (its own subscription, database,
+container apps), not a second region of the default product. It has no
+Global/AE split, so its own single deployment serves /admin locally.
+`--env formist` is the only correct target for a space on that
+deployment, never `--host evane`.
 """
-
 
 
 def _add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -257,8 +239,8 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
         nargs="?",
         help=f"one of: {', '.join(SUBJECTS)} (default: {DEFAULT_SUBJECT})",
     )
-    # No default, deliberately: a WRITE must never inherit its environment from
-    # `fm use`. See evtool/prefs.py and cli.py::_add_env(for_write=True).
+    # No default, deliberately: a write must never inherit its environment from
+    # `fm use`.
     parser.add_argument(
         "--host",
         default=argparse.SUPPRESS,
@@ -311,8 +293,8 @@ def build_standalone_parser() -> argparse.ArgumentParser:
 def requested_fields(args) -> dict:
     """The plan fields the operator actually named. Absent flag = leave alone.
 
-    Only keys PRESENT here are sent, and the server applies only keys present in
-    the body (``model_fields_set``) — so omitting a flag never silently NULLs a
+    Only keys present here are sent, and the server applies only keys present in
+    the body (``model_fields_set``), so omitting a flag never silently NULLs a
     column that somebody else set.
     """
     body = {
@@ -335,22 +317,21 @@ def requested_fields(args) -> dict:
 def _payload(response: object) -> dict:
     """This command's binding of :func:`formist_cli.cli_support.as_dict`.
 
-    ⚠️ Deliberately NOT named ``_as_dict``. ``evtool/users.py`` has a function of
-    that name binding the same shared body, and two same-named one-line bindings
-    read to ``tests/test_no_cross_module_drift.py`` as one implementation copied
-    into two modules (``diverged:impl:_as_dict sim=0.90``) — which is what it is.
-    One shared body, one name per module for the binding.
+    Deliberately not named ``_as_dict``: another module binds the same
+    shared body under that name, and two same-named one-line bindings would
+    read as one implementation copied into two modules. One shared body,
+    one name per module for the binding.
     """
-    return as_dict(response, what="/admin/spaces/…/plan", error=SpacePlanError)
+    return as_dict(response, what="/admin/spaces/.../plan", error=SpacePlanError)
 
 
 def run(args) -> int:
     subject = canonical_subject(getattr(args, "subject", None))
-    # for_write on BOTH subjects: `show` is a read, but this command's whole
+    # for_write on both subjects: `show` is a read, but this command's whole
     # subject matter is a billing write, and a remembered environment is the one
     # an operator forgets they set. Resolving them differently would mean the
     # banner an operator reads on `show` describes a different resolution from the
-    # one `set` will use — which is worse than requiring the flag twice.
+    # one `set` will use, which is worse than requiring the flag twice.
     ctx = context.resolve(args, for_write=True, need_space=True, need_token=True)
     space = require_space_id(str(ctx.space))
     path = f"/admin/spaces/{space}/plan"
@@ -377,9 +358,9 @@ def run(args) -> int:
             + "\n  --additional-usage on|off"
         )
 
-    # THE DRY RUN ALWAYS RUNS, including on the apply path — a revision proves the
+    # The dry run always runs, including on the apply path: a revision proves the
     # operator saw a plan, not that the plan is still true. Re-running is what makes
-    # it a check instead of a receipt (evtool/update.py::apply, same reasoning).
+    # it a check instead of a receipt.
     dry = _payload(api.admin_put(ctx.target, path, fields, token=ctx.token))
     target = dry.get("target") or {}
     revision = str(dry.get("revision"))
@@ -399,16 +380,16 @@ def run(args) -> int:
 
     if args.apply != revision:
         raise SpacePlanError(
-            "REFUSING TO APPLY — this plan row is not the one you were shown.\n"
+            "REFUSING TO APPLY: this plan row is not the one you were shown.\n"
             f"  you supplied: {args.apply}\n"
             f"  current row:  {revision}\n"
             "\n"
             "Nothing was written. The revision covers the row's identity and every "
             "column this command writes, so the row changed underneath your dry "
-            "run — somebody else set a plan, or this revision came from another "
+            "run: somebody else set a plan, or this revision came from another "
             "space.\n"
             "\n"
-            "→ Re-run without --apply, read it, and apply with the revision it prints."
+            "-> Re-run without --apply, read it, and apply with the revision it prints."
         )
 
     applied = _payload(
