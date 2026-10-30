@@ -1,31 +1,30 @@
-"""``fm airtable direction`` — what an Airtable grant can actually do, and repair.
+"""``fm airtable direction`` - what an Airtable grant can actually do, and repair.
 
-This is the CLI half of what used to be a loose operator script under
-``scripts/`` (deleted; its path is deliberately not named here, because a prose
-reference to a file that no longer exists is the rot ``tests/test_evtool_logs.py``
-scans this package for). The decision it drives lives on the server —
-``services/airtable_direction.py`` — and this module is a client that holds no
-copy of it. That split is the entire point of the consolidation: a script that
-reached the database directly was a SECOND implementation of "may this connection
-write back to Airtable", and two answers to that question is how a connection ends
-up 403-ing every outbound write on every tick while a script insists it is fine.
+The decision this drives lives on the server, and this module is a
+client that holds no copy of it. That split is the entire point: a
+client that reached the database directly would be a second
+implementation of "may this connection write back to Airtable", and two
+answers to that question is how a connection ends up 403-ing every
+outbound write on every tick while a script insists it is fine.
 
 What stays on this side is only presentation and the safety choreography:
 
-**A dry run always runs, including under ``--apply``.** ``--apply`` does not skip
-the GET; it performs it, prints it, and then submits exactly the lines it printed.
-The server re-probes and refuses anything that no longer matches (see
-``services/airtable_direction.apply``), so the operator authorizes a plan they
-have read, not a verb they typed.
+A dry run always runs, including under ``--apply``. ``--apply`` does not
+skip the GET; it performs it, prints it, and then submits exactly the
+lines it printed. The server re-probes and refuses anything that no
+longer matches, so the operator authorizes a plan they have read, not a
+verb they typed.
 
-**``--apply`` will not inherit an environment.** A read may resolve ``--env`` from
-``fm use``; this write may not. A remembered environment is one somebody forgets
-they set, and the cost of forgetting is a write against production.
+``--apply`` will not inherit an environment. A read may resolve ``--env``
+from ``fm use``; this write may not. A remembered environment is one
+somebody forgets they set, and the cost of forgetting is a write against
+production.
 
-**Inconclusive is printed, never folded into "fine".** Four things — no credential,
-a failed probe, no bases, no ``permissionLevel`` — mean nothing was learned. They
-are the reason an operator is running this at all, and a summary that reported them
-as "0 changes" would be a check that cannot fail.
+Inconclusive is printed, never folded into "fine". Four things (no
+credential, a failed probe, no bases, no ``permissionLevel``) mean
+nothing was learned. They are the reason an operator is running this at
+all, and a summary that reported them as "0 changes" would be a check
+that cannot fail.
 """
 
 from __future__ import annotations
@@ -65,7 +64,7 @@ def add_parser(sub) -> None:
             "reports whether the stored sync direction agrees.\n\n"
             "The stored OAuth scope cannot answer this. A real connection carries "
             "data.records:write in payload.oauth.scope while the base's actual "
-            "permissionLevel is 'read' — the scope was granted, the permission was "
+            "permissionLevel is 'read': the scope was granted, the permission was "
             "never there. So this makes a live call, per connection.\n\n"
             "DRY RUN BY DEFAULT. --apply re-runs the dry run, prints it, and "
             "submits exactly those lines; the server re-probes and applies only "
@@ -90,7 +89,7 @@ def add_parser(sub) -> None:
         action="store_true",
         help=(
             "persist the changes this run reports. Refuses a remembered `fm use` "
-            "environment — pass --env to write anywhere but local"
+            "environment: pass --env to write anywhere but local"
         ),
     )
     p.add_argument("--json", action="store_true", help="machine-readable output")
@@ -124,7 +123,7 @@ def _envelope(body: Any) -> dict:
 
 
 def changes_from(plan: dict) -> list[dict]:
-    """The lines to authorize — the ones the SERVER marked ``would_change``.
+    """The lines to authorize: the ones the SERVER marked ``would_change``.
 
     Read off the server's own flag rather than recomputed here as
     ``current != wanted``. The two agree today and would diverge the moment an
@@ -165,7 +164,7 @@ def render_plan(plan: dict, *, applying: bool, out=None) -> None:
             )
         else:
             print(
-                f"{head}: {flag} — {detail}; left at {item.get('current')!r}",
+                f"{head}: {flag}: {detail}; left at {item.get('current')!r}",
                 file=out,
             )
     print(
@@ -181,7 +180,7 @@ def render_outcomes(report: dict, *, out=None) -> None:
     outcomes = report.get("outcomes") or []
     print("\napplied:", file=out)
     for o in outcomes:
-        mark = "✓" if o.get("applied") else "·"
+        mark = "OK" if o.get("applied") else "SKIP"
         print(f"  {mark} {o.get('connection_id')}: {o.get('detail')}", file=out)
     counts = report.get("counts") or {}
     print(f"\n{counts.get('applied', 0)} changed", file=out)
@@ -206,7 +205,7 @@ def cmd_airtable(args) -> int:
         if args.json:
             print(json.dumps(plan, indent=2))
         elif plan.get("counts", {}).get("would_change"):
-            print("\n→ re-run with --apply --host <host> to persist this.")
+            print("\n-> re-run with --apply --host <host> to persist this.")
         return 0
 
     changes = changes_from(plan)
@@ -218,7 +217,7 @@ def cmd_airtable(args) -> int:
             counts = {**(plan.get("counts") or {}), "applied": 0}
             print(json.dumps({**plan, "outcomes": [], "counts": counts}, indent=2))
         else:
-            print("\nnothing to change — no request was sent.")
+            print("\nnothing to change, no request was sent.")
         return 0
 
     report = submit(target, space, changes, token=token)
@@ -229,7 +228,7 @@ def cmd_airtable(args) -> int:
     stalled = [o for o in report.get("outcomes") or [] if o.get("reason") == "plan-moved"]
     if stalled:
         print(
-            f"\n⚠️ {len(stalled)} connection(s) were NOT applied because the live "
+            f"\n{len(stalled)} connection(s) were NOT applied because the live "
             "probe disagreed with the plan you were shown. Re-run the dry run.",
             file=sys.stderr,
         )
