@@ -1,27 +1,24 @@
-"""``fm airtable direction``: the client half, and the two ways it can lie.
+"""Tests for ``fm airtable direction``: the client half, and the two ways
+it can lie. The decision itself lives on the server; both client-side
+failures covered here look like success at a terminal:
 
-The decision lives on the server (``tests/test_airtable_direction.py`` owns it).
-What can go wrong HERE is narrower and nastier, because both failures look like
-success at a terminal:
+**A dry run that writes.** "Dry run by default" is not a property of the
+wording in ``--help``; it is the property that no POST leaves this process
+unless ``--apply`` was passed. So the dry-run tests inject a poster that
+raises if it is ever called. A test that merely asserted on the printed
+output would pass just as happily against a command that had already
+written.
 
-**A dry run that writes.** "Dry run by default" is not a property of the wording
-in ``--help``; it is the property that no POST leaves this process unless
-``--apply`` was passed. So the dry-run tests inject a poster that raises if it is
-ever called. A test that merely asserted on the printed output would pass just as
-happily against a command that had already written.
-
-**An apply that submits something other than what it printed.** The whole point of
-echoing the plan back to the server is that the operator authorizes what they
-read. If ``changes_from`` were to re-derive "what needs changing" instead of
-reading the server's ``would_change`` flag, the client and the server would be
-answering the question separately: which is the exact drift this consolidation
-removed from ``scripts/airtable_sync_direction.py``. The case that catches it is an
-INCONCLUSIVE item whose ``current`` and ``wanted`` differ: a client that recomputes
-picks it up, a client that reads the flag does not.
+**An apply that submits something other than what it printed.** The whole
+point of echoing the plan back to the server is that the operator
+authorizes what they read. If ``changes_from`` were to re-derive "what
+needs changing" instead of reading the server's ``would_change`` flag, the
+client and the server would be answering the question separately. The
+case that catches it is an inconclusive item whose ``current`` and
+``wanted`` differ: a client that recomputes picks it up, a client that
+reads the flag does not.
 
 No network, no DB, no token store: every transport is injected.
-
-Run: uv run pytest tests/test_formist_cli_airtable.py -q
 """
 
 from __future__ import annotations
@@ -46,9 +43,9 @@ def _item(**kw):
         "wanted": "inbound",
         "conclusive": True,
         "reason": "ok",
-        "detail": "GFSS=read",
+        "detail": "Acme=read",
         "would_change": True,
-        "bases": [{"id": "app1", "name": "GFSS", "permissionLevel": "read"}],
+        "bases": [{"id": "app1", "name": "Acme", "permissionLevel": "read"}],
     }
     base.update(kw)
     return base
@@ -256,8 +253,9 @@ class TestApply:
         assert sent["changes"] == [{"connection_id": CID, "current": "both", "wanted": "inbound"}]
 
     def test_a_refused_line_makes_the_command_fail(self, wired, monkeypatch, capsys):
-        """The grant moved between the dry run and the apply: exit non-zero, or a
-        script wrapping `ev` reads a partial apply as a complete one."""
+        """The grant moved between the dry run and the apply: exit
+        non-zero, or a script wrapping `fm` reads a partial apply as a
+        complete one."""
         monkeypatch.setattr(airtable, "fetch_plan", lambda *a, **k: _plan(_item()))
         monkeypatch.setattr(
             airtable,

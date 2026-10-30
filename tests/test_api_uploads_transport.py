@@ -1,9 +1,5 @@
-"""``api.put_bytes`` / ``api.patch`` / ``api.delete``: the transport half of
-``fm upload`` and ``fm skill-attach``.
-
-Its own file, not an addition to ``test_formist_cli_api_and_tokens.py``: the same
-reasoning ``test_formist_cli_stream_transport.py`` gives: ``api.py`` gets edited by
-several lanes at once and a new file cannot conflict with any of them.
+"""Tests for ``api.put_bytes`` / ``api.patch`` / ``api.delete``: the
+transport half of ``fm upload`` and ``fm skill-attach``.
 
 ``post``, ``put_bytes``, ``patch`` and ``delete`` now share one ``_send`` helper
 (see ``formist_cli/api.py``), so the tests here exist to prove that sharing did not
@@ -151,10 +147,10 @@ class TestDeleteSendsNoMeaningfulBody:
 
 
 class TestWriteVerbsShareTheSameRegionAndBulkRefusalHandling:
-    """`_send` is the ONE place these are handled now: one test per new verb is
-    enough to prove the sharing didn't silently narrow to POST-only, without
-    re-testing the translation logic itself (already covered for `post` in
-    ``test_formist_cli_api_and_tokens.py``)."""
+    """`_send` is the one place these are handled now: one test per new verb
+    is enough to prove the sharing didn't silently narrow to POST-only,
+    without re-testing the translation logic itself (already covered for
+    `post` elsewhere)."""
 
     def test_put_bytes_raises_Misdirected_on_421(self, fake_urlopen):
         fake_urlopen(raise_error=_http_error(421, {"api_base": "https://ae.api.evane.ai"}))
@@ -180,16 +176,10 @@ class TestWriteVerbsShareTheSameRegionAndBulkRefusalHandling:
 class TestPostMultipartSharesTheSameTransport:
     """``fm import`` sends a whole-workspace ZIP as ``multipart/form-data``.
 
-    ⚠️ THIS CLASS EXISTS BECAUSE THE MERGE THAT ADDED THE VERB NEARLY SHIPPED A
-    SECOND COPY OF THE REFUSAL. ``post_multipart`` arrived on a branch that had
-    extracted its own ``write_http_error`` helper for exactly the right reason —
-    a second transport is where a rule gets duplicated: while ``_send`` had
-    landed on main meanwhile with the identical intent. Git conflicted on the
-    single ``def`` line and auto-merged the rest, so the naive resolution keeps
-    BOTH, which is the duplicated-abstraction merge the project rules records from
-    2026-08-26. Only the ENCODING differs between the two, so the reconciliation
-    routes ``post_multipart`` through ``_send`` and these tests are what says the
-    routing is real rather than intended.
+    A second transport is exactly where a refusal rule gets duplicated, so
+    ``post_multipart`` is routed through the same ``_send`` helper as every
+    other write verb (only the encoding differs), and these tests are what
+    says the routing is real rather than merely intended.
     """
 
     def test_the_method_is_POST_and_the_body_is_the_encoded_multipart(self, fake_urlopen):
@@ -203,13 +193,10 @@ class TestPostMultipartSharesTheSameTransport:
         assert b"PK\x03\x04" in captured["body"]
 
     def test_it_raises_Misdirected_on_421_like_every_other_write(self, fake_urlopen):
-        """A bundle sent to a misresolved region must be REFUSED, not followed.
-
-        The whole reason the region redirect is never followed is that a redirect
-        means your belief about WHERE was wrong: and this verb carries an entire
-        workspace, so following one would import a customer's whole space into a
-        database nobody named. Per the class above: one test per verb, to prove
-        the sharing did not silently narrow to the verbs that existed first.
+        """A bundle sent to a misresolved region must be refused, not
+        followed: a region redirect means the belief about where was
+        wrong, and this verb carries an entire workspace, so following one
+        would import a customer's whole space into the wrong database.
         """
         fake_urlopen(raise_error=_http_error(421, {"api_base": "https://ae.api.evane.ai"}))
         with pytest.raises(api.Misdirected):
@@ -225,13 +212,13 @@ class TestPostMultipartSharesTheSameTransport:
 
 
 def test_each_write_refusal_is_constructed_in_exactly_one_place():
-    """The PROPERTY, not another per-verb case: one spelling of each refusal.
+    """One spelling of each refusal, not another per-verb case.
 
-    A per-verb test proves the verb that exists behaves; it cannot see a SECOND
-    implementation appear beside it, and that is the failure that actually
-    happened here: two lanes independently extracting the same write-error
-    translation, git conflicting on one line and auto-merging the other 172.
-    Clean in git, two rules in behaviour.
+    A per-verb test proves the verb that exists behaves; it cannot see a
+    second implementation appear beside it, which is a real risk when two
+    independent changes each extract the same write-error translation: a
+    merge can be clean in git while leaving two different rules in
+    behaviour.
 
     ``Misdirected`` and ``BulkRefused`` are the two refusals worth pinning: 421
     decides whether a write lands in the region the operator named, and 400
