@@ -1,72 +1,56 @@
-"""``fm update`` — a bulk data change an operator can make without writing code.
+"""``fm update`` - a bulk data change an operator can make without writing code.
 
-THE WIRE FORMAT IS NOT OURS
----------------------------
-``POST /projects/{project_id}/admin/data-changes`` is defined by
-``routes/admin_data.py`` / ``services/bulk_data.py``: ``$action``, ``$kind``,
-``$id``, ``$set``, ``$expect``, ``$ref``, ``$replace_data``, ``$hard``, ``apply``
-defaulting to false, and a 500-op bound. This module does not invent a second one
-and does not reinterpret that one. It adds exactly ONE thing, on the operator's
-side of the wire:
+The wire format is the server's, not this module's: ``POST
+/projects/{project_id}/admin/data-changes`` defines ``$action``, ``$kind``,
+``$id``, ``$set``, ``$expect``, ``$ref``, ``$replace_data``, ``$hard``,
+``apply`` defaulting to false, and a 500-op bound. This module does not
+invent a second format and does not reinterpret that one. It adds exactly
+one thing, on the operator's side of the wire: ``$name``, resolved to an
+``$id`` here, in the client, seconds before the write, against the
+environment being written. The server never sees a ``$name``.
 
-    ``$name`` — resolved to a ``$id`` here, in the client, seconds before the
-    write, against the environment being written.
+Why ``$name`` has to exist: the endpoint's ``$ref`` looks like it covers
+this and does not. It is a strictly backward, within-batch reference to a
+row the same request just created, so an ``update`` or a ``delete`` has no
+way to name an existing row except by literal UUID, and a wrong one lands
+in a jsonb column with no foreign key and nothing errors. Every
+organisation's id differs between environments, which is exactly the kind
+of id an operator should never type or copy by hand.
 
-The server never sees a ``$name``. What it sees is the payload its own docstring
-describes.
+The copy-back is the point, not the convenience. Resolving a name
+client-side would, on its own, just move the guess. So the name the
+client resolved by is written back into ``$expect``, carrying the raw
+column value the server returned. The server then re-checks it exactly,
+without coalescing shapes. A mis-resolution is therefore refused by the
+row itself rather than written to confidently: the client's answer is
+verified by the thing it is about to change, structurally, rather than by
+anyone remembering to check.
 
-WHY ``$name`` HAS TO EXIST
---------------------------
-The endpoint's ``$ref`` looks like it covers this and does not: it is a strictly
-backward, within-batch reference to a row the same request just created
-(``services/bulk_data.py:201-227``). An ``update`` or a ``delete`` therefore has no
-way to name an existing row except by literal UUID — so the endpoint hands the
-transcribed-id failure straight back to the operator. Every organisation id differs
-between dev and prod; a wrong one lands in a jsonb column with no FK and nothing
-errors. A handover document whose id shared its first eight characters with the
-right one nearly did exactly that.
+A foreign reference inside ``$set`` (``parent_id`` and friends) cannot be
+guarded that way: it points at a different row, and ``$expect`` only
+describes the row being changed. There, the guard is the plan report:
+every resolution is recorded and printed, and the server's own
+unresolved-reference check refuses a reference that is not a real row in
+the project. Between them, a wrong foreign id is visible before the write
+and refused during it.
 
-THE COPY-BACK IS THE POINT, NOT THE CONVENIENCE
------------------------------------------------
-Resolving a name client-side would, on its own, just move the guess. So the name
-the client resolved BY is written back into ``$expect``, carrying the RAW column
-value the server returned. The server then re-checks it against ``column_snapshot``
-— exactly, without coalescing shapes, for reasons ``services/bulk_data.py:260-272``
-spells out. A mis-resolution is therefore refused by the row itself rather than
-written to confidently.
+A partial ``data`` merges, not replaces. STAKEHOLDER and CUSTOM rows carry
+a free-form ``data`` JSONB blob. ``$set`` naming ``data`` merges into
+whatever the row already holds, so ``{"data": {"country": "AE"}}``
+changes only ``country``, and every other key on the row survives. This
+is the server's default, not something this module does; it matters here
+because ``$expect`` still makes you name the row's current full ``data``
+value, which is a different thing from the partial value you are
+writing. Pass ``"$replace_data": true`` in an op to replace the whole
+blob instead, the only way to remove a key, since a merge keeps every key
+the payload does not mention.
 
-That is what makes this more than ergonomics: the client's answer is verified by
-the thing it is about to change, structurally, rather than by anyone remembering
-to check. It is the lane's "a verification line must read every value it prints
-from the thing it is verifying" rule, discharged by the protocol instead of by
-discipline.
-
-A foreign reference inside ``$set`` (``parent_id`` and friends) cannot be guarded
-that way — it points at a DIFFERENT row, and ``$expect`` only describes the row
-being changed. There, the guard is the plan report: every resolution is recorded
-and printed, and the server's own ``unresolved_references`` check
-(``services/bulk_data.py:416``) refuses a reference that is not a real row in the
-project. Between them, a wrong foreign id is visible before the write and refused
-during it.
-
-A PARTIAL `data` MERGES, NOT REPLACES
---------------------------------------
-STAKEHOLDER and CUSTOM rows carry a free-form `data` JSONB blob. `$set` naming
-`data` merges into whatever the row already holds — `{"data": {"country": "AE"}}`
-changes only `country`, and every other key on the row survives. This is the
-server's default (`services/bulk_data.py`), not something this module does; it
-matters here because `$expect` still makes you name the row's CURRENT full `data`
-value, which is a different thing from the partial value you are writing. Pass
-`"$replace_data": true` in an op to replace the whole blob instead — the only way
-to remove a key, since a merge keeps every key the payload does not mention.
-
-A DELETE IS SOFT, NOT PERMANENT
---------------------------------
-`$action: "delete"` stamps `deleted_at` and lands the row in the space's Trash,
-restorable, exactly like the UI's trash icon. `$hard` is refused for a kind that
-has a Trash entry (purge one from there instead) and required for the two that
-do not (FILE_LINK, SESSION_PARTICIPANT — no `deleted_at` column exists for them
-anywhere in the product, so their delete has always been permanent).
+A delete is soft, not permanent. ``$action: "delete"`` stamps
+``deleted_at`` and lands the row in the space's trash, restorable,
+exactly like the UI's trash icon. ``$hard`` is refused for a kind that has
+a trash entry (purge one from there instead) and required for the two
+that do not (FILE_LINK, SESSION_PARTICIPANT), whose delete has always
+been permanent.
 
 Stdlib only.
 """
@@ -82,17 +66,17 @@ from typing import Any
 from formist_cli.resolve import ResolutionError, resolve_one
 from formist_cli.targets import Target
 
-#: Mirrors ``services/bulk_data.py`` MAX_OPS. Duplicated deliberately rather than
-#: imported: ``ev`` is stdlib-only and must run without the server's dependency
-#: tree. Refusing here means the operator reads a sentence about the bound instead
-#: of a pydantic 422 about ``ops``.
+#: Mirrors the server's own op-count bound. Duplicated deliberately rather
+#: than imported: `fm` is stdlib-only and must run without the server's
+#: dependency tree. Refusing here means the operator reads a sentence
+#: about the bound instead of a validation error from the server.
 MAX_OPS = 500
 
 #: The endpoint's own vocabulary. Listed so a typo in a payload is a legible
 #: refusal rather than an ``extra: forbid`` validation error from the server.
 #: ``$replace_data`` opts an op back into wholesale-replacing ``$set.data``
 #: instead of the server's default merge, and ``$hard`` names an explicit
-#: hard/soft delete choice — see ``services/bulk_data.py::Op``.
+#: hard/soft delete choice.
 _OP_KEYS = {
     "$action", "$kind", "$id", "$set", "$expect", "$ref",
     "$replace_data", "$hard",
@@ -112,12 +96,12 @@ class Resolution:
     kind: str
     name: str
     id: str
-    #: The raw column value the match was made on — what goes into ``$expect``.
+    #: The raw column value the match was made on, what goes into ``$expect``.
     value: Any = None
     field_name: str | None = None
 
     def describe(self) -> str:
-        return f"{self.where}: {self.kind} {self.name!r} → {self.id}"
+        return f"{self.where}: {self.kind} {self.name!r} -> {self.id}"
 
 
 @dataclass(frozen=True)
@@ -131,7 +115,7 @@ class Plan:
 
     @property
     def body(self) -> dict:
-        """The request body. ``apply`` is always False here — see :func:`send`."""
+        """The request body. ``apply`` is always False here, see :func:`send`."""
         return {"apply": False, "ops": self.ops}
 
 
@@ -187,18 +171,17 @@ def build_plan(
     if not isinstance(payload, dict):
         raise UpdateError(
             "a payload must be a JSON object like "
-            '{"ops": [...]} — got a ' + type(payload).__name__ + "."
+            '{"ops": [...]}, got a ' + type(payload).__name__ + "."
         )
     ops = payload.get("ops")
     if not isinstance(ops, list):
         raise UpdateError('a payload must carry an "ops" list.')
     if not ops:
-        raise UpdateError("no ops in this payload — nothing to do.")
+        raise UpdateError("no ops in this payload, nothing to do.")
     if len(ops) > MAX_OPS:
         raise UpdateError(
-            f"{len(ops)} ops, over the {MAX_OPS}-op bound the endpoint enforces "
-            "(services/bulk_data.py MAX_OPS). The bound caps transaction duration; "
-            "split the change into batches."
+            f"{len(ops)} ops, over the {MAX_OPS}-op bound the endpoint enforces. "
+            "The bound caps transaction duration; split the change into batches."
         )
 
     resolved_ops: list[dict] = []
@@ -302,23 +285,23 @@ def _canonical(value: Any) -> str:
 
 
 def plan_token(plan: Plan, dry_run_report: Any) -> str:
-    """A short token proving the operator saw THIS dry run for THIS target.
+    """A short token proving the operator saw this dry run for this target.
 
-    Hashed over the environment, the space, the RESOLVED ops, and the dry run's own
+    Hashed over the environment, the space, the resolved ops, and the dry run's own
     result. Each is load-bearing:
 
-    - **env and space** so a plan is not portable. A token minted against local
+    - env and space, so a plan is not portable. A token minted against local
       cannot apply against ``ae``.
-    - **resolved ops** so a re-resolution that landed on a different row (someone
+    - resolved ops, so a re-resolution that landed on a different row (someone
       renamed something in between) invalidates it.
-    - **the dry-run report** so a plan whose MEANING changed server-side is
-      refused even when the ops are byte-identical — the dry run executes for real
+    - the dry-run report, so a plan whose meaning changed server-side is
+      refused even when the ops are byte-identical: the dry run executes for real
       and rolls back, so its report reflects live state.
 
     This is deliberately not a y/n confirmation: there is nothing for ``yes |`` to
     answer, and a script can carry the token, so automation stays possible while
-    staying explicit. It is also not a retyped id prefix — eight characters are
-    demonstrably not a discriminator in this dataset.
+    staying explicit. It is also not a retyped id prefix: eight characters are not
+    a reliable discriminator across a real dataset.
     """
     digest = hashlib.sha256(
         _canonical(
@@ -334,24 +317,19 @@ def plan_token(plan: Plan, dry_run_report: Any) -> str:
 
 
 def _stable_report(plan: Plan, report: Any) -> Any:
-    """What the dry run MEANT, with what it happened to NAME stripped out.
+    """What the dry run meant, with what it happened to name stripped out.
 
-    A dry run executes every op for real and rolls back, so the server mints a
-    fresh ``audit_id`` on every call and a fresh row ``id`` for every ``add``.
-    Hashing the report verbatim therefore produced a different token on each run of
-    an unchanged plan — measured against the live endpoint:
+    A dry run executes every op for real and rolls back, so the server
+    mints a fresh ``audit_id`` on every call and a fresh row ``id`` for
+    every ``add``. Hashing the report verbatim would therefore produce a
+    different token on each run of an unchanged plan, making
+    ``--apply <token>`` impossible to satisfy.
 
-        run 1 → 646aba0f42c0
-        run 2 → 50c1104c14a3
-
-    which makes ``--apply <token>`` impossible to satisfy. A guard that can never
-    pass is as broken as one that can never fail, and this one would have been
-    found by the owner mid-change rather than here.
-
-    So the projection keeps ``counts``, each result's ``index``/``action``/``kind``/
-    ``outcome``/``cascaded``, and every refusal's ``index``/``reason`` — all of which
-    change when the plan's meaning changes. A result's ``id`` is kept ONLY where the
-    plan already determined it (the op carried an ``$id``); on an ``add`` the id is
+    So the projection keeps ``counts``, each result's
+    ``index``/``action``/``kind``/``outcome``/``cascaded``, and every
+    refusal's ``index``/``reason``, all of which change when the plan's
+    meaning changes. A result's ``id`` is kept only where the plan already
+    determined it (the op carried an ``$id``); on an ``add`` the id is
     minted by the insert and is per-run noise, exactly like ``audit_id``.
     """
     if not isinstance(report, dict):
@@ -393,21 +371,15 @@ def _stable_report(plan: Plan, report: Any) -> Any:
 
 ENDPOINT = "/projects/{space}/admin/data-changes"
 
-#: Said in `--help` and in the 404 so a missing endpoint fails legibly rather than
-#: as a mystery.
-#: ⚠️ THIS NOTE USED TO PREDICT A MERGE THAT HAD ALREADY HAPPENED. It said the bulk
-#: endpoint "ships with branch deploy/admin-bulk-data-api (PR #232). Until that
-#: merges and deploys…" — PR #232 merged on 2026-08-27 (azure/main 6840b28), so it
-#: was instructing operators to wait for something already done.
-#:
-#: It no longer names a branch, a PR or a deployment state, because none of those
-#: are facts a client can hold. It describes what a 404 MEANS and names the command
-#: that measures the answer. Same reasoning as the deleted _KNOWN_UNDEPLOYED map in
-#: evtool/api.py, and the third instance of this class found in this package.
+#: Said in `--help` and in the 404 so a missing endpoint fails legibly
+#: rather than as a mystery. Deliberately names no branch, PR or
+#: deployment state, since none of those are facts a client can hold; it
+#: describes what a 404 means and names the command that measures the
+#: answer.
 NOT_DEPLOYED_NOTE = (
     "NOTE: if a region answers 404 here, the bulk endpoint is not in the image that "
     "region is running, and `fm update` can only work against a server that serves "
-    "it. `fm instance --host <host>` reports what is actually deployed there — fm "
+    "it. `fm instance --host <host>` reports what is actually deployed there; fm "
     "cannot tell a missing route from a wrong one from the client side."
 )
 
@@ -415,9 +387,9 @@ NOT_DEPLOYED_NOTE = (
 def dry_run(plan: Plan, target: Target, *, token: str | None, post=None) -> Any:
     """Execute the plan with ``apply:false``.
 
-    The endpoint runs every op for real and rolls the transaction back
-    (``services/bulk_data.py`` property 2), so this reports the ids the inserts
-    actually produced rather than ids it predicted.
+    The endpoint runs every op for real and rolls the transaction back,
+    so this reports the ids the inserts actually produced rather than ids
+    it predicted.
     """
     from formist_cli import api
 
@@ -435,7 +407,7 @@ def apply(
 ) -> Any:
     """Re-run the dry run, check the operator's plan token, then commit.
 
-    The dry run is repeated INSIDE this call rather than trusted from a previous
+    The dry run is repeated inside this call rather than trusted from a previous
     one, because a token proves the operator saw a plan, not that the plan is still
     true. Re-running is what makes the token a check instead of a receipt.
     """
@@ -446,7 +418,7 @@ def apply(
     current = plan_token(plan, report)
     if current != supplied_token:
         raise UpdateError(
-            "REFUSING TO APPLY — this plan no longer matches the one you were shown.\n"
+            "REFUSING TO APPLY: this plan no longer matches the one you were shown.\n"
             f"  you supplied: {supplied_token}\n"
             f"  current plan: {current}\n"
             "\n"
@@ -455,7 +427,7 @@ def apply(
             "row moved under the plan, a name now resolves elsewhere, or this is a "
             "plan for a different target.\n"
             "\n"
-            "→ Re-run the dry run, read it, and apply with the token it prints."
+            "-> Re-run the dry run, read it, and apply with the token it prints."
         )
     body = {"apply": True, "ops": plan.ops}
     return post(target, ENDPOINT.format(space=plan.space), body, token=token)
