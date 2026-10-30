@@ -1,32 +1,25 @@
-"""``fm connectors``: the operator's only window onto what the sync tick did.
+"""Tests for ``fm connectors``: the operator's only window onto what the
+sync tick did.
 
-WHY THIS FILE EXISTS. On 2026-09-06 a production lane found that connectors in the
-GFSS space were re-syncing every 3-4 minutes against a 30-minute setting. It could
-report the symptom (two `next_sync_at` reads five minutes apart) but not the cause,
-and said so: to confirm
-it you would have to read the run history, and no admin route or `ev` subcommand
-could. `fm logs --host evane-ae` is refused (Global region only) and the Global region has
-no SharePoint connector of its own to look at.
+A connector re-syncing far more often than its own interval setting is a
+symptom that is easy to see (two `next_sync_at` reads a few minutes apart)
+but hard to diagnose without the run history: which trigger caused each
+run, and how long each run held the tick. This command exists to surface
+that history in the terminal.
 
-Every fact needed was already recorded. `SyncRun` has `started_at`, `finished_at`,
-`trigger` and the item counts; `routes/connectors.py::_sync_run_dict` serialises them.
-Two links were missing, and both are now covered: `routes/admin.py` passing the run
-into `_connection_dict` (tests/test_connector_run_visibility.py) and this command
-printing it.
+What the output has to separate, and why each is asserted below rather
+than eyeballed:
 
-WHAT THE OUTPUT HAS TO SEPARATE, and why each is asserted below rather than eyeballed:
-
-  * `trigger`: `scheduler` (the 30-minute poll) vs `push` (a provider change
-    notification). The owner's rule is made of exactly these two clocks, and until
-    2026-09-06 nothing in the tree ever wrote `"push"`, so they were one reading.
-  * `dur`: how long a run held the tick. The tick is strictly serial, so this is the
-    number that names which connector is starving the others.
-  * a run in flight vs a finished one: a live run's duration is elapsed-so-far and
-    must not be read as final.
-  * never-run vs failed: for a linked connector, "never ran at all" is itself the
-    finding, and printing nothing would hide it.
-
-Run: uv run pytest tests/test_formist_cli_connectors.py -q
+  * `trigger`: `scheduler` (a periodic poll) vs `push` (a provider change
+    notification). These are two different clocks, and a renderer that
+    collapses them into one reading hides exactly the distinction an
+    operator needs.
+  * `dur`: how long a run held the tick. The tick is strictly serial, so
+    this is the number that names which connector is starving the others.
+  * a run in flight vs a finished one: a live run's duration is
+    elapsed-so-far and must not be read as final.
+  * never-run vs failed: for a linked connector, "never ran at all" is
+    itself the finding, and printing nothing would hide it.
 """
 
 from __future__ import annotations
@@ -70,9 +63,7 @@ def run_connectors(monkeypatch, capsys):
 def _connector(**over) -> dict:
     base = {
         "id": "11111111-1111-1111-1111-111111111111",
-        # `type`, matching the real payload. This fixture said `kind` while the
-        # server has always said `type`: a hand-written fixture agreeing with
-        # itself rather than with the thing it stands in for.
+        # `type`, matching the real payload field name.
         "type": "SHAREPOINT",
         "status": "ok",
         "last_synced_at": "2026-09-06T14:33:39.514953+00:00",
@@ -104,8 +95,7 @@ def test_a_finished_run_reports_its_trigger_and_how_long_it_held_the_tick(
         ]
     )
     assert "trigger=push" in out, (
-        "the poll and a push notification must be distinguishable in the output: "
-        "they are the two clocks the owner's cadence rule is made of"
+        "the poll and a push notification must be distinguishable in the output"
     )
     assert "dur=202.0s" in out
     assert "so far" not in out, "a finished run's duration is final, not elapsed"
@@ -142,9 +132,10 @@ def test_a_run_still_in_flight_says_its_duration_is_only_so_far(run_connectors):
 def test_a_connector_that_has_never_run_says_so_rather_than_printing_nothing(
     run_connectors,
 ):
-    """For a linked connector, "never ran at all" is a finding, not an empty cell.
-    The pre-2026-09-06 endpoint reported `sync_run: null` for EVERY connector, so a
-    renderer that skipped nulls silently would reproduce the original blind spot."""
+    """For a linked connector, "never ran at all" is a finding, not an
+    empty cell. The endpoint can report `sync_run: null` for a connector
+    that has not run yet, so a renderer that skips nulls silently would
+    hide that it never ran."""
     out = run_connectors([_connector(sync_run=None)])
     assert "last run: (never)" in out
 
@@ -197,19 +188,11 @@ def test_every_connector_is_still_listed_when_one_has_no_run(run_connectors):
 
 
 def test_the_connector_type_is_printed_and_not_a_question_mark(run_connectors):
-    """The command read `item["kind"]`; the payload has never had that key.
-
-    `routes/connectors.py::_connection_dict` publishes `type` (and `label`), never
-    `kind`, so `item.get("kind", "?")` fell through to the default on every row of
-    every space this command has ever printed. Measured against production
-    2026-09-06 (GFSS space 296346bf-…): three connectors: SHAREPOINT, OUTLOOK and
-    AIRTABLE: printed as three identical `?`.
-
-    That is not cosmetic. The command exists so an operator can tell one connector
-    from another, and this is the column that does it: the whole D193 investigation
-    turns on which of the three held the tick. A default of "?" is exactly the shape
-    this codebase keeps being burned by: a lookup that cannot fail, and so reports
-    nothing rather than reporting that it found nothing.
+    """The command must read the payload's actual `type` field, never a
+    `kind` key that does not exist in the response: a lookup that silently
+    falls through to a "?" default would print every connector as the
+    same unhelpful symbol, defeating the one column that lets an operator
+    tell one connector from another.
     """
     out = run_connectors(
         [
