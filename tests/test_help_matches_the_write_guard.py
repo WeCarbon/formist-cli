@@ -1,48 +1,25 @@
-"""``ev``'s --help must describe the write guard that EXISTS, not a stricter one.
+"""``fm``'s --help must describe the write guard that exists, not a
+stricter one.
 
-WHAT WAS WRONG
---------------
-Five ``--help`` strings said a write "requires ``--env`` on the command line".
-The guard does not do that. ``formist_cli/prefs.py::effective`` refuses to INHERIT a
-remembered environment:
+The guard (``formist_cli/prefs.py::effective``) refuses to inherit a
+remembered environment for a write, but with nothing remembered by
+``fm use`` that refusal is never reached and the write proceeds against
+the built-in default host. So ``--env`` is required for a write to
+anywhere but that default, and required unconditionally once ``fm use``
+has remembered one. A help string saying flatly that a write "requires
+``--env`` on the command line" overstates that, and the same overstated
+sentence can end up copied across several commands with nothing comparing
+the copies against the actual guard, so a per-file fix cannot see the
+next copy added later.
 
-    elif for_write and prefs.env is not None:
-        raise PrefsError("refusing to write using a remembered environment...")
-
-With nothing remembered by ``fm use`` that branch is never reached and the write
-proceeds against the built-in default (``local``). So ``--env`` is required for a
-write to anywhere but local, and required unconditionally once ``fm use`` has
-remembered one: a different and weaker sentence than the one five help strings
-were printing. Found by an independent pre-deploy review of ``fm import`` on
-2026-09-01, reading the flag's own help against ``prefs.effective``.
-
-WHY A PROPERTY, NOT FIVE ASSERTIONS
------------------------------------
-The sentence was in ``formist_cli/importer.py``, ``formist_cli/airtable.py`` (twice),
-``formist_cli/export.py`` and ``formist_cli/cli.py``: including on the ``--env`` option
-itself, the copy every command prints. That is the project rules' "one rule copied N
-times with nothing comparing the copies", and a per-file fix is structurally
-incapable of seeing the sixth copy somebody adds next month.
-
-WHAT THIS FILE DOES *NOT* DO
------------------------------
-It does not re-test the guard. ``tests/test_formist_cli_prefs.py`` already owns that,
-case by case: ``test_write_without_env_flag_refuses_when_a_default_is_remembered``,
-``test_write_with_no_remembered_env_at_all_falls_back_to_local`` and
-``test_reads_DO_inherit_the_remembered_env``. Restating them here would be a second
-copy of the very thing this file exists to prevent.
-
-What was missing is not coverage of the behaviour or coverage of the prose. It is
-the COMPARISON: nothing read the two against each other, so five help strings could
-describe a guard the code had never implemented while every test stayed green. So
-the main test below establishes the behaviour and checks the prose against it in one
-place: if ``--env`` is ever made genuinely required, that test reds on its own first
-line and points at the help text that must change with it.
-
-Its own file, per ``test_formist_cli_api_uploads_transport.py``'s reasoning: several
-lanes edit ``formist_cli/`` at once and a new file cannot conflict with any of them.
-
-Run: uv run pytest tests/test_formist_cli_help_matches_the_write_guard.py -v
+This file does not re-test the guard itself; that is covered elsewhere.
+What was missing is not coverage of the behaviour or coverage of the
+prose, it is the comparison between them: nothing read the two against
+each other, so an overstated help string could describe a guard the code
+had never implemented while every test stayed green. So the main test
+below establishes the behaviour and checks the prose against it in one
+place: if ``--env`` is ever made genuinely required, that test reds on
+its own first line and points at the help text that must change with it.
 """
 
 from __future__ import annotations
@@ -76,7 +53,7 @@ MUST_REACH = {"import", "airtable", "export", "use"}
 MIN_CORPUS_CHARS = 20_000
 
 
-def _walk(parser: argparse.ArgumentParser, path: str = "ev"):
+def _walk(parser: argparse.ArgumentParser, path: str = "fm"):
     """Yield ``(where, text)`` for every help/description string in the tree."""
     for attr in ("description", "epilog", "usage"):
         text = getattr(parser, attr, None)
@@ -117,8 +94,8 @@ def test_no_help_string_claims_env_is_required_for_a_write(tmp_path, monkeypatch
     covered and each green while contradicting each other for five help strings;
     what nobody had written down is that they answer the same question.
     """
-    # An isolated, EMPTY config: `fm use` has remembered nothing. Never the
-    # operator's real ~/.config/evane; same fixture idiom as test_formist_cli_prefs.py.
+    # An isolated, empty config: `fm use` has remembered nothing. Never the
+    # operator's real ~/.config/evane.
     monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "evane"))
 
     # (1) What the guard actually does. If this ever raises instead, `--env` HAS
@@ -162,10 +139,10 @@ def test_no_help_string_claims_env_is_required_for_a_write(tmp_path, monkeypatch
 def test_the_patterns_catch_the_sentences_that_were_actually_shipped(sentence):
     """The detector, tested against the real strings: not against a specimen.
 
-    A pattern set is exactly as good as the text it was written from, and the way
-    this check dies is somebody rewording a help string past it while believing the
-    guard still holds. These three are verbatim what the tree printed before
-    2026-09-01; if a pattern stops matching one, the pattern was narrowed, not the
-    problem.
+    A pattern set is exactly as good as the text it was written from, and
+    the way this check dies is somebody rewording a help string past it
+    while believing the guard still holds. These three are verbatim what
+    the tree printed before the fix; if a pattern stops matching one, the
+    pattern was narrowed, not the problem.
     """
     assert any(p.search(sentence) for p in FALSE_CLAIM_PATTERNS)

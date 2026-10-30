@@ -1,6 +1,5 @@
-"""``fm users grants`` / ``fm connectors grants``: the renderer must not mislead.
-
-Run: uv run pytest tests/test_formist_cli_grants_render.py -q
+"""Tests for ``fm users grants`` / ``fm connectors grants``: the renderer
+must not mislead.
 
 There is no HTTP here and that is deliberate: the defect available in these two
 commands is not the request, it is a table that is TRUE about the JSON it received
@@ -30,9 +29,9 @@ def _row(**over) -> dict:
 
 
 def test_a_provider_that_records_no_scopes_is_not_shown_as_granted_nothing():
-    """⚠️ The distinction the whole panel turns on.
+    """The distinction the whole panel turns on.
 
-    An API-key connector records no scopes. Rendering that as ``0``: the same cell
+    An API-key connector records no scopes. Rendering that as ``0``, the same cell
     an empty-but-recorded grant gets: would tell an operator that a Fireflies key
     may do nothing, when it may do everything that API allows.
     """
@@ -84,16 +83,16 @@ def test_connector_grants_report_names_the_space_it_read():
     """The command takes a UUID; a table with no space name on it cannot be checked
     against the space the operator meant."""
     out = connectors_mod.render_grants(
-        {"space": {"id": "s-1", "name": "GFSS 2026", "region": "ae"}, "items": []}
+        {"space": {"id": "s-1", "name": "Acme Summit", "region": "ae"}, "items": []}
     )
-    assert "GFSS 2026" in out and "ae" in out
+    assert "Acme Summit" in out and "ae" in out
 
 
 def test_both_commands_share_one_renderer():
-    """⚠️ A property, not a behaviour: there must be exactly ONE grant-table
-    implementation. Two would drift on precisely the columns above, and nothing in
-    the tree would compare them: the failure mode the project rules documents for
-    independently-invented helpers."""
+    """A property, not a behaviour: there must be exactly one grant-table
+    implementation. Two independently-invented helpers would drift on
+    precisely the columns above, and nothing in the tree would compare
+    them."""
     src_users = users_mod.render_grants.__code__.co_names
     src_conn = connectors_mod.render_grants.__code__.co_names
     assert "render_grant_rows" in src_users
