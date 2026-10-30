@@ -30,11 +30,11 @@ def _looks_like_uuid(value: str) -> bool:
 
 def _version_sort_key(version: object) -> tuple:
     """Best-effort numeric-aware ordering for a package's freeform ``version``
-    string (``models/SkillPackage.py``: "plain string, NOT NULL, defaulting
-    1.0.0" — never guaranteed semver). Each dot-separated segment sorts as an
-    int when it parses as one (numeric segments always rank above textual
-    ones, so "2" cannot lose to a stray "10-beta"), else as text. Ties are the
-    caller's business (:func:`resolve_package` breaks them on ``created_at``).
+    string (a plain, non-null string defaulting to 1.0.0, never guaranteed
+    semver). Each dot-separated segment sorts as an int when it parses as
+    one (numeric segments always rank above textual ones, so "2" cannot
+    lose to a stray "10-beta"), else as text. Ties are the caller's
+    business (:func:`resolve_package` breaks them on ``created_at``).
     """
     parts: list[tuple[int, int, str]] = []
     for segment in str(version or "").split("."):
@@ -46,11 +46,11 @@ def _version_sort_key(version: object) -> tuple:
 
 
 def fetch_packages(target, space: str, *, token: str | None, get=None) -> list[dict]:
-    """Every skill-library package visible to ``space`` —
-    ``GET /projects/{id}/skill-library/packages`` (``routes/skill_library.py``),
-    the MEMBER-facing, product-filtered listing (unlike ``ev skill-library-sync``,
-    which reaches the admin, membership-free catalog). Not paginated: the route
-    takes no ``limit``/``offset`` and returns every visible row in one envelope.
+    """Every skill-library package visible to ``space``:
+    ``GET /projects/{id}/skill-library/packages``, the member-facing,
+    product-filtered listing (unlike the admin, membership-free catalog
+    sync uses). Not paginated: the route takes no ``limit``/``offset``
+    and returns every visible row in one envelope.
     """
     get = get or api.get
     payload = get(target, f"/projects/{space}/skill-library/packages", token=token)
@@ -64,7 +64,7 @@ def fetch_packages(target, space: str, *, token: str | None, get=None) -> list[d
 
 
 def fetch_space_skills(target, space: str, *, token: str | None, get=None, page_size: int = 200) -> list[dict]:
-    """Every skill already in ``space``, paged to the end —
+    """Every skill already in ``space``, paged to the end:
     ``GET /projects/{id}/skills`` (the generic resource-router listing), so
     :func:`already_installed` can check ``package_id`` against ALL of them, not
     only the first page.
@@ -88,13 +88,13 @@ def fetch_space_skills(target, space: str, *, token: str | None, get=None, page_
 
 
 def resolve_package(packages: list[dict], package_ref: str) -> tuple[dict, list[dict]]:
-    """``(chosen, all_candidates)`` for ``package_ref`` — a package ROW UUID
-    (matched exactly, one row) or the reverse-DNS ``package`` id
-    (``SkillPackage.package``), which several rows can share, one per version
-    seeded over time. For the reverse-DNS form, the NEWEST version wins
-    (:func:`_version_sort_key`, ``created_at`` as the tiebreaker) and the
-    caller is expected to print every candidate it passed over — this
-    function only decides, it never announces.
+    """``(chosen, all_candidates)`` for ``package_ref``: a package row UUID
+    (matched exactly, one row) or the reverse-DNS ``package`` id, which
+    several rows can share, one per version seeded over time. For the
+    reverse-DNS form, the newest version wins (:func:`_version_sort_key`,
+    ``created_at`` as the tiebreaker) and the caller is expected to print
+    every candidate it passed over: this function only decides, it never
+    announces.
     """
     ref = str(package_ref).strip()
     if _looks_like_uuid(ref):
@@ -110,7 +110,7 @@ def resolve_package(packages: list[dict], package_ref: str) -> tuple[dict, list[
         raise SkillLibraryError(
             f"no skill-library package with package id {ref!r} is visible to this space.\n"
             "PACKAGE is the reverse-DNS id (SkillPackage.package, e.g. "
-            "'com.wecarbon.esg-report') or the package row's own UUID — "
+            "'com.wecarbon.esg-report') or the package row's own UUID. "
             "`fm get SKILL_LIBRARY_PACKAGE` is not wired up yet, so check "
             "`GET /projects/{space}/skill-library/packages` (or the gallery UI) "
             "for the id."
@@ -125,12 +125,11 @@ def resolve_package(packages: list[dict], package_ref: str) -> tuple[dict, list[
 def already_installed(skills: list[dict], package_id: str) -> dict | None:
     """The space's own ``Skill`` row installed FROM ``package_id``, or ``None``.
 
-    ``package_id`` provenance (``models/Skill.py``'s "INSTALL PROVENANCE"
-    section) is stamped only by the real install path
-    (``services.skill_packages.install_package_into_project`` — the same
-    function both the gallery's "Install" button and this command's
-    ``--apply`` call), so an exact match is unambiguous: this space already has
-    THIS row, whoever or whatever installed it.
+    ``package_id`` provenance is stamped only by the real install path
+    (the same server-side function both the gallery's "Install" button and
+    this command's ``--apply`` call reach), so an exact match is
+    unambiguous: this space already has this row, whoever or whatever
+    installed it.
     """
     for row in skills:
         if row.get("package_id") == package_id:
@@ -143,8 +142,8 @@ def add_install_parser(sub) -> None:
         "skill-library-install",
         help="install one skill-library package into a space (idempotent; dry run unless --apply)",
         description=(
-            "Installs PACKAGE — the reverse-DNS package id (SkillPackage.package, "
-            "e.g. 'com.wecarbon.esg-report') or the package row's own UUID — into "
+            "Installs PACKAGE, the reverse-DNS package id (SkillPackage.package, "
+            "e.g. 'com.wecarbon.esg-report') or the package row's own UUID, into "
             "--space, through the SAME member-facing route the gallery's own "
             "'Install' button uses (POST /projects/{id}/skill-library/packages/"
             "{package_id}/install), so the installed Skill carries real "
@@ -155,7 +154,7 @@ def add_install_parser(sub) -> None:
             "printed so the choice is checkable.\n\n"
             "IDEMPOTENT: if the space already has a skill installed from this "
             "exact package (GET /projects/{id}/skills, matched by package_id), "
-            "this says so and does nothing — no request is sent.\n\n"
+            "this says so and does nothing: no request is sent.\n\n"
             "DRY RUN by default: prints the plan and touches nothing. --apply "
             "performs the install."
         ),
@@ -201,7 +200,7 @@ def run_install(args) -> int:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             print(
-                f"already installed — nothing to do.\n"
+                f"already installed: nothing to do.\n"
                 f"  package: {chosen.get('name')!r} v{chosen.get('version')} (id={chosen.get('id')})\n"
                 f"  skill:   id={existing.get('id')}  name={existing.get('name')!r}"
             )
@@ -209,7 +208,7 @@ def run_install(args) -> int:
 
     if not args.apply:
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would install package {chosen.get('name')!r} v{chosen.get('version')} "
             f"(id={chosen.get('id')}, package={chosen.get('package')!r}) into space "
             f"{space} ({target.env}).\n"
@@ -243,5 +242,5 @@ def run_install(args) -> int:
 
 
 # ===========================================================================
-# ev skill-library-publish — ONE package into a deployment's catalog, as data
+# fm skill-library-publish: one package into a deployment's catalog, as data
 # ===========================================================================
