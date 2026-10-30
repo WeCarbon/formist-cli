@@ -481,7 +481,7 @@ class TestHelpSaysWhatTheStreamCarries:
         v1 asserted --help named `join_url` and `author_name` as leaks — true.
         v2 asserted the opposite, after a fix masked URLs and emails by value.
         v3 (this one) is back to v1's contract, because the owner ruled the fix must
-        NOT ship: 日志不用脱敏，我得分析 — he analyses from unredacted output.
+        NOT ship: logs are not redacted, because they are analysed from unredacted output.
 
         The lesson is not "tests churn". It is that a --help describing a redaction
         that does not exist is worse than no warning at all, because it trains the

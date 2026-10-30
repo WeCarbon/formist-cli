@@ -210,7 +210,7 @@ def test_the_admin_scope_is_only_requested_when_asked_for(monkeypatch):
 # --- the tool's promise -----------------------------------------------------------------
 def test_there_is_no_flag_and_exactly_one_sanctioned_env_var():
     """A PROPERTY, not an example. `fm login --token …` was the old interface and
-    stays gone. D301 (二 = C, 2026-09-09, DECISIONS.old.md) sanctioned exactly ONE
+    stays gone. D301 (option C, 2026-09-09) sanctioned exactly ONE
     non-interactive credential path — $FORMIST_TOKEN (formist_cli/tokens.py) — and every
     OTHER name would be the old hole wearing a hat."""
     import pathlib
@@ -389,7 +389,7 @@ def test_an_admin_command_is_refused_before_any_socket(monkeypatch):
         privileges.check("users", tokens.load_meta("127.0.0.1:8160").get("scopes"))
 
 
-# --- $FORMIST_TOKEN — D301 (二 = C, 2026-09-09) --------------------------------------
+# --- $FORMIST_TOKEN — D301 (option C, 2026-09-09) --------------------------------------
 class TestWhoamiNamesTheSource:
     def test_file_backed_credential_names_the_file(self, monkeypatch, capsys):
         _store_a_credential()
@@ -591,11 +591,11 @@ class TestEnvTokenRedaction:
         assert tokens.ENV_TOKEN_VAR in help_text
 
 
-# --- item 四: the admin refusal an env token without the scope gets ----------------------
+# --- item 4: the admin refusal an env token without the scope gets ----------------------
 def test_the_admin_scope_refusal_names_ev_login_dash_dash_admin():
     """This is the exact failure `deploy/release.sh`'s `fm instance` step hits when
     the stored/env credential belongs to a platform admin who did not pass
-    `--admin` to `fm login`. D301 (四): accept the default, but the message must
+    `--admin` to `fm login`. D301 (item 4): accept the default, but the message must
     say `fm login --admin` — verified here rather than assumed, because the
     client's OWN added text (formist_cli/api.py::_cli_scope_refusal) does not spell out
     the flag; what makes it true is the SERVER's message (routes/admin.py::

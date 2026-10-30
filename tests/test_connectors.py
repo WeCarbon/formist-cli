@@ -3,7 +3,7 @@
 WHY THIS FILE EXISTS. On 2026-09-06 a production lane found that connectors in the
 GFSS space were re-syncing every 3-4 minutes against a 30-minute setting. It could
 report the symptom (two `next_sync_at` reads five minutes apart) but not the cause,
-and said so: 要确认得看 `SyncRun` 历史，但没有 admin 路由/`ev` 子命令能读它 — to confirm
+and said so: to confirm
 it you would have to read the run history, and no admin route or `ev` subcommand
 could. `fm logs --host evane-ae` is refused (Global region only) and the Global region has
 no SharePoint connector of its own to look at.

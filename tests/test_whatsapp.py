@@ -16,7 +16,7 @@ shapes of defect this guards against, each named on the test that catches it:
      without ever calling ``input()``.
 
 ``attest-pin`` (and the secret-NAME-vs-VALUE guard it used) is GONE — owner
-D600, 2026-09-23: 「there is no PIN any more」.
+D600, 2026-09-23: "there is no PIN any more".
 
 Run: uv run pytest tests/test_formist_cli_whatsapp.py -q
 """

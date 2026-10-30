@@ -314,7 +314,7 @@ class TestDescribeMeta:
 
 
 class TestEnvTokenVar:
-    """``$FORMIST_TOKEN`` — D301 (二 = C, 2026-09-09). Unit-level checks on the
+    """``$FORMIST_TOKEN`` — D301 (option C, 2026-09-09). Unit-level checks on the
     function itself; formist_cli/tests/test_formist_cli_login.py covers the same property
     through the CLI/resolver call sites that consume it."""
 

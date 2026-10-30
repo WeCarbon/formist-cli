@@ -161,7 +161,7 @@ class TestItResolvesAndRefusesInOnePlace:
     def test_an_env_sourced_token_is_used_as_is_never_refreshed_and_announced(
         self, monkeypatch, capsys
     ):
-        """D301 (二 = C): $FORMIST_TOKEN wins over the file for THIS call and `ev`
+        """D301 (option C): $FORMIST_TOKEN wins over the file for THIS call and `ev`
         must not refresh it — refreshing would call `login.store_payload`, i.e.
         WRITE the env-sourced credential to disk, exactly what the design promises
         never to do. Pre-fix, `resolve()` called `_refresh_if_stale`

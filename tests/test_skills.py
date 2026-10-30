@@ -1,8 +1,8 @@
 """``fm skills-add`` / ``fm skills-update`` (``formist_cli/skills.py``) — the client
 half of installing/replacing a project's own skill from a local ``SKILL.md``,
-now that ``data/default_skills/`` no longer ships one (owner, 2026-09-08:
-「所有的 skills 都是 data，都是在数据库里而不是代码 repo 里面的」/「对的，部署
-的时候可以 fm skills-add 和 fm skills-update」).
+now that ``data/default_skills/`` no longer ships one (2026-09-08: skills are
+data in the database, not files in the code repository; deployments install
+them with fm skills-add and fm skills-update).
 
 Same convention as `tests/test_formist_cli_uploads.py` (this module's own sibling —
 `formist_cli/skills.py` calls straight into `formist_cli/uploads.py`'s
