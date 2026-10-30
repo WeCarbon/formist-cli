@@ -1,127 +1,96 @@
-"""``fm files`` — the file-row operations surface: ``merge``, ``reevaluate`` and
-``download``.
+"""``fm files``: the file-row operations surface (``merge``, ``reevaluate``, ``download``).
 
-THREE SUBCOMMANDS, ONE MODULE, AND WHY THEY MET HERE. The main and prod lines each
-grew an ``evtool/files.py`` independently and neither knew about the other:
-main's was ``fm files reevaluate`` (ev-absorb L3, replacing
-the retired ``reevaluate_files`` script), prod's was ``fm files merge`` (D455/D461, the
-13 duplicate SharePoint File pairs in prod ``ae``). They are different jobs on
-the same noun, and the 2026-09-14 integration kept BOTH — as real argparse
-subcommands rather than one flat parser, because the two disagree on what
-``--apply`` means: ``reevaluate --apply`` is a flag, ``merge --apply`` takes the
-``report_token`` the dry run printed. One parser cannot carry both spellings of
-one option name, and quietly picking one would have silently changed the other
-command's contract. ``download`` joined the same group later, as a pure READ with
-no ``--apply`` of its own at all — see its own section below.
+Three different jobs on the same noun, kept as real argparse
+subcommands rather than one flat parser, because ``merge`` and
+``reevaluate`` disagree on what ``--apply`` means: ``reevaluate
+--apply`` is a flag, ``merge --apply`` takes the ``report_token`` a
+prior dry run printed. One parser cannot carry both spellings of one
+option name.
 
---- ev files merge ------------------------------------------------------------
+--- fm files merge ------------------------------------------------------
 
-D455, owner-approved 2026-09-11: a real prod ``ae`` space holds 13 pairs of SharePoint File
-rows sharing one ``remote_id``, so ``cache_remote_file``'s ``.first()`` refreshes one
-of each pair forever and freezes the other. The pairs are in
-``scratchpad/0910/data-fixes/DRYRUN-10b.duplicates.json``; the repair plan is in
-``scratchpad/0911/file-dedupe/PROD-PLAN.md``.
-
-The decision lives on the SERVER (``services/file_merge.py``); this module is a
-client and holds no copy of it. That split is not stylistic — two answers to "which
-of these two rows survives, and what does it carry" is precisely the kind of
+Merges two duplicate File rows that share one remote id. The decision
+of which row survives, and what it carries, lives on the server; this
+module is a client and holds no copy of it, since two independent
+answers to "which of these rows survives" is precisely the kind of
 disagreement that leaves a half-merged row behind.
 
-WHY IT TALKS TO ``/projects/{space}/admin/...`` AND NOT ``api.admin_*``
------------------------------------------------------------------------
-``api.admin_get``/``admin_post`` refuse a non-Global prod target before a socket
-opens (``evtool/api.py::_check_admin_target``), which is correct for the literal
-``/admin`` tier — that tier IS Global-only. Files are region-local and every one of
-the 13 pairs is in ``ae``, so sending this through the admin helpers would refuse the
-only target that has the data. ``fm participants dedupe`` and ``fm airtable`` made
-the same call for the same reason.
+This talks to ``/projects/{space}/admin/...`` rather than the
+admin-only helpers, because files are region-local: the admin helpers
+refuse a non-Global prod target before a socket opens, which is
+correct for the platform-admin tier, but would refuse the only region
+that actually holds the data. ``fm participants dedupe`` and
+``fm airtable`` make the same call for the same reason.
 
-THE SAFETY CHOREOGRAPHY
------------------------
-**A dry run always runs, including under ``--apply``** — it is printed first, and
-what is submitted is the ``report_token`` of the report that was printed.
+The safety choreography:
 
-**``--apply`` takes the token, not a bare flag.** The connector refreshes every 30
-minutes, so "the pair as it is now" is a different thing from "the pair you were
-shown". A stale token is a 409 and nothing is written.
+* a dry run always runs, including under ``--apply``: it is printed
+  first, and what is submitted is the ``report_token`` of the report
+  just printed.
+* ``--apply`` takes that token, not a bare flag, since the pair can
+  change between the dry run and the apply (the connector refreshes
+  every 30 minutes); a stale token gets a 409 and nothing is written.
+* ``--apply`` never inherits an environment from ``fm use``.
+* one pair per call, and ``--reason`` is required, enforced
+  server-side too: there is deliberately no ``--all`` and no batch
+  file of pairs, since deduplication is a manual, judgement-based
+  decision, and naming two ids is the judgement the rule asks for.
+* the dry run describes: both rows' identity columns side by side with
+  conflicts marked, every reference that would move, which row's
+  content the merged row would carry, and which blob keys are shared
+  (protected) versus exclusive (destroyed with the dropped row).
+  Nothing in it is a command to run on its own.
 
-**``--apply`` never inherits an environment from ``fm use``.** A remembered
-environment is one somebody forgets they set.
+--- fm files reevaluate -------------------------------------------------
 
-**ONE PAIR PER CALL, and ``--reason`` is required.** Owner rule, 2026-09-09,
-enforced server-side (``services/dedupe_guard.py``) and refused **422** if this CLI
-is bypassed. There is deliberately no ``--all``, no file of pairs and no loop: 13
-pairs is 13 dry runs a human read. Naming two ids IS the judgement the rule asks for.
+Re-derives whether a File row's stored skip verdict still matches the
+current processing criteria (the size cap, the supported-format list,
+and so on), through the routes the product already exposes:
 
-**The dry run DESCRIBES.** It prints both rows' identity columns side by side with
-conflicts marked, every reference that would move, which row's markdown surfaces the
-merged row would carry and what would be discarded, and which blob keys the two rows
-SHARE (protected) versus hold exclusively (destroyed with the dropped row). Nothing
-in it is a command to run.
+* no ``--file``: ``POST /projects/{id}/files/reevaluate`` (a
+  project-wide sweep, admin-only, bounded per call, resumable via
+  ``--after-id``)
+* ``--file <id>``: ``POST /projects/{id}/files/{file_id}/reevaluate``
+  (one row, any writer)
 
---- ev files reevaluate -------------------------------------------------------
+Dry run by default on both forms: the sweep route already defaults to
+a dry run server-side, but the single-file route does not, so this
+client always sends its own ``dry_run`` rather than trusting whichever
+default the server happens to pick. ``--apply`` flips it.
 
-Absorbs the retired ``reevaluate_files`` script (EV-ABSORB.md §3.1, no new endpoint).
-That script re-derived, over a direct DB session, whether a File row's stored
-skip verdict still matches the CURRENT criteria (the size cap, the supported-
-format list, …) — see its own docstring for why this must be RE-RUN every time
-a criterion moves, not run once as a backfill. This command reaches the SAME
-logic (``services/file_reevaluation.py``) through the routes the product
-already exposes:
+``only_skipped`` / ``--limit`` / ``--after-id`` are sweep-only; the
+single-file body rejects unknown fields, so they are never sent when
+``--file`` is given (sending them would 422 instead of being silently
+ignored).
 
-* no ``--file`` -> ``POST /projects/{id}/files/reevaluate`` (project-wide
-  sweep, ``routes/files_rest.py::ReevaluateSweepRequest`` — admin-only,
-  bounded per call, resumable via ``--after-id``)
-* ``--file <id>`` -> ``POST /projects/{id}/files/{file_id}/reevaluate`` (one
-  row, ``ReevaluateRequest`` — any writer)
+--- fm files download ---------------------------------------------------
 
-⚠️ DRY RUN by default on BOTH forms. The sweep route already defaults
-``dry_run: true`` server-side, but the single-file route does NOT
-(``ReevaluateRequest.dry_run: bool = False``) — so this client sends its own
-``dry_run`` on every call rather than trusting whichever default the server
-happens to pick for the shape it was asked to hit. ``--apply`` flips it.
+A pure read: every file under ``--folder``, recursively, downloaded
+into ``--out`` with its subfolder structure preserved.
 
-``only_skipped`` / ``--limit`` / ``--after-id`` are SWEEP-only
-(``ReevaluateSweepRequest``); the single-file body is ``extra="forbid"``
-(``ReevaluateRequest``), so they are never sent when ``--file`` is given —
-sending them would 422 instead of being silently ignored.
+This does not use the server's own ``folder=`` filter for that,
+because that filter matches only a file's immediate parent folder; a
+file one level deeper is invisible to it. So this command instead
+pages through the space's whole (unfiltered) file listing and filters
+``File.path`` client-side for everything under ``--folder``, the only
+way to get "under a folder, including its subfolders" out of a
+listing whose server-side filter deliberately does not cascade.
 
---- ev files download ----------------------------------------------------------
-
-A pure READ: every file under ``--folder``, RECURSIVELY, downloaded into
-``--out`` with its subfolder structure preserved.
-
-⚠️ "RECURSIVELY" IS WHY THIS DOES NOT USE THE SERVER'S OWN ``folder=`` FILTER.
-``GET /projects/{id}/files?folder=...`` (``routes/entities.py::list_files``)
-exists and looks like the obvious tool for this, but its predicate
-(``services/album_facets.py::absolute_folder_clause``) is EXACT-MATCH ONLY —
-by owner directive on the Photos folder chips, 2026-09-16, verbatim:
-「不要 cascade」("do not cascade"). It matches a file whose IMMEDIATE parent
-folder equals the given path; a file one level deeper is invisible to it. So
-this command instead pages through the space's WHOLE (unfiltered) file listing
-and filters ``File.path`` client-side for everything under ``--folder`` — the
-only way to get "under a folder, including its subfolders" out of a listing
-whose one server-side folder filter deliberately refuses to do that.
-
-Each match is downloaded via ``GET /projects/{id}/files/{file_id}/download``
-(``routes/files.py::download_file`` — project-MEMBER auth, the same door the
-product's own file preview uses), one request per file; a SharePoint-backed
-row without a durable local copy is fetched from the source on demand by that
-same route (see its own docstring), so this command never talks to a
+Each match is downloaded through the same per-file download route the
+product's own file preview uses, one request per file; a
+connector-backed row without a durable local copy is fetched from the
+source on demand by that same route, so this command never talks to a
 connector directly.
 
-Every download is checked against the SIZE the listing already reported for
-that row — the project rules' rule that a mutation must never merely report success:
-here it is not a mutation, but the same failure shape applies to a read that
-silently wrote a truncated file and called it done. A size mismatch is a
-per-file FAILURE (the file is still written to disk, since the bytes already
-arrived, but it is named in the failure list rather than counted as a quiet
-success).
+Every download is checked against the size the listing already
+reported for that row. A size mismatch is a per-file failure: the
+file is still written to disk, since the bytes already arrived, but
+it is named in the failure list rather than counted as a quiet
+success.
 
-One file failing does not stop the rest — the same "a bulk operation must not
-abort halfway leaving no record of what worked" reasoning ``fm upload DIR``
-and ``fm default-skills install --all-spaces`` already take. Exit code is
-non-zero iff at least one file failed.
+One file failing does not stop the rest, the same reasoning
+`fm upload DIR` takes. Exit code is non-zero iff at least one file
+failed.
 """
 
 from __future__ import annotations
@@ -144,14 +113,14 @@ class FilesError(Exception):
 
 
 _DESCRIPTION = """Re-decide the skip verdict for this project's file rows under
-TODAY's processing criteria (services/file_reevaluation.py) — the mechanism
-that notices a raised size cap or a newly-supported format actually reached
-already-synced rows, which nothing else does.
+today's processing criteria: the mechanism that notices a raised size cap or a
+newly-supported format actually reached already-synced rows, which nothing
+else does.
 
-  ev files reevaluate --space <id>                    project-wide sweep (dry run)
-  ev files reevaluate --space <id> --apply             sweep, for real
-  ev files reevaluate --space <id> --file <file-id>    one row (dry run)
-  ev files reevaluate --space <id> --file <file-id> --apply
+  fm files reevaluate --space <id>                    project-wide sweep (dry run)
+  fm files reevaluate --space <id> --apply             sweep, for real
+  fm files reevaluate --space <id> --file <file-id>    one row (dry run)
+  fm files reevaluate --space <id> --file <file-id> --apply
 
 DRY RUN by default on both forms. --apply is what writes.
 """
@@ -164,9 +133,9 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
         "files",
         help="merge two duplicate File rows, re-apply today's processing criteria, or download a folder",
         description=(
-            "fm files merge       — merge two duplicate File rows in a space (WRITE)\n"
-            "fm files reevaluate  — re-apply today's file-processing criteria (WRITE)\n"
-            "fm files download    — download every file under a folder, recursively (READ)\n\n"
+            "fm files merge       merge two duplicate File rows in a space (WRITE)\n"
+            "fm files reevaluate  re-apply today's file-processing criteria (WRITE)\n"
+            "fm files download    download every file under a folder, recursively (READ)\n\n"
             "merge/reevaluate are DRY RUN by default; download is a plain read with no "
             "--apply of its own. Run `fm files <subcommand> --help` for the full "
             "contract of each; they are different jobs."
@@ -184,20 +153,20 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
             "every live reference (task links, the search index row, chip lists, "
             "status points, chat attachments, non-terminal proposals) moves onto "
             "--keep, --keep fills its empty columns from --drop, and --drop is "
-            "HARD-deleted (D461) — not trashed. Audit history is never rewritten; "
+            "hard-deleted, not trashed. Audit history is never rewritten; "
             "--drop's columns survive in the delete audit row's before-snapshot.\n\n"
             "DRY RUN BY DEFAULT. --apply takes the report_token this run printed; "
             "if either row has changed since (the connector refreshes every 30 "
             "minutes), the server answers 409 and writes nothing.\n\n"
             "ONE PAIR PER CALL, and --reason is REQUIRED under --apply: one "
             "sentence saying why these two rows are the same file. There is no "
-            "'merge them all' shape — deduplication is a manual, judgement-based "
-            "decision (owner rule, 2026-09-09), and a request without a reason is "
+            "'merge them all' shape, since deduplication is a manual, "
+            "judgement-based decision, and a request without a reason is "
             "refused 422 by the server.\n\n"
             "BLOB SAFETY. A markdown blob the two rows SHARE is removed from the "
             "dropped row before it is destroyed, so the hard-delete cannot take the "
             "survivor's copy with it. A blob that is exclusively the dropped row's "
-            "own — including an UPLOAD's stored bytes — IS deleted immediately, "
+            "own, including an UPLOAD's stored bytes, IS deleted immediately, "
             "along with the row; that is no longer a separate, later decision."
         ),
         epilog=PLATFORM_ADMIN_GATE_NOTE,
@@ -216,7 +185,7 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
         "--drop",
         required=True,
         metavar="FILE_ID",
-        help="the File row merged into --keep and then HARD-deleted (D461), not "
+        help="the File row merged into --keep and then HARD-deleted, not "
         "trashed. Its references move first; its columns survive only in the "
         "delete audit row's snapshot",
     )
@@ -244,7 +213,7 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     _add_env(reevaluate, for_write=True)
     _add_space(reevaluate)
     reevaluate.add_argument("--file", default=None, help="reevaluate ONE file id instead of the whole project")
-    reevaluate.add_argument("--apply", action="store_true", help="write (default: dry run — counts only)")
+    reevaluate.add_argument("--apply", action="store_true", help="write (default: dry run, counts only)")
     reevaluate.add_argument(
         "--only-skipped", dest="only_skipped", action="store_true", default=True,
         help="sweep only: rows that currently carry a skip reason (default)",
@@ -269,10 +238,10 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
             "each one into --out, preserving the subfolder structure it found "
             "them in.\n\n"
             "The server's own folder= filter (GET /projects/{id}/files) is "
-            "EXACT-MATCH ONLY — it deliberately does not cascade into "
-            "subfolders (owner directive on the Photos chips, 2026-09-16) — so "
-            "this command pages through the space's WHOLE file listing instead "
-            "and filters by path client-side. See the module docstring.\n\n"
+            "EXACT-MATCH ONLY: it deliberately does not cascade into "
+            "subfolders, so this command pages through the space's WHOLE file "
+            "listing instead and filters by path client-side. See the module "
+            "docstring.\n\n"
             "Each file's downloaded size is checked against what the listing "
             "reported; a mismatch is a per-file FAILURE, not a silently short "
             "file. One file failing does not stop the rest; the exit code is "
@@ -299,7 +268,7 @@ def build_standalone_parser() -> argparse.ArgumentParser:
 
 def cmd_files(args) -> int:
     """Dispatch ``fm files <subject>``. Nothing is shared between the branches
-    except this line — see the module docstring for why they are separate parsers."""
+    except this line; see the module docstring for why they are separate parsers."""
     subject = getattr(args, "subject", None)
     if subject == "reevaluate":
         return _run_reevaluate(args)
@@ -308,12 +277,6 @@ def cmd_files(args) -> int:
     return _run_merge(args)
 
 
-#: Deliberately NOT named `ENDPOINT`. That name is a DEBT row in
-#: `tests/cross_module_drift_baseline.py` — `evtool/airtable.py` and
-#: `evtool/update.py` each own one with nothing comparing them — and a third copy
-#: joining a row that already records a hazard makes the hazard bigger. Same
-#: decision `evtool/participants.py` (`DEDUPE_PATH`) took, and the baseline's own
-#: reason text says so.
 FILE_MERGE_PATH = "/projects/{space}/admin/files/merge"
 
 
@@ -352,9 +315,8 @@ def submit(
 ) -> dict:
     """Merge this pair, if it still matches ``report_token``.
 
-    Sends ``reason`` as-is and lets the server refuse (422) a blank one —
-    ``services/dedupe_guard.py`` is the one place that rule is checked; duplicating
-    it here would be exactly the drift the project rules warns about.
+    Sends ``reason`` as-is and lets the server refuse (422) a blank
+    one, rather than duplicating that validation here.
     """
     from urllib.parse import urlencode
 
@@ -371,13 +333,13 @@ def render(report: dict, *, out=None) -> None:
     out = out or sys.stdout
     refusals = report.get("refusals") or []
     if refusals:
-        print("REFUSED — nothing can be merged:", file=out)
+        print("REFUSED: nothing can be merged:", file=out)
         for refusal in refusals:
-            print(f"  ✗ {refusal}", file=out)
+            print(f"  - {refusal}", file=out)
         return
 
     if report.get("idempotent"):
-        print(f"ALREADY MERGED — {report.get('idempotent_reason')}", file=out)
+        print(f"ALREADY MERGED: {report.get('idempotent_reason')}", file=out)
         return
 
     print(
@@ -385,11 +347,11 @@ def render(report: dict, *, out=None) -> None:
         f"drop {report.get('drop_id')}",
         file=out,
     )
-    print("\n## both rows, side by side (× marks a conflict)\n", file=out)
+    print("\n## both rows, side by side (x marks a conflict)\n", file=out)
     print("| field | keep | drop | |", file=out)
     print("|---|---|---|---|", file=out)
     for row in report.get("fields") or []:
-        mark = "×" if row.get("conflict") else ("→" if row.get("fills_a_gap") else "")
+        mark = "x" if row.get("conflict") else ("+" if row.get("fills_a_gap") else "")
         print(
             f"| {row.get('field')} | {row.get('keep')!r} | {row.get('drop')!r} | {mark} |",
             file=out,
@@ -406,7 +368,7 @@ def render(report: dict, *, out=None) -> None:
         # this, and a report that said "2 conflicts" while silently picking a side
         # would be a check that cannot fail.
         print(
-            f"  ⚠ CONFLICT {conflict.get('field')}: keeping {conflict.get('keeper')!r}, "
+            f"  CONFLICT {conflict.get('field')}: keeping {conflict.get('keeper')!r}, "
             f"discarding {conflict.get('loser')!r}",
             file=out,
         )
@@ -459,22 +421,22 @@ def _run_merge(args) -> int:
             print(json.dumps(report, indent=2))
         elif not report.get("refusals") and not report.get("idempotent"):
             print(
-                f"\n→ re-run with --reason \"<why these are one file>\" --apply "
+                f"\nRe-run with --reason \"<why these are one file>\" --apply "
                 f"{report.get('report_token')} --host <host> to merge this pair."
             )
         return 0
 
     if report.get("refusals"):
         raise FilesError(
-            "REFUSING TO APPLY — the dry run above says this pair cannot be merged. "
+            "REFUSING TO APPLY: the dry run above says this pair cannot be merged. "
             "Nothing was sent."
         )
     if report.get("idempotent"):
-        print("\nalready merged — no request was sent.")
+        print("\nalready merged, no request was sent.")
         return 0
     if args.apply != report.get("report_token"):
         raise FilesError(
-            "REFUSING TO APPLY — this is not the report you were shown.\n"
+            "REFUSING TO APPLY: this is not the report you were shown.\n"
             f"  you passed : {args.apply}\n"
             f"  report now : {report.get('report_token')}\n"
             "One of the two rows changed between your dry run and this call (the "
@@ -491,13 +453,13 @@ def _run_merge(args) -> int:
     render(applied)
     if applied.get("applied"):
         print(
-            f"\n✓ merged. {applied.get('drop_id')} was permanently deleted (D461) — "
+            f"\nmerged. {applied.get('drop_id')} was permanently deleted, "
             f"every reference had already moved onto {applied.get('keep_id')}. It is "
             "NOT recoverable; its columns survive only in the delete audit row's "
             "before-snapshot."
         )
         return 0
-    print("\n⚠️ the server did not report the merge as applied — see above.", file=sys.stderr)
+    print("\nthe server did not report the merge as applied; see above.", file=sys.stderr)
     return 1
 
 
@@ -517,7 +479,7 @@ def _render(payload: dict, *, dry_run: bool) -> str:
     if "reevaluation" in payload:
         lines.append(f"outcome   {payload.get('reevaluation')}")
     if payload.get("next_cursor"):
-        lines.append(f"\nmore rows exist — resume with --after-id {payload['next_cursor']}")
+        lines.append(f"\nmore rows exist, resume with --after-id {payload['next_cursor']}")
     return "\n".join(lines)
 
 
@@ -554,32 +516,32 @@ def _run_reevaluate(args) -> int:
 
 
 # ===========================================================================
-# ev files download — every file under a folder, recursively (READ)
+# fm files download: every file under a folder, recursively (READ)
 # ===========================================================================
 
-#: The server's own list-envelope page size cap (utils/list_query.py:81,
-#: MAX_LIMIT). Paging at this size minimises round trips without depending on
-#: the server ever raising its own cap.
-# ONE page size for the ev list calls (tests/test_no_cross_module_drift.py).
+#: The server's own list-envelope page size cap. Paging at this size
+#: minimises round trips without depending on the server ever raising
+#: its own cap. Shared with the one other module that pages the same
+#: listing, so the two cannot drift apart silently.
 from formist_cli.meetings import _LIST_PAGE_SIZE  # noqa: E402
 
 
 def _normalize_folder(folder: str) -> str:
-    """``folder`` as an absolute path with no trailing slash — ``/`` for the
-    space root. Matches ``services/album_facets.py::absolute_folder_clause``'s
-    own normalisation, even though this module does not use that clause (see
-    the module docstring) — a file's own ``path`` column is stored the same
-    way, so the comparison has to start from the same shape.
+    """``folder`` as an absolute path with no trailing slash (``/`` for
+    the space root). Matches the server's own normalisation, even
+    though this module does not use the server's folder filter (see
+    the module docstring): a file's own ``path`` column is stored the
+    same way, so the comparison has to start from the same shape.
     """
     stripped = folder.strip("/")
     return f"/{stripped}" if stripped else "/"
 
 
 def is_under_folder(folder: str, file_path: str) -> bool:
-    """True iff ``file_path`` sits at or below ``folder`` — INCLUDING every
-    subfolder, which is the one thing the server's own ``folder=`` filter
-    refuses to do (see the module docstring). ``folder="/"`` matches every
-    path in the space."""
+    """True iff ``file_path`` sits at or below ``folder``, including
+    every subfolder, which is the one thing the server's own
+    ``folder=`` filter refuses to do (see the module docstring).
+    ``folder="/"`` matches every path in the space."""
     norm = _normalize_folder(folder)
     if norm == "/":
         return True
@@ -590,12 +552,10 @@ def is_under_folder(folder: str, file_path: str) -> bool:
 def relative_download_path(folder: str, file_path: str) -> str:
     """``file_path``'s path relative to ``folder``, safe to join onto ``--out``.
 
-    Refuses (rather than silently sanitising) anything that would resolve
-    outside ``--out`` — a ``..`` segment or an empty result — because a path
-    taken from a server response and joined onto a local directory without
-    that check is exactly the "writes somewhere else" failure
-    ``evtool/export.py``'s module docstring names for a server-supplied
-    filename; a ``File.path`` is server data the same way.
+    Refuses (rather than silently sanitising) anything that would
+    resolve outside ``--out``, a ``..`` segment or an empty result,
+    since a path taken from a server response and joined onto a local
+    directory without that check can write somewhere else entirely.
     """
     norm = _normalize_folder(folder)
     path = (file_path or "").replace("\\", "/")
@@ -606,18 +566,18 @@ def relative_download_path(folder: str, file_path: str) -> str:
     parts = [p for p in rel.split("/") if p not in ("", ".")]
     if not parts or any(p == ".." for p in parts):
         raise FilesError(
-            f"refusing to download {file_path!r} — its path does not resolve to "
+            f"refusing to download {file_path!r}; its path does not resolve to "
             f"a location under --out ({rel!r})"
         )
     return "/".join(parts)
 
 
 def list_files_under(target, space: str, folder: str, *, token: str | None, get=None) -> list[dict]:
-    """Every file in ``space`` whose path is under ``folder``, RECURSIVELY —
-    paged through the space's WHOLE (unfiltered) file listing
-    (``GET /projects/{id}/files``) and filtered client-side by path. See the
-    module docstring for why the server's own ``folder=`` param cannot be used
-    for this (it is exact-match only, by owner directive).
+    """Every file in ``space`` whose path is under ``folder``, recursively:
+    paged through the space's whole (unfiltered) file listing
+    (``GET /projects/{id}/files``) and filtered client-side by path. See
+    the module docstring for why the server's own ``folder=`` param
+    cannot be used for this (it is exact-match only).
     """
     get = get or api.get
     out: list[dict] = []
@@ -667,12 +627,12 @@ def _run_download(args) -> int:
             expected_size = item.get("size")
             if isinstance(expected_size, int) and len(data) != expected_size:
                 raise FilesError(
-                    f"downloaded {len(data)} bytes, expected {expected_size} — "
+                    f"downloaded {len(data)} bytes, expected {expected_size}; "
                     "do not trust this file"
                 )
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
-        except Exception as exc:  # noqa: BLE001 — one file must not end the run
+        except Exception as exc:  # noqa: BLE001 - one file must not end the run
             print(f"FAILED  {rel}  {exc}", file=sys.stderr)
             failed.append((rel, str(exc)))
             continue

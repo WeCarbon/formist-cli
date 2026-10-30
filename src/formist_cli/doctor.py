@@ -1,23 +1,16 @@
-"""``fm doctor`` — one readable answer to "is the deployment all right".
+"""``fm doctor``: one readable answer to "is the deployment all right".
 
-``fm health`` answers about one environment and is the machine-shaped command.
-``doctor`` answers across all of them, which means it has to survive the ones that
-do not answer at all.
+``fm health`` answers about one environment and is the machine-shaped
+command. ``doctor`` answers across all of them, so it has to survive
+the ones that do not answer at all.
 
-THE DISTINCTION THIS MODULE EXISTS TO KEEP
-------------------------------------------
-"could not reach ae" and "reached ae and it is unhealthy" are different facts with
-different next actions, and a rollup that renders both as a red dot has destroyed
-the only information the operator needed. It is the same failure as reporting an
-exit code instead of test counts — the summary that loses the distinction is
-precisely the one people trust.
-
-So :class:`Status` separates UNREACHABLE from DEGRADED from FAILED, and an
-unexpected payload SHAPE is its own status rather than a pass. That last one is not
-hypothetical here: the retired we-carbon stack still answers ``200`` with the
-pre-Evane health schema (``{"status": "ok"}`` and no ``checks``), so a rollup that
-shrugs at an unfamiliar shape and prints "ok" would launder a stale deployment into
-a green tick. ``formist_cli.targets`` refuses those hosts, and this is the second line.
+"could not reach ae" and "reached ae and it is unhealthy" are
+different facts with different next actions, so :class:`Status` keeps
+UNREACHABLE, DEGRADED and FAILED separate, and an unexpected payload
+shape is its own status rather than a pass: a legacy deployment can
+still answer ``200`` with an older health schema (``{"status": "ok"}``
+and no ``checks``), and treating that as OK would hide a stale
+deployment behind a green tick.
 
 Stdlib only.
 """
@@ -72,8 +65,8 @@ class EnvReport:
     def from_health(cls, env: str, payload: object) -> EnvReport:
         """Read a ``/health`` body.
 
-        A payload that is not the current schema is UNKNOWN, never OK — see the
-        module docstring on why a familiar-looking 200 is not evidence.
+        A payload that is not the current schema is UNKNOWN, never OK:
+        a familiar-looking 200 is not evidence by itself.
         """
         if not isinstance(payload, dict):
             return cls(
@@ -91,9 +84,9 @@ class EnvReport:
                 env=env,
                 status=Status.UNKNOWN,
                 detail=(
-                    "/health has no `checks` list — this is the legacy schema. "
+                    "/health has no `checks` list, which is the legacy schema. "
                     "The current build returns checked_at + checks, so this is "
-                    "either a very old deployment or the retired we-carbon stack."
+                    "an older deployment."
                 ),
             )
 

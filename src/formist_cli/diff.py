@@ -1,52 +1,43 @@
-"""``fm diff`` — what to write. ``fm update`` already answers how.
+"""``fm diff``: what to write. ``fm update`` already answers how.
 
-Nothing in this toolchain answered "what does this environment need in order to
-match the source of truth". On 2026-08-26/27 that gap was filled by hand twice and
-by ~20 one-off scripts; ``scratchpad/parity/`` holds 199 files from a single
-reconciliation. So this compares a SOURCE against a target environment and emits a
-payload ``fm update`` consumes. The two compose: ``fm diff`` → read it → ``ev
-update``.
+This compares a source of truth against a target environment and
+emits a payload ``fm update`` consumes. The two compose: ``fm diff``,
+read it, ``fm update``.
 
-THE OUTPUT NAMES ROWS BY NAME, NEVER BY ID
-------------------------------------------
-Ops carry ``$name``, which ``fm update`` re-resolves against the target seconds
-before the write and copies into ``$expect`` so the row itself refuses a
-mis-resolution (``evtool/update.py:196-215``). Emitting ids here would move the
-transcribed-id failure one file earlier AND drop that copy-back. A target id never
-appears in the output at all.
+The output names rows by name, never by id. Ops carry ``$name``,
+which ``fm update`` re-resolves against the target seconds before the
+write and copies into ``$expect`` so the row itself refuses a
+mis-resolution. Emitting ids here would move a transcribed-id failure
+one file earlier and drop that copy-back. A target id never appears
+in the output at all.
 
-EVERY DEFECT LIVED IN THE COMPARISON, SO THE COMPARISON IS THE DESIGN
----------------------------------------------------------------------
-Measured, all of them, on this data:
+The comparison itself is where every defect in this kind of tool
+tends to live, so its rules are deliberate and stated up front:
 
-- **Trailing and non-breaking whitespace in the match key** — ``'ODA '``,
-  ``'FAO '``, and a *name* with a trailing space. An untrimmed name is a phantom
-  new row, not a visible duplicate: it creates silently. The characters that
-  actually require the explicit table are the two ZERO-WIDTH ones; see
-  :func:`normalise_key`, which measured it rather than reasoning about it.
-- **Curly vs straight quotes, en-dash vs hyphen**, present in real names on both
-  sides.
-- **The same column holding two shapes.** ``notes`` is a bare JSON string in
-  production and an ``{"en": …}`` map in development, and the cause is not random:
-  the frontend writes a plain string while English is the only locale and a map
-  once a second exists, while importers always write maps. A comparison that
-  coalesces them calls them equal — which nearly converted 14 production rows.
-  ``services/bulk_data.py:290-300`` refuses to coalesce for exactly this reason, so
-  neither does this. And nothing is rendered through ``str()``: ``str({"en":
-  "FAO"})`` is a dict repr and matches nothing at all.
-- **Ids differ between environments** — every organisation id does. Matching is by
-  name, and 0 or >1 matches is a refusal rather than a choice.
-- **An id prefix is not a key.** An 8-character UUID prefix was used as a primary
-  key over a table where a prefix collision has been measured.
-- **A row missing from the source is never authority to delete.** Additive and
-  updating only; what would have been deleted is reported.
-- **Two measurements of one delta agreed on the creates and differed 4 vs 11 on
-  the updates**, because "already equal" meant different things on each side. So
-  the rule used for equality is PRINTED, per field, on every run. A disagreement
-  then has somewhere to land.
+- Trailing and non-breaking whitespace in the match key. An untrimmed
+  name is a phantom new row, not a visible duplicate: it creates
+  silently. See :func:`normalise_key`.
+- Curly vs straight quotes, en-dash vs hyphen, present in real names
+  on both sides.
+- The same column holding two shapes: a value can be a bare string in
+  one environment and an ``{"en": ...}`` map in another, and the two
+  are not coalesced, since a shape change can hide a real difference.
+  Nothing is rendered through ``str()``: ``str({"en": "FAO"})`` is a
+  dict repr and matches nothing at all.
+- Ids differ between environments. Matching is by name, and 0 or more
+  than 1 matches is a refusal rather than a choice.
+- An id prefix is not a key: a short UUID prefix is not safe as a
+  primary key over a table where a prefix collision is possible.
+- A row missing from the source is never authority to delete.
+  Additive and updating only; what would have been deleted is
+  reported.
+- The equality rule used is printed, per field, on every run, so two
+  people reading the same report cannot silently disagree about what
+  "already equal" means.
 
-Stdlib only — ``ev`` must add no runtime dependency, which is also why xlsx is
-refused with a conversion hint rather than parsed by hand.
+Stdlib only: this tool must not add a runtime dependency, which is
+also why xlsx is refused with a conversion hint rather than parsed by
+hand.
 """
 
 from __future__ import annotations
@@ -69,17 +60,18 @@ class DiffError(Exception):
     """A comparison that will not be made, or a payload that will not be written."""
 
 
-#: The resolver's remedy for a truncated page is "narrow the search". A diff has no
-#: such option and must not be handed one: narrowing is what makes the unseen rows
-#: look absent, and absent is what this tool reports as a would-delete. It is a
-#: whole table or nothing — which is why these callers paginate, and why the only
-#: honest remedy left once a paginated walk has still come up short is to stop.
+#: The resolver's remedy for a truncated page is "narrow the search". A diff
+#: has no such option: narrowing is what makes the unseen rows look absent,
+#: and absent is what this tool reports as a would-delete. It is a whole
+#: table or nothing, which is why these callers paginate, and why the only
+#: honest remedy left once a paginated walk has still come up short is to
+#: stop.
 _PARTIAL_REMEDY = (
-    "A diff over a partial table is not a partial diff — every row the walk did not "
+    "A diff over a partial table is not a partial diff: every row the walk did not "
     "reach would be reported as a would-delete, so there is no narrowing that helps "
     "and nothing was compared.\n"
     "  This kind is larger than the walk's ceiling "
-    f"({resolve_mod.MAX_PAGES} × {resolve_mod.MAX_PAGE} rows), or the server stopped "
+    f"({resolve_mod.MAX_PAGES} x {resolve_mod.MAX_PAGE} rows), or the server stopped "
     "returning rows before it reached the total it reported."
 )
 
@@ -87,39 +79,37 @@ _PARTIAL_REMEDY = (
 # ===========================================================================
 # The two rules. They are different on purpose, and both are printed.
 # ===========================================================================
-# The three character tables — which characters ARE a space / a quote / a dash —
-# used to live here. They now live in evtool/textnorm.py, byte-identical, because
-# `fm ai-benchmark` needs the same FACT under a different RULE and a second copy
-# of a character table drifts the way every other pair in this repo has: silently.
-# What stays here is the rule, and it stays case-SENSITIVE. The tables are used
-# through `textnorm.` below rather than re-bound to local names, so there is one
-# definition and `scripts/cross_module_drift.py` can see that there is.
+# The three character tables (which characters are a space / a quote / a
+# dash) live in textnorm.py, byte-identical, since `fm ai-benchmark` needs
+# the same fact under a different rule. What stays here is the rule, and it
+# stays case-sensitive. The tables are used through `textnorm.` below rather
+# than re-bound to local names, so there is one definition.
 
 KEY_RULE = (
-    "NFKC → Unicode spaces (incl. U+00A0 and the zero-width U+200B / U+FEFF, which "
-    "no trim reaches) → U+0020 → collapse runs → trim → curly quotes → straight, "
-    "en/em/non-breaking dashes → '-'; CASE-SENSITIVE"
+    "NFKC -> Unicode spaces (incl. U+00A0 and the zero-width U+200B / U+FEFF, which "
+    "no trim reaches) -> U+0020 -> collapse runs -> trim -> curly quotes -> straight, "
+    "en/em/non-breaking dashes -> '-'; CASE-SENSITIVE"
 )
 VALUE_RULE = (
-    "exact and SHAPE-SENSITIVE: a bare string never equals an {en,…} map, and no "
+    "exact and SHAPE-SENSITIVE: a bare string never equals an {en,...} map, and no "
     "value is rendered through str()"
 )
 
 
 def normalise_key(value: str) -> str:
-    """The MATCH key. Lenient, because its job is to find the row.
+    """The match key. Lenient, because its job is to find the row.
 
-    The ``textnorm.SPACES`` pass runs BEFORE the trim, and that ordering is the only part
-    of this function that is load-bearing rather than belt-and-braces. Measured
-    rather than reasoned about, because the reason that first stood here was
-    false: ``.strip()`` *does* remove U+00A0 (it is ``isspace()``), and NFKC maps
-    it to U+0020 besides. What no generic step reaches is U+200B and U+FEFF —
-    zero-width, ``isspace()``-False, unmatched by ``\\s``, unchanged by NFKC. They
-    are also invisible on screen, so the phantom row they create is named
-    identically to the row it duplicates.
+    The ``textnorm.SPACES`` pass runs before the trim, and that
+    ordering is the only part of this function that is load-bearing
+    rather than belt-and-braces: ``.strip()`` already removes U+00A0
+    (it is ``isspace()``), and NFKC maps it to U+0020 besides. What no
+    generic step reaches is U+200B and U+FEFF: zero-width,
+    ``isspace()``-false, unmatched by ``\\s``, unchanged by NFKC. They
+    are also invisible on screen, so the phantom row they create is
+    named identically to the row it duplicates.
 
-    Case is NOT folded — folding case is how a resolver picks the wrong row
-    (``evtool/resolve.py:283``), and this must agree with the resolver that
+    Case is not folded: folding case is how a resolver can pick the
+    wrong row, and this must agree with the resolver that
     ``fm update`` will use seconds later.
     """
     text = unicodedata.normalize("NFKC", value)
@@ -133,22 +123,22 @@ def normalise_key(value: str) -> str:
 def values_equal(left: Any, right: Any) -> tuple[bool, str]:
     """Are two column values the same value? ``(equal, why)``.
 
-    STRICTER than the key rule, and deliberately not the same function. A key is
-    matched so the row can be found; a value decides whether to write. Shape is
-    part of a value: ``"FAO"`` and ``{"en": "FAO"}`` are different, they are the
-    documented 14-row production case, and the endpoint's own ``$expect`` check
-    refuses to coalesce them (``services/bulk_data.py:290-300``).
+    Stricter than the key rule, and deliberately not the same
+    function. A key is matched so the row can be found; a value
+    decides whether to write. Shape is part of a value: ``"FAO"`` and
+    ``{"en": "FAO"}`` are different, and the endpoint's own
+    ``$expect`` check refuses to coalesce them.
     """
     if type(left) is not type(right):
         if _shape_of(left) != _shape_of(right):
-            # NULL is absence, not a shape. Filling an empty column is the most
-            # ordinary update there is, and blocking it would have blocked most of
-            # the real work — measured: the first live run against a real space classified
-            # every fill-in as a shape change and emitted no op for any of them.
-            # The reverse is NOT symmetric and stays blocked: a source null over a
-            # populated column is a field-level delete, and "a row missing from the
-            # source is never authority to delete" is this module's rule one level
-            # down. Clearing a value takes --allow-shape-change, deliberately.
+            # NULL is absence, not a shape. Filling an empty column is the
+            # most ordinary update there is, and blocking it would block
+            # most of the real work. The reverse is NOT symmetric and stays
+            # blocked: a source null over a populated column is a
+            # field-level delete, and "a row missing from the source is
+            # never authority to delete" is this module's rule one level
+            # down. Clearing a value takes --allow-shape-change,
+            # deliberately.
             if left is None:
                 return False, "target holds no value"
             return False, f"shape differs: {_shape_of(left)} vs {_shape_of(right)}"
@@ -174,12 +164,12 @@ def _shape_of(value: Any) -> str:
 
 
 def key_strings(value: Any) -> list[str]:
-    """Every normalised string a column value could be matched BY.
+    """Every normalised string a column value could be matched by.
 
-    Mirrors ``evtool/resolve.py``'s ``_strings_in`` so that a row this module
-    matches is the row ``fm update`` will resolve. Two different notions of "the
-    name of this row" in one pipeline is how a diff proposes an op that then
-    refuses.
+    Mirrors the resolver's own string extraction, so that a row this
+    module matches is the row ``fm update`` will resolve. Two
+    different notions of "the name of this row" in one pipeline is
+    how a diff proposes an op that then refuses.
     """
     if isinstance(value, str):
         return [normalise_key(value)]
@@ -203,21 +193,22 @@ class Source:
 def load_source(path: str) -> Source:
     """A JSON array / ``{"rows": [...]}`` or a CSV with a header row.
 
-    xlsx is REFUSED rather than parsed. ``ev`` is stdlib-only by contract
-    (``evtool/cli.py:24``), and a hand-rolled xlsx reader — shared strings, date
-    serials, inline vs shared cells — is precisely the class of thing that reads
-    almost right and is believed. The refusal names the conversion instead.
+    xlsx is refused rather than parsed. This tool is stdlib-only by
+    contract, and a hand-rolled xlsx reader (shared strings, date
+    serials, inline vs shared cells) is precisely the class of thing
+    that reads almost right and is believed. The refusal names the
+    conversion instead.
     """
     lower = path.lower()
     if lower.endswith((".xlsx", ".xls", ".xlsm")):
         raise DiffError(
             f"{path} is a spreadsheet, and fm refuses to parse one.\n"
-            "`fm` is stdlib-only (evtool/cli.py:24) so an xlsx reader here would be "
-            "hand-rolled — shared strings, date serials and inline-vs-shared cells "
+            "`fm` is stdlib-only so an xlsx reader here would be "
+            "hand-rolled: shared strings, date serials and inline-vs-shared cells "
             "are where such a reader is subtly wrong, and a subtly wrong source of "
             "truth is worse than none.\n"
             "\n"
-            "→ convert it first, then pass the result:\n"
+            "Convert it first, then pass the result:\n"
             "    python -c \"import openpyxl,json,sys; "
             "wb=openpyxl.load_workbook(sys.argv[1]); ws=wb.active; "
             "rows=list(ws.values); hdr=[str(h).strip() for h in rows[0]]; "
@@ -249,13 +240,13 @@ def load_source(path: str) -> Source:
         if not isinstance(payload, list):
             raise DiffError(
                 f"{path} must hold a JSON array of row objects, or "
-                '{"rows": [...]} — got a ' + type(payload).__name__ + "."
+                '{"rows": [...]}, got a ' + type(payload).__name__ + "."
             )
         rows = [r for r in payload if isinstance(r, dict)]
         fmt = "json"
 
     if not rows:
-        raise DiffError(f"{path} has no rows — nothing to compare.")
+        raise DiffError(f"{path} has no rows; nothing to compare.")
     return Source(rows=rows, origin=path, digest=digest, fmt=fmt)
 
 
@@ -264,9 +255,10 @@ def source_from_env(
 ) -> Source:
     """Another environment as the source of truth.
 
-    The rows come back exactly as the server sent them, ids included — and the ids
-    are then never used for anything. They are carried so the report can say WHICH
-    source row a change came from, in the source environment's own vocabulary.
+    The rows come back exactly as the server sent them, ids included,
+    and the ids are then never used for anything. They are carried so
+    the report can say which source row a change came from, in the
+    source environment's own vocabulary.
     """
     rows = resolve_mod.list_rows(
         kind=kind, target=target, space=space, token=token, fetch=fetch,
@@ -290,18 +282,19 @@ def source_from_env(
 class Change:
     """One op, already reduced to the exact ``$set``/``$expect`` it will carry.
 
-    The payloads are computed HERE rather than in :meth:`DiffResult.ops`, so
-    exactly one place knows that a jsonb-backed kind writes a whole column while a
-    column-backed kind writes fields. Two representations of the same op is how a
-    diff and the payload it emits come to disagree.
+    The payloads are computed here rather than in
+    :meth:`DiffResult.ops`, so exactly one place knows that a
+    jsonb-backed kind writes a whole column while a column-backed kind
+    writes fields. Two representations of the same op is how a diff
+    and the payload it emits come to disagree.
     """
 
     action: str  # "add" | "update"
     key: str
-    #: Column → (target value, source value, why they differ). For display.
+    #: Column -> (target value, source value, why they differ). For display.
     fields: dict[str, tuple[Any, Any, str]] = field(default_factory=dict)
     #: Fields the target holds that the source did not mention. Carried forward,
-    #: never dropped — same rule as rows.
+    #: never dropped, same rule as rows.
     preserved: tuple[str, ...] = ()
     shape_changes: tuple[str, ...] = ()
     set_payload: dict = field(default_factory=dict)
@@ -319,37 +312,38 @@ class DiffResult:
     updates: list[Change]
     unchanged: list[str]
     would_delete: list[str]
-    #: Source keys whose text CHANGED under normalisation. A silent trim is how a
-    #: phantom row is born, so every one is named.
+    #: Source keys whose text changed under normalisation. A silent trim is
+    #: how a phantom row is born, so every one is named.
     normalised: list[tuple[str, str]]
     blocked_shape: list[Change]
     data_field: str | None
-    #: How many target rows were actually read. NOT derived from the buckets — the
-    #: printed header used to sum three of the four and silently omit
-    #: `blocked_shape`, so it read 985 against a table of 986 and nothing said so.
-    #: A count that is computed from the same numbers it is supposed to check
-    #: cannot check them.
+    #: How many target rows were actually read. Not derived from the other
+    #: buckets, so this count can catch a bucket that silently dropped a row
+    #: instead of agreeing with it by construction.
     target_count: int = 0
-    #: Target names that identify more than one row, which the SOURCE does not
-    #: mention. Reported with ids — the no-ids rule governs :meth:`ops`, the payload
-    #: that gets written; a human report of rows that need de-duplicating is
-    #: actionable only by id, and nothing here is ever fed back to a write.
+    #: Target names that identify more than one row, which the source does
+    #: not mention. Reported with ids: the no-ids rule governs
+    #: :meth:`ops`, the payload that gets written; a human report of rows
+    #: that need de-duplicating is actionable only by id, and nothing here
+    #: is ever fed back to a write.
     ambiguous: list[tuple[str, list[str]]] = field(default_factory=list)
 
     def ops(self) -> list[dict]:
         """The payload ``fm update`` consumes.
 
-        Ops only: the endpoint forbids extra keys, so the deletion list and the
-        equality rules live in the ``--report`` sidecar rather than in here.
+        Ops only: the endpoint forbids extra keys, so the deletion
+        list and the equality rules live in the ``--report`` sidecar
+        rather than in here.
 
-        ``$expect`` carries the values this diff READ, and that is deliberate even
-        though GATE.md:239 warns against auto-filling a before-value. The warning
-        is about a read milliseconds earlier IN THE SAME COMMAND, which converts a
-        staleness check into one that cannot fail. Here the read and the write are
-        two commands with a human review between them, which is the exact gap
-        ``$expect`` exists to cover — `a plan is valid only against the state it
-        was generated from` (services/bulk_data.py:285). The key field is left out
-        so that ``fm update``'s own copy-back can fill it from its own resolution.
+        ``$expect`` carries the values this diff read. That is
+        deliberate even though auto-filling a before-value from a
+        read milliseconds earlier in the same command would convert a
+        staleness check into one that cannot fail; here the read and
+        the write are two commands with a human review between them,
+        which is the gap ``$expect`` exists to cover: a plan is valid
+        only against the state it was generated from. The key field is
+        left out so that ``fm update``'s own copy-back can fill it
+        from its own resolution.
         """
         ops: list[dict] = []
         for change in self.creates:
@@ -434,17 +428,11 @@ def _reconcile(
 ) -> None:
     """Every target row must land in exactly one bucket, or nothing is emitted.
 
-    A FUNCTION rather than four lines inline, because inline it could not be
-    tested. It is a backstop: the guards above it — the locale-collision refusal in
-    particular — mean nothing can currently reach it, so deleting the call changed
-    no test and the check read as dead code. That is the layered-guard trap in
-    GATE.md:170 exactly, and the answer there is to test the layer at its own
-    level. This is that level.
-
-    The arithmetic is the one `scripts/gate.sh` does over a pytest summary, for the
-    same reason: a row read and then neither compared nor reported has gone missing
-    silently, and the only visible symptom is a total slightly too small — which is
-    precisely how the 986-vs-985 header defect presented.
+    A function rather than inline, because inline it could not be
+    tested on its own: the guards above it mean nothing can currently
+    reach this in normal operation, so it is a backstop that needs to
+    be tested at its own level to prove it still fires if one of those
+    guards is ever loosened.
     """
     accounted = len(unchanged) + len(updates) + len(blocked) + len(would_delete)
     if accounted != read:
@@ -471,18 +459,18 @@ def build_diff(
     extra_set: dict | None = None,
 ) -> DiffResult:
     """Compare, or refuse. Never guess which of two rows was meant."""
-    # A name stored as an {en, ar} map indexes the SAME row under two keys — that
-    # is `resolve.py`'s "match across shapes" rule and it is right. But it means
-    # "which target rows were matched" is a question about ROWS, not about keys:
-    # matching the English key leaves the Arabic one unmatched, and counting keys
-    # would report a live row as a would-delete. Rows are tracked by identity.
+    # A name stored as an {en, ar} map indexes the same row under two keys,
+    # which is the resolver's own "match across shapes" rule applied here
+    # too. But it means "which target rows were matched" is a question
+    # about rows, not about keys: matching the English key leaves the
+    # Arabic one unmatched, and counting keys would report a live row as a
+    # would-delete. Rows are tracked by identity.
     index: dict[str, list[dict]] = {}
     row_keys: dict[int, list[str]] = {}
     for row in target_rows:
-        # dict.fromkeys, because a row whose {en, ar} halves hold the SAME text
-        # yields that key twice and would be indexed against itself — measured on
-        # live data on a real space, where 'Invest Africa' is stored identically in both
-        # locales and was reported as ambiguous with its own id printed twice.
+        # dict.fromkeys, because a row whose {en, ar} halves hold the same
+        # text yields that key twice and would be indexed against itself,
+        # which would report it as ambiguous with its own id printed twice.
         # A row is never ambiguous with itself; only distinct rows can be.
         keys = list(dict.fromkeys(
             k for k in key_strings(_get(row, key_field, data_field)) if k
@@ -493,9 +481,10 @@ def build_diff(
 
     ambiguous = {k: v for k, v in index.items() if len(v) > 1}
 
-    # The SOURCE is normalised and validated before anything is compared, both so a
-    # source defect is reported as a source defect, and because which ambiguities
-    # actually MATTER is a question about what the source references.
+    # The source is normalised and validated before anything is compared,
+    # both so a source defect is reported as a source defect, and because
+    # which ambiguities actually matter is a question about what the source
+    # references.
     seen_source: dict[str, str] = {}
     normalised: list[tuple[str, str]] = []
     source_keys: list[str] = []
@@ -524,15 +513,16 @@ def build_diff(
         seen_source[key] = str(position)
         source_keys.append(key)
 
-    # Only an ambiguity the source REFERENCES can cause a wrong write, and that one
-    # is fatal. An ambiguity elsewhere in the target is a data defect this tool did
-    # not create and cannot resolve; refusing the whole run over it would make the
-    # command unusable against the real space, which holds four such pairs and 986
-    # rows. They are reported, loudly, and their rows are never written to.
+    # Only an ambiguity the source references can cause a wrong write, and
+    # that one is fatal. An ambiguity elsewhere in the target is a data
+    # defect this tool did not create and cannot resolve; refusing the
+    # whole run over it would make the command unusable against a real
+    # space that holds such pairs. They are reported, loudly, and their
+    # rows are never written to.
     blocking = {k: v for k, v in ambiguous.items() if k in seen_source}
     if blocking:
         listing = "\n".join(
-            f"    {key!r} → " + ", ".join(str(r.get("id")) for r in rows)
+            f"    {key!r} -> " + ", ".join(str(r.get("id")) for r in rows)
             for key, rows in sorted(blocking.items())
         )
         raise DiffError(
@@ -541,7 +531,7 @@ def build_diff(
             "\n"
             "A name that identifies two rows identifies neither, and picking one is "
             "how a wrong row gets written. Nothing was compared.\n"
-            "→ de-duplicate the target, or address those rows by id in a payload "
+            "De-duplicate the target, or address those rows by id in a payload "
             "you write yourself."
         )
 
@@ -552,18 +542,19 @@ def build_diff(
     unchanged: list[str] = []
     matched: set[str] = set()
 
-    # strict=True: source_keys is built from source.rows one-for-one, and if that
-    # ever stops being true the pairs would silently shift and every row after
-    # the gap would be compared against the wrong key.
+    # strict=True: source_keys is built from source.rows one-for-one, and if
+    # that ever stops being true the pairs would silently shift and every
+    # row after the gap would be compared against the wrong key.
     for row, key in zip(source.rows, source_keys, strict=True):
         columns = fields or [c for c in row if c != key_field]
         target = index.get(key, [None])[0]
 
         if target is None:
             payload = {c: row[c] for c in columns if c in row}
-            # The NORMALISED key is what gets written, not the raw text. Writing
-            # `'ODA '` back would create a row that this same diff would fail to
-            # match on the next run and would create AGAIN.
+            # The normalised key is what gets written, not the raw text.
+            # Writing back the raw, untrimmed text would create a row that
+            # this same diff would fail to match on the next run and would
+            # create again.
             payload[key_field] = key
             if data_field is None:
                 set_payload = dict(payload)
@@ -581,14 +572,13 @@ def build_diff(
             continue
 
         if id(target) in matched_rows:
-            # The duplicate-source check above compares NORMALISED SOURCE KEYS and
-            # is structurally unable to see this: 'FAO' and 'الفاو' are different
-            # keys that resolve to one row, because a name map indexes its row under
-            # every locale it holds. Two ops would be emitted for one row and the
-            # later would silently win — the same last-one-wins failure the source
-            # check exists to prevent, arriving by the one route that check cannot
-            # cover. It is also what breaks the reconciliation below, which is how
-            # this was found.
+            # The duplicate-source check above compares normalised source
+            # keys and is structurally unable to see this: two different
+            # strings can resolve to one row, because a name map indexes
+            # its row under every locale it holds. Two ops would be
+            # emitted for one row and the later would silently win, the
+            # same last-one-wins failure the source check exists to
+            # prevent, arriving by the one route that check cannot cover.
             other = next(k for k in row_keys[id(target)] if k in matched and k != key)
             raise DiffError(
                 f"refusing to diff: source keys {other!r} and {key!r} are different "
@@ -626,18 +616,20 @@ def build_diff(
                 set_payload = {c: v[1] for c, v in changed.items()}
                 expect_payload = {c: v[0] for c, v in changed.items()}
             else:
-                # `$set` keys must be real COLUMNS, and a CustomEntity has exactly
-                # one: `data` (models/CustomEntity.py:20). So the write is the whole
-                # jsonb blob, merged over what the target already holds — a naive
-                # whole-column write silently deletes every field the source did not
-                # know about, which is the row rule applied one level down.
+                # `$set` keys must be real columns, and a jsonb-backed kind
+                # has exactly one. So the write is the whole jsonb blob,
+                # merged over what the target already holds; a naive
+                # whole-column write would silently delete every field the
+                # source did not know about, which is the row rule applied
+                # one level down.
                 blob = target.get(data_field)
                 blob = dict(blob) if isinstance(blob, dict) else {}
                 merged = {**blob, **{c: v[1] for c, v in changed.items()}}
                 set_payload = {data_field: merged}
-                # The whole blob, so a concurrent change to ANY field in it
-                # invalidates this plan. That is the correct granularity: the write
-                # is the whole column, so the precondition must be too.
+                # The whole blob, so a concurrent change to any field in it
+                # invalidates this plan. That is the correct granularity:
+                # the write is the whole column, so the precondition must
+                # be too.
                 expect_payload = {data_field: target.get(data_field)}
             updates.append(
                 Change(action="update", key=key, fields=changed, preserved=preserved,
@@ -646,9 +638,8 @@ def build_diff(
         else:
             unchanged.append(key)
 
-    # Every target row must land in exactly one bucket. This is the arithmetic
-    # `scripts/gate.sh` does over a pytest summary, for the same reason: a row that
-    # is read and then neither compared nor reported has gone missing silently, and
+    # Every target row must land in exactly one bucket: a row that is read
+    # and then neither compared nor reported has gone missing silently, and
     # the only visible symptom is a total that is slightly too small.
     would_delete = sorted(
         (row_keys[id(row)] or [str(row.get("id"))])[0]
@@ -673,10 +664,11 @@ def build_diff(
 def _preserved(target: dict, columns: list[str], data_field: str | None) -> tuple[str, ...]:
     """Target fields the source never mentioned.
 
-    They are carried, not dropped — the same rule as rows, and it matters more for
-    a jsonb column: ``$set`` keys must be real columns, so a CustomEntity update
-    writes the WHOLE ``data`` blob and a naive write would silently delete every
-    field the source did not know about.
+    They are carried, not dropped, the same rule as rows, and it
+    matters more for a jsonb column: ``$set`` keys must be real
+    columns, so an update to that kind writes the whole ``data`` blob,
+    and a naive write would silently delete every field the source did
+    not know about.
     """
     if data_field is None:
         return ()
@@ -692,9 +684,9 @@ def target_rows_for(
 ) -> tuple[list[dict], str | None, dict]:
     """The target's rows, the jsonb column they live in, and any extra ``$set``.
 
-    A CustomEntity is scoped by ``entity_type_id`` (models/CustomEntity.py:18) and
-    has no name column at all, so ``--entity-type`` is required for that kind: the
-    diff must compare within one type, and a create has to carry the FK.
+    A kind scoped by an entity type has no name column at all, so
+    ``--entity-type`` is required for that kind: the diff must compare
+    within one type, and a create has to carry the FK.
     """
     spec = resolve_mod.KINDS.get(kind)
     if spec is None:
@@ -702,7 +694,7 @@ def target_rows_for(
             f"unknown kind {kind!r}. Valid kinds: {resolve_mod.kind_names()}."
         )
     if spec.no_name_reason:
-        raise DiffError(f"{kind} cannot be diffed by name — {spec.no_name_reason}")
+        raise DiffError(f"{kind} cannot be diffed by name: {spec.no_name_reason}")
 
     rows = resolve_mod.list_rows(
         kind=kind, target=target, space=space, token=token, fetch=fetch,
@@ -724,7 +716,7 @@ def target_rows_for(
             "A CustomEntity is scoped by entity_type_id and has no name column of "
             "its own, so a diff without a type would compare Organisations against "
             "Venues and propose creating every one of them.\n"
-            "→ `--entity-type \"Organization\"` (the EntityType's single_name)."
+            "Use `--entity-type \"Organization\"` (the EntityType's single_name)."
         )
     match = resolve_mod.resolve_one(
         entity_type, kind="ENTITY_TYPE", target=target, space=space,
@@ -743,19 +735,18 @@ def add_parser(sub) -> None:
         "diff",
         help="compare a source of truth against an environment; emit fm update ops",
         description=(
-            "`fm update` answers HOW to write. This answers WHAT. It compares a "
+            "`fm update` answers how to write. This answers what. It compares a "
             "source of truth against a target environment and writes a payload "
             "`fm update` consumes, so the two compose:\n"
             "    fm diff stakeholder --source rows.json --out ops.json\n"
-            "      →  read it  →  fm update … ops.json\n\n"
-            "Ops name rows by $name, never by id — ids differ between every "
+            "      read it, then: fm update ... ops.json\n\n"
+            "Ops name rows by $name, never by id: ids differ between every "
             "environment, and $name is re-resolved by `fm update` against the "
             "target seconds before the write, with the resolved value copied into "
             "$expect so the row itself refuses a mis-resolution.\n\n"
-            "THE EQUALITY RULES ARE PRINTED ON EVERY RUN, because two hand "
-            "reconciliations of one delta agreed on the creates and differed 4 vs "
-            "11 on the updates — 'already equal' meant something different on each "
-            "side and nothing said so.\n\n"
+            "THE EQUALITY RULES ARE PRINTED ON EVERY RUN, so that two readers of "
+            "the same report cannot silently disagree about what 'already equal' "
+            "means.\n\n"
             f"  match key: {KEY_RULE}\n"
             f"  values:    {VALUE_RULE}\n\n"
             "A row present in the target and absent from the source is NEVER a "
@@ -783,9 +774,9 @@ def add_parser(sub) -> None:
                         help="comma-separated columns to compare (default: every "
                              "column the source mentions)")
     parser.add_argument("--allow-shape-change", dest="allow_shape", action="store_true",
-                        help="emit ops that change a value's SHAPE (string ↔ map). "
-                             "Off by default: coalescing the two nearly converted "
-                             "14 production rows")
+                        help="emit ops that change a value's SHAPE (string vs map). "
+                             "Off by default, since coalescing the two can hide a "
+                             "real difference")
     parser.add_argument("--out", help="write the ops payload here")
     parser.add_argument("--report", help="write the full report (rules, deletions, "
                                          "normalisations) here")
@@ -795,10 +786,9 @@ def add_parser(sub) -> None:
 def cmd_diff(args) -> int:
     import sys
 
-    # Imported inside the function because `cli` imports this module. Reusing its
-    # `_effective`/`_token_for` rather than copying ten lines keeps ONE provenance
-    # banner in the tool; a second one would drift from the rules in prefs.py that
-    # make it worth printing.
+    # Imported inside the function because `cli` imports this module. Reusing
+    # its `_effective`/`_token_for` rather than copying these lines keeps one
+    # provenance banner in the tool.
     from formist_cli.cli import _effective, _token_for
 
     eff = _effective(args)
@@ -812,11 +802,11 @@ def cmd_diff(args) -> int:
             "Two sources of truth is not a source of truth."
         )
 
-    # The LOCAL source is read first, before any network call. A mistyped --source
-    # is the most likely error in this command and the cheapest to detect, and
-    # fetching the target first reports it only after a round trip and — against
-    # prod — after an admin auth check, so the operator is shown a 403 for a
-    # command that was never going to run. Cheap, local, certain checks go first.
+    # The local source is read first, before any network call: a mistyped
+    # --source is the most likely error in this command and the cheapest to
+    # detect, and fetching the target first would report it only after a
+    # round trip and, against prod, after an admin auth check. Cheap,
+    # local, certain checks go first.
     source = load_source(args.source) if args.source else None
 
     target_rows, data_field, extra_set = target_rows_for(
@@ -866,21 +856,21 @@ def cmd_diff(args) -> int:
     if args.report:
         with open(args.report, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=2, ensure_ascii=False, default=str)
-        print(f"\nreport → {args.report}", file=sys.stderr)
+        print(f"\nreport -> {args.report}", file=sys.stderr)
 
     ops = result.ops()
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
             json.dump({"ops": ops}, handle, indent=2, ensure_ascii=False, default=str)
         print(
-            f"ops    → {args.out}  ({len(ops)} op(s))\n"
+            f"ops    -> {args.out}  ({len(ops)} op(s))\n"
             f"\nRead it, then:\n"
             f"  fm update --host {result.env} --space {result.space} {args.out}",
             file=sys.stderr,
         )
     elif ops:
         print(
-            f"\n{len(ops)} op(s) computed but not written — pass --out FILE.",
+            f"\n{len(ops)} op(s) computed but not written. Pass --out FILE.",
             file=sys.stderr,
         )
     return 0
@@ -904,38 +894,38 @@ def _print_report(result: DiffResult, report: dict) -> None:
           f"would-delete {counts['would_delete']}")
 
     if result.normalised:
-        print("\n  keys that CHANGED under normalisation "
+        print("\n  keys that changed under normalisation "
               "(an untrimmed name creates a phantom row):")
         for raw, norm in result.normalised:
-            print(f"    {raw!r} → {norm!r}")
+            print(f"    {raw!r} -> {norm!r}")
 
     for change in result.creates:
         print(f"\n  + {change.key}")
     for change in result.updates:
         print(f"\n  ~ {change.key}")
         for column, (target_value, source_value, why) in change.fields.items():
-            print(f"      {column}: {_show(target_value)} → {_show(source_value)}   [{why}]")
+            print(f"      {column}: {_show(target_value)} -> {_show(source_value)}   [{why}]")
         if change.preserved:
             print(f"      (preserved, not in source: {', '.join(change.preserved)})")
     for change in result.blocked_shape:
-        print(f"\n  ! {change.key}  BLOCKED — shape change, no op emitted")
+        print(f"\n  ! {change.key}  BLOCKED, shape change, no op emitted")
         for reason in change.shape_changes:
             print(f"      {reason}")
-        print("      A bare string and an {en,…} map are different values; "
-              "coalescing them nearly converted 14 production rows.")
-        print("      → --allow-shape-change if that is genuinely what you mean.")
+        print("      A bare string and an {en,...} map are different values; "
+              "coalescing them can hide a real difference.")
+        print("      Pass --allow-shape-change if that is genuinely what you mean.")
     if result.ambiguous:
-        print(f"\n  ambiguous in {result.env} ({len(result.ambiguous)}) — NOT "
+        print(f"\n  ambiguous in {result.env} ({len(result.ambiguous)}), NOT "
               "referenced by the source, so nothing here was compared or written:")
         for key, ids in result.ambiguous:
-            print(f"    ? {key}  →  {', '.join(ids)}")
+            print(f"    ? {key}  ->  {', '.join(ids)}")
         print("    A name identifying two rows identifies neither. These are "
               "pre-existing duplicates in the target, not something this diff "
-              "introduced — but a later source that DOES name one of them will be "
+              "introduced, but a later source that does name one of them will be "
               "refused outright.")
 
     if result.would_delete:
-        print(f"\n  would-delete ({len(result.would_delete)}) — REPORTED ONLY, never "
+        print(f"\n  would-delete ({len(result.would_delete)}), reported only, never "
               "emitted as an op:")
         for key in result.would_delete:
             print(f"    - {key}")
@@ -946,7 +936,8 @@ def _print_report(result: DiffResult, report: dict) -> None:
 def _show(value: Any) -> str:
     """A value as JSON, never through str().
 
-    `str({"en": "FAO"})` is a dict repr — it matches nothing, and printing one
-    beside a real value invites comparing them by eye and concluding they agree.
+    `str({"en": "FAO"})` is a dict repr: it matches nothing, and
+    printing one beside a real value invites comparing them by eye
+    and concluding they agree.
     """
     return json.dumps(value, ensure_ascii=False, default=str)

@@ -1,17 +1,16 @@
-"""``fm settings`` — read and flip the admin-editable runtime switches.
+"""``fm settings``: read and flip the admin-editable runtime switches.
 
-The CLI half of ``GET/PATCH /admin/settings`` (``routes/admin_settings.py``),
-per the standing rule that every admin function is reachable from ``ev``.
+The CLI half of ``GET/PATCH /admin/settings``.
 
-    ev settings show --host evane
-    ev settings set --host evane scheduler.disabled=true
-    ev settings clear --host evane
+    fm settings show --host evane
+    fm settings set --host evane scheduler.disabled=true
+    fm settings clear --host evane
 
-⚠️ THE CHANGE IS PER REGION. The values live in a config-format document in
-that region's blob storage (``file:`` in the output names it), so ``--env ae``
-and ``--host evane`` are two separate changes. Every replica of the region
-reads it, and it survives restarts. Every response prints the instance that
-answered.
+The change is per region: the values live in a config document in that
+region's blob storage (``file:`` in the output names it), so ``--env
+ae`` and ``--host evane`` are two separate changes. Every replica of
+the region reads it, and it survives restarts. Every response prints
+the instance that answered.
 """
 
 from __future__ import annotations
@@ -81,7 +80,7 @@ def parse_assignments(items: list[str]) -> dict[str, bool | None]:
 def render_show(payload: dict) -> str:
     lines = [f"instance: {payload.get('instance')}", f"file:     {payload.get('file')}"]
     if not payload.get("file_exists"):
-        lines.append("          (no overrides document yet — every value below is env/run-config)")
+        lines.append("          (no overrides document yet: every value below is env/run-config)")
     lines.append("")
     width = max((len(f["field"]) for f in payload.get("fields", [])), default=0)
     for entry in payload.get("fields", []):
@@ -139,10 +138,10 @@ _HELP = "read or flip the admin-editable runtime switches (admin)"
 
 _DESCRIPTION = """Read and change the switches an admin may flip without a deploy.
 
-  ev settings show  --host evane
-  ev settings set   --host evane scheduler.disabled=true
-  ev settings set   --env ae     connectors.sync_enabled=false connectors.agentic_review=true
-  ev settings clear --host evane
+  fm settings show  --host evane
+  fm settings set   --host evane scheduler.disabled=true
+  fm settings set   --env ae     connectors.sync_enabled=false connectors.agentic_review=true
+  fm settings clear --host evane
 
 The values live in a config-format document in each region's blob storage, so
 `--env ae` and `--host evane` are two separate changes; every replica of a

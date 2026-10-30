@@ -1,19 +1,14 @@
-"""``fm usage-tokens`` — system-wide LLM token spend, over ``GET /admin/usage/tokens``.
+"""``fm usage-tokens``: system-wide LLM token spend, over ``GET /admin/usage/tokens``.
 
-Added for D224 (2026-09-06) — owner's ruling 「所有 admin 功能都要用 fm cli 可用」,
-all admin functionality must be reachable from ``ev``. Read-only; there is nothing
-to apply here.
+Read-only; there is nothing to apply here.
 
-⚠️ WHAT THIS COMMAND MUST NEVER LET AN OPERATOR MISREAD, because the whole reason
-this table exists is a prior failure of exactly this kind: 5 458 runaway calls once
-read as costing nothing for five days because a meter's zero meant "unknown" and
-nothing said so.
-
-Every bucket the server returns carries ``unmeasured_calls`` / ``unpriced_calls``
-and the derived ``tokens_are_lower_bound`` / ``cost_is_lower_bound`` flags. This
-renderer prints them ON EVERY ROW, not only when they are non-zero — an operator
-scanning a column for the one bad row would miss a flag that only sometimes
-appears. See ``routes/admin.py::_finalize`` for where these are computed and why.
+A zero can mean "measured, and it really is zero" or "unmeasured", and
+those are different facts. Every bucket the server returns carries
+``unmeasured_calls`` / ``unpriced_calls`` and the derived
+``tokens_are_lower_bound`` / ``cost_is_lower_bound`` flags. This
+renderer prints them on every row, not only when they are non-zero,
+since a flag that only sometimes appears is easy to miss when scanning
+a column.
 """
 
 from __future__ import annotations
@@ -41,7 +36,7 @@ def render(payload: dict) -> str:
     ]
     if payload.get("meter_enabled") is False:
         lines.append(
-            "  ⚠️ TOKEN_METER_ENABLED is OFF on this deployment — every number below "
+            "  TOKEN_METER_ENABLED is OFF on this deployment, every number below "
             "is stale by however long it has been off"
         )
     lines.append("")
@@ -54,26 +49,27 @@ def render(payload: dict) -> str:
         lines.append(_row(str(g.get("label") or g.get("key") or "(unattributed)"), g))
     if payload.get("truncated"):
         lines.append(
-            f"\n{len(groups)} of {payload.get('group_count')} groups shown — MORE "
+            f"\n{len(groups)} of {payload.get('group_count')} groups shown, MORE "
             "EXIST. Raise --limit for the rest."
         )
     return "\n".join(lines)
 
 
 def _row(label: str, bucket: dict) -> str:
-    """One bucket. The two lower-bound flags are printed unconditionally — a flag
-    that only shows up when it fires is a flag a scanning eye will miss."""
+    """Render one bucket. The two lower-bound flags are printed
+    unconditionally, since a flag that only shows up when it fires is
+    easy to miss when scanning.
+    """
     tokens_flag = "LOWER BOUND" if bucket.get("tokens_are_lower_bound") else "measured"
     cost_flag = "LOWER BOUND" if bucket.get("cost_is_lower_bound") else "priced"
     return (
         f"{label:<28.28} calls={bucket.get('calls', 0):<6} "
         f"tokens={bucket.get('total_tokens', 0):<10} ({tokens_flag}) "
         f"cost=${bucket.get('estimated_cost_usd', 0):<10} ({cost_flag}) "
-        # Subsets of tokens above, not additive — same as cached_input_tokens,
-        # which this line has never printed either (see `--json` for the full
-        # per-bucket breakdown). Surfaced here because cache_write is priced at
-        # a PREMIUM (DIAG.md §1) and was, until 2026-09-11, invisible from this
-        # command entirely.
+        # Subsets of tokens above, not additive, same as cached_input_tokens,
+        # which this line does not print either (see `--json` for the full
+        # per-bucket breakdown). Surfaced here because cache_write is priced
+        # at a premium.
         f"cache_write={bucket.get('cache_write_tokens', 0)} "
         f"reasoning={bucket.get('reasoning_tokens', 0)} "
         f"unmeasured={bucket.get('unmeasured_calls', 0)} "
@@ -87,14 +83,14 @@ _HELP = "system-wide LLM token spend, aggregated across every region (admin, rea
 _DESCRIPTION = """Total LLM token spend across the whole deployment, sliceable by
 source, operation, space, user, model, provider or day.
 
-  ev usage-tokens --host evane
-  ev usage-tokens --host evane --group-by space --since 2026-09-01
-  ev usage-tokens --host evane --group-by model --space <space-uuid>
+  fm usage-tokens --host evane
+  fm usage-tokens --host evane --group-by space --since 2026-09-01
+  fm usage-tokens --host evane --group-by model --space <space-uuid>
 
-⚠️ A zero in this table can mean "measured, and it really is zero" or "the
-backend reported no usage" — those are DIFFERENT facts. Every row is labelled
+A zero in this table can mean "measured, and it really is zero" or "the
+backend reported no usage"; those are different facts. Every row is labelled
 `measured`/`LOWER BOUND` (tokens) and `priced`/`LOWER BOUND` (cost) so the two
-can never be read as the same thing. `unmeasured`/`unpriced`/`failed` are the
+are never read as the same thing. `unmeasured`/`unpriced`/`failed` are the
 counts behind those labels.
 """
 

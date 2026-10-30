@@ -1,21 +1,14 @@
-"""``fm project set-logo`` — upload a project's logo image (WRITE).
+"""``fm project set-logo``: upload a project's logo image (write).
 
-Absorbs the retired ``set_project_logo.py`` script (EV-ABSORB.md §3.1, no new endpoint):
-that script uploaded a local image straight to blob and wrote the resulting URL
-onto ``Project.settings.logo`` over a direct DB session. This command reaches
-the SAME outcome through ``POST /projects/{id}/logo``
-(``routes/projects.py::upload_project_logo``): a plain multipart upload whose
-bytes are magic-byte sniffed server-side (png/jpeg/gif/webp) — never the
-declared Content-Type, which is the check that route's own docstring records
-replacing a weaker one that let an SVG (a document that can carry ``<script>``)
-through as an "image".
+Uploads a local image via a plain multipart ``POST /projects/{id}/logo``.
+The server sniffs the magic bytes (png/jpeg/gif/webp) rather than
+trusting the declared Content-Type, so an SVG cannot be uploaded as an
+image.
 
-Idempotent — re-running overwrites the stored URL — but still a WRITE: DRY RUN
-by default, ``--apply`` performs the upload. Unlike the retired ``set_project_logo.py``
-there is no ``--url`` reuse-an-existing-blob mode: that shortcut existed only
-because the script talked to the database directly and could set
-``Project.settings.logo`` to an arbitrary string; the route always uploads
-what it is given.
+Idempotent (re-running overwrites the stored URL), but still a write:
+dry run by default, ``--apply`` performs the upload. There is no
+``--url`` mode to reuse an existing blob; the server always uploads
+the bytes it is given.
 """
 
 from __future__ import annotations
@@ -87,17 +80,15 @@ def run(args) -> int:
     if subject not in SUBJECTS:
         raise _subject_error(getattr(args, "subject", None))
 
-    # ⚠️ OPTIONAL and merged BEFORE the resolver runs — formist_cli.context.resolve
-    # only ever reads args.space, so the alternative positional must land there
-    # first, the same order `evtool/cli.py::cmd_connectors` uses for its own
-    # `space_id` positional.
+    # The space_id positional is optional and merges before context.resolve
+    # runs, since resolve only reads args.space.
     if getattr(args, "space_id", None) and not getattr(args, "space", None):
         args.space = args.space_id
 
     if not args.path:
         raise ProjectsError(
             "`fm project set-logo` needs a local image path.\n"
-            "→ fm project set-logo <path> --space <id> [--apply]"
+            "Usage: fm project set-logo <path> --space <id> [--apply]"
         )
     image_path = Path(args.path)
     if not image_path.is_file():
@@ -107,7 +98,7 @@ def run(args) -> int:
 
     if not args.apply:
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would upload {image_path} ({image_path.stat().st_size} bytes) as the "
             f"logo for project {ctx.space} ({ctx.target.name}).\n"
             f"To apply: re-run with --apply.",

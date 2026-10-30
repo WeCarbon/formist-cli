@@ -1,35 +1,32 @@
-"""``fm`` — the Evane operator CLI.
+"""``fm``: the Formist/Evane operator CLI.
 
 Design rules, all of which are safety properties rather than preferences:
 
-- **Local by default, prod named explicitly.** ``--env`` defaults to ``local``.
-  There is no state file and no "current environment", because a remembered
-  target is one somebody forgets they set.
-- **Hosts are allow-listed** (``formist_cli.targets``). The retired we-carbon stack
-  still answers 200, so an unknown host must be refused rather than tried.
-- **Spaces are addressed by UUID, never by name** — three same-named projects
-  exist in that retired database.
-- **Every ``/admin`` mutation is exposed, and every one is audited — by two
-  different mechanisms, and that is fine.** ``fm update`` posts to
-  ``/projects/{id}/admin/data-changes``, where every op runs through
-  ``services.governance.apply_change`` and lands in the project-scoped
-  ``AuditLog``. The REST of the platform-admin surface (``fm users
-  create/set/add-space/remove-space``, ``fm spaces rename/delete/
-  transfer-ownership/delete-conversation/delete-skill/delete-invitation``) writes
-  to ``PlatformAuditLog`` instead, via ``AuditedAdminRouter``
-  (``services/platform_audit.py``) — a DIFFERENT table, because ``AuditLog.
-  project_id`` is a non-nullable FK and a platform action (create a user, delete a
-  space) often has no project at all. The earlier rule here ("this tool has no
-  write commands beyond ``update``") predated that router and is superseded by
-  D224 (2026-09-06) — owner's ruling 「所有 admin 功能都要用 fm cli 可用」, all
-  admin functionality must be reachable from ``ev``.
-- **A write never inherits its environment.** ``fm use`` remembers a space and, for
-  READS, an environment. A write resolves ``--env`` from the command line only. A
-  space is 36 characters nobody verifies by eye; an environment is one word and
-  decides whether this is production. See ``evtool/prefs.py``.
+- **Local by default, prod named explicitly.** ``--env`` defaults to
+  ``local``. There is no state file and no "current environment",
+  because a remembered target is one somebody forgets they set.
+- **Hosts are allow-listed** (``formist_cli.targets``): an unknown
+  host is refused rather than tried.
+- **Spaces are addressed by UUID, never by name**, since names are
+  not guaranteed unique.
+- **Every ``/admin`` mutation is exposed, and every one is audited, by
+  two different mechanisms, and that is fine.** ``fm update`` posts to
+  ``/projects/{id}/admin/data-changes``, where every op lands in the
+  project-scoped ``AuditLog``. The rest of the platform-admin surface
+  (``fm users create/set/add-space/remove-space``, ``fm spaces
+  rename/delete/transfer-ownership/delete-conversation/delete-skill/
+  delete-invitation``) writes to a separate ``PlatformAuditLog``
+  instead, because ``AuditLog.project_id`` is a non-nullable FK and a
+  platform action (create a user, delete a space) often has no project
+  at all.
+- **A write never inherits its environment.** ``fm use`` remembers a
+  space and, for reads, an environment. A write resolves ``--env``
+  from the command line only. A space is 36 characters nobody
+  verifies by eye; an environment is one word and decides whether
+  this is production.
 
-Stdlib only — the production image builds ``uv sync --frozen --no-dev``, so ``ev``
-must not add a runtime dependency.
+Stdlib only: the production image builds without dev dependencies, so
+this tool must not add a runtime dependency.
 """
 
 from __future__ import annotations
@@ -122,16 +119,13 @@ def _add_space(parser: argparse.ArgumentParser) -> None:
 def _effective(
     args, *, for_write: bool = False, need_space: bool = True, need_token: bool = False
 ):
-    """Resolve the effective target and PRINT its provenance before anything runs.
+    """Resolve the effective target and print its provenance before anything runs.
 
-    The banner goes to stderr on every command, reads included. Printing the target
-    alone is close to useless — the operator already believes they know it. Printing
-    where each half came from, and how old a remembered one is, is what breaks a
-    wrong belief.
+    The banner goes to stderr on every command, reads included: the
+    target alone tells the operator little, while where each half
+    came from, and how stale a remembered one is, is what catches a
+    wrong assumption.
     """
-    # One resolver, imported. This used to be the implementation; evtool/context.py
-    # is now the only one, because the same operation existed here AND inline in
-    # logs.py under a different name, and the two had already drifted.
     return context.resolve(
         args, for_write=for_write, need_space=need_space, need_token=need_token
     )
@@ -168,23 +162,23 @@ def build_parser() -> argparse.ArgumentParser:
         "login",
         help="sign in through the browser and store a CLI credential (0600)",
         description=(
-            "Signs in through the SAME OAuth 2.1 flow the MCP connector "
-            "uses — one authorization server for both (mcp_app/oauth). `fm` "
-            "registers itself as a public client, opens the authorization page in "
-            "a browser where you sign in with your NORMAL login and approve, and "
-            "exchanges a one-time code (PKCE S256) for a credential that is scoped "
-            "to you, expires, and is revocable on its own from Settings > Security "
-            "> Connected apps, beside your other connected apps. "
-            "It replaces pasting a browser session JWT, which was the whole account "
-            "and could only be killed by signing out everywhere. "
+            "Signs in through the same OAuth 2.1 flow the MCP connector uses, "
+            "one authorization server for both. `fm` registers itself as a "
+            "public client, opens the authorization page in a browser where "
+            "you sign in with your normal login and approve, and exchanges a "
+            "one-time code (PKCE S256) for a credential that is scoped to "
+            "you, expires, and is revocable on its own from Settings > "
+            "Security > Connected apps, beside your other connected apps. "
+            "It replaces pasting a browser session JWT, which was the whole "
+            "account and could only be killed by signing out everywhere. "
             "There is no --token flag. For CI / an unattended machine, export "
-            "FORMIST_TOKEN with the 'token' field of the file THIS command writes "
-            "(0600, printed below) — `fm` uses it for that invocation only, never "
-            "writes it to disk, and never refreshes it; run `fm whoami` to confirm "
-            "which source is in use. "
-            "A --host evane or --host evane-ae login runs against the Global region (the "
-            "authorization server is the control plane) and the credential works at "
-            "both of those hosts; --host formist signs in against its own deployment."
+            "FORMIST_TOKEN with the 'token' field of the file this command "
+            "writes (0600, printed below); `fm` uses it for that invocation "
+            "only, never writes it to disk, and never refreshes it; run "
+            "`fm whoami` to confirm which source is in use. "
+            "A --host evane or --host evane-ae login runs against the Global "
+            "region and the credential works at both of those hosts; "
+            "--host formist signs in against its own deployment."
         ),
     )
     _add_env(p)
@@ -227,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_env(p)
     p.add_argument(
         "--admin", action="store_true",
-        help="GET /admin/health instead — this region's checks PLUS the other "
+        help="GET /admin/health instead: this region's checks plus the other "
              "region's, in one call (needs a platform-admin session)",
     )
 
@@ -284,9 +278,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_env(p)
     _add_space(p)
-    # ⚠️ OPTIONAL and default-preserving. `fm connectors` alone must keep printing
-    # the plain list it always printed — a positional that changed the default
-    # behaviour would silently redefine an existing operator command.
+    # Optional and default-preserving: `fm connectors` alone must keep
+    # printing the plain list it always printed, since a positional
+    # that changed the default behaviour would silently redefine an
+    # existing operator command.
     p.add_argument(
         "subject", nargs="?", default=None,
         help=f"one of: {', '.join(connectors_mod.SUBJECTS)} (default: list)",
@@ -304,8 +299,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_env(p)
     _add_space(p)
 
-    # Parser AND body live in evtool/logs.py: cli.py gets an import and a dispatch
-    # entry and nothing else. Four lanes edit this file; that shape three-way-merges.
+    # Parser and body live in logs.py: cli.py gets an import and a dispatch
+    # entry and nothing else.
     logs.add_parser(sub)
     users.add_parser(sub)
     space_plan.add_parser(sub)
@@ -318,8 +313,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Health, migration identity and credential status for every "
             "environment, in one place. Distinguishes 'could not reach it' from "
-            "'reached it and it is unhealthy' — different facts, different next "
-            "actions — and reports every environment even when one is down."
+            "'reached it and it is unhealthy', different facts, different next "
+            "actions, and reports every environment even when one is down."
         ),
     )
     p.add_argument(
@@ -440,12 +435,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_login(args) -> int:
-    """Browser-confirmed OAuth authorization. See evtool/login.py for the flow.
+    """Browser-confirmed OAuth authorization.
 
-    Deliberately `resolve`, not `_effective`: the credential commands bind to the
-    environment NAMED on the command line, never to a remembered one. `fm login`
-    picks which FILE a token lands in, and inheriting that from `fm use` is how a
-    prod token ends up in the local slot (or the reverse). Same for logout/whoami.
+    Deliberately `resolve`, not `_effective`: the credential commands
+    bind to the environment named on the command line, never to a
+    remembered one. `fm login` picks which file a token lands in, and
+    inheriting that from `fm use` is how a prod token ends up in the
+    local slot (or the reverse). Same for logout/whoami.
     """
     target = resolve(args.host)
     payload = login_mod.perform_login(
@@ -477,12 +473,13 @@ def cmd_login(args) -> int:
 
 
 def _describe_account(target, payload: dict) -> str:
-    """Who the new credential belongs to, asked of the SERVER.
+    """Who the new credential belongs to, asked of the server.
 
-    The OAuth token response says nothing about the user — it is opaque by design —
-    so "Connected as <who>" has to be a question, not a claim read off the token.
-    Falls back to the client name when /auth/me cannot be reached: printing a wrong
-    identity would be worse than printing none.
+    The OAuth token response says nothing about the user, it is opaque
+    by design, so "Connected as <who>" has to be a question, not a
+    claim read off the token. Falls back to the client name when
+    /auth/me cannot be reached: printing a wrong identity would be
+    worse than printing none.
     """
     try:
         me = api.get(login_mod.auth_target(target), "/auth/me",
@@ -495,15 +492,15 @@ def _describe_account(target, payload: dict) -> str:
 
 
 def cmd_logout(args) -> int:
-    """Revoke the grant server-side, THEN delete the file.
+    """Revoke the grant server-side, then delete the file.
 
-    In that order, and both halves matter. Deleting only the file leaves a live
-    credential in the world that nobody can see any more; revoking only on the
-    server leaves a dead file that `ev` will keep presenting. The local delete
-    happens even when the revoke fails (an offline laptop must still be able to
-    forget its credential) — and the failure is PRINTED, because "logged out" while
-    the credential is still live is exactly the kind of quiet wrong answer this
-    codebase keeps finding.
+    In that order, and both halves matter. Deleting only the file
+    leaves a live credential in the world that nobody can see any
+    more; revoking only on the server leaves a dead file that `fm`
+    will keep presenting. The local delete happens even when the
+    revoke fails (an offline laptop must still be able to forget its
+    credential), and the failure is printed, since "logged out" while
+    the credential is still live would be a quiet wrong answer.
     """
     if args.all:
         removed = tokens.clear_all()
@@ -533,7 +530,7 @@ def cmd_logout(args) -> int:
         return 0
     print(
         f"removed the {target.name} token file, but the server did NOT confirm the "
-        "revocation — the grant may still be live. Revoke it from "
+        "revocation; the grant may still be live. Revoke it from "
         "Settings > Security > Connected apps.",
         file=sys.stderr,
     )
@@ -543,11 +540,12 @@ def cmd_logout(args) -> int:
 def _own_grant_id(target, token: str) -> str | None:
     """The grant id of the credential we are holding, asked of the server.
 
-    An OAuth access token is OPAQUE — there is nothing in it to read a grant id out
-    of, which is the property that makes it revocable in the first place. So `ev
-    logout` asks: `GET /auth/apps` returns this user's grants and the CLI matches
-    the one whose client_id it stored. A stored grant id would be the alternative
-    and it would go stale on the first refresh.
+    An OAuth access token is opaque: there is nothing in it to read a
+    grant id out of, which is the property that makes it revocable in
+    the first place. So `fm logout` asks: `GET /auth/apps` returns
+    this user's grants and the CLI matches the one whose client_id it
+    stored. A stored grant id would be the alternative and it would go
+    stale on the first refresh.
     """
     client_id = tokens.load_meta(target.name).get("client_id")
     if not client_id:
@@ -566,13 +564,13 @@ def cmd_whoami(args) -> int:
     target = resolve(args.host)
     token, origin = tokens.load_for(target.name)
     if not token:
-        print(f"no stored token for {target.name}. → fm login --host {target.name}")
+        print(f"no stored token for {target.name}. Run fm login --host {target.name}")
         return 1
 
     if origin == tokens.ENV_TOKEN_ORIGIN:
         print(f"{target.name}: token source = environment ({tokens.ENV_TOKEN_VAR})")
         print(
-            "  not written to disk and not auto-refreshed by `fm` — scopes and "
+            "  not written to disk and not auto-refreshed by `fm`; scopes and "
             "expiry are whatever the issuer granted; the server decides on every "
             "call"
         )
@@ -584,7 +582,7 @@ def cmd_whoami(args) -> int:
             print(f"  scopes: {', '.join(meta['scopes'])}")
         if meta.get("expires_at"):
             print(f"  access token expires: {meta['expires_at']} (refreshed automatically)")
-    print("  the token is OPAQUE — `fm` cannot read anything out of it; the server decides")
+    print("  the token is OPAQUE: `fm` cannot read anything out of it; the server decides")
 
     if getattr(args, "remote", False):
         for app in login_mod.list_apps(target, token):
@@ -658,15 +656,12 @@ def cmd_instance(args) -> int:
         if "code_heads" in alembic:
             print(f"  alembic code_heads={alembic.get('code_heads')}")
             if alembic.get("in_sync") is False:
-                print("  ⚠️ db_head != code_heads — a migration is pending or failed.")
+                print("  db_head != code_heads: a migration is pending or failed.")
                 worst = 1
     return worst
 
 
-#: `fm proposals <subject>`. Read by the parser AND by
-#: tests/test_ev_admin_parity.py, which resolves the coverage map's
-#: "fm proposals unstick" against it — a subject that exists in one and not the
-#: other is exactly the drift that map is for.
+#: `fm proposals <subject>`.
 PROPOSAL_SUBJECTS = ("list", "unstick")
 
 
@@ -688,12 +683,12 @@ def cmd_proposals(args) -> int:
 
 
 def _proposals_unstick(args) -> int:
-    """Survey (and with --apply, repair) proposals the OLD approve stranded.
+    """Survey (and with --apply, repair) proposals an earlier approve stranded.
 
-    ⚠️ THE DRY RUN ALWAYS RUNS, INCLUDING UNDER --apply, and it is printed before
-    anything is written. The whole value of this command is that the operator
-    reads WHICH proposals are half-applied before deciding — `fm space-plan set`
-    made the same call for the same reason. A repair whose scope is only visible
+    The dry run always runs, including under --apply, and it is
+    printed before anything is written. The whole value of this
+    command is that the operator reads which proposals are
+    half-applied before deciding; a repair whose scope is only visible
     afterwards is a repair nobody reviewed.
 
     Half-applied proposals are called out separately from merely-failed ones
@@ -758,35 +753,24 @@ def _render_unstick(payload: dict) -> None:
             print(f"      why: {reason}")
 
 
-#: Newest first. The route's `ListSpec` default sort is `created_at` ASCENDING
-#: (`routes/governance.py:133-135`), and this command used to accept it, so a space
-#: with more rows than `--limit` showed its OLDEST page and nothing else.
-#:
-#: ⚠️ MEASURED 2026-09-06, and the way it was found is the point. After an owner-
-#: approved write to a real prod space, the operator ran `fm audit-log … --limit 2000`
-#: to confirm the write had been audited and got **zero** rows for that day — the
-#: reading that offers itself is "the write was not audited", which is alarming
-#: and false. The space holds 484 audit rows; this returned the oldest 200
-#: (2026-08-20 … 2026-08-27) because the server caps the limit, and the audit row
-#: was there all along. A read whose answer is a page nobody asked for is worse
-#: than a read that fails: it answers.
+#: The route's default sort is `created_at` ascending, so a space with
+#: more rows than `--limit` would otherwise show its oldest page and
+#: nothing else, which is a page nobody asked for: "what changed
+#: recently" is the only question this command is ever asked.
 _AUDIT_LOG_SORT = "-created_at"
 
 
 def cmd_audit_log(args) -> int:
-    """A space's audit log, NEWEST FIRST, saying so when it did not show all of it.
+    """A space's audit log, newest first, saying so when it did not show all of it.
 
     Both halves are load-bearing and neither is decoration:
 
-    * The sort, because "what changed recently" is the only question this command
-      is ever asked, and ascending answers a question nobody has.
-    * The count line, because the server caps `--limit` (`MAX_LIMIT` on the shared
-      `ListSpec` pagination), so asking for 2000 and receiving 200 is NOT an error
-      and prints no warning of its own. `fm users` already learned this exact
-      lesson — see `evtool/users.py::render_list` and the docstring of
-      `tests/test_evtool_users.py`: a listing that shows a page while looking like
-      it showed the set is "a report that is true about what it fetched and false
-      about what exists".
+    * The sort, because ascending order answers a question nobody has.
+    * The count line, because the server caps `--limit`, so asking for
+      more than the cap and receiving fewer rows is not an error and
+      prints no warning of its own. A listing that shows a page while
+      looking like it showed the whole set would be true about what it
+      fetched and false about what exists.
     """
     eff = _effective(args)
     target, space = eff.target, eff.space
@@ -804,10 +788,10 @@ def cmd_audit_log(args) -> int:
     if total is None:
         # The route always sends `total`; if it ever stops, say so rather than
         # printing a count that looks authoritative.
-        print(f"\n{shown} shown (newest first) · total UNKNOWN "
+        print(f"\n{shown} shown (newest first), total UNKNOWN "
               f"(the server sent no `total`)")
     elif shown < int(total):
-        print(f"\n{shown} of {total} shown, NEWEST FIRST — {int(total) - shown} "
+        print(f"\n{shown} of {total} shown, NEWEST FIRST, {int(total) - shown} "
               f"older rows not listed. Raise --limit to reach further back.")
     else:
         print(f"\n{shown} of {total} (newest first)")
@@ -815,27 +799,21 @@ def cmd_audit_log(args) -> int:
 
 
 def cmd_connectors(args) -> int:
-    """A space's connectors, what each one's LAST SYNC RUN actually did — or `grants`
-    for what they may do.
+    """A space's connectors, what each one's last sync run actually did, or
+    `grants` for what they may do.
 
-    ⚠️ The default subject is the ORIGINAL listing, unchanged. `fm connectors` has
-    been an operator command for a while; adding a subject that displaced it would
-    break every existing invocation, and the breakage would look like a connector
-    problem rather than a CLI change.
+    The default subject is the original listing, unchanged: adding a
+    subject that displaced it would break every existing invocation,
+    and the breakage would look like a connector problem rather than a
+    CLI change.
 
-    The second line per connector is the whole point of the command for an operator
-    diagnosing cadence. D193 (2026-09-06) had to be inferred from two `next_sync_at`
-    samples taken five minutes apart, because the run history was not reachable at
-    all: `fm logs --env ae` is served from the Global region only, and the admin
-    connectors endpoint was reporting `sync_run: null` for every connection. The data
-    existed the whole time — `SyncRun` records it, `_sync_run_dict` serialises it —
-    so what was missing was the route passing it through and this command printing it.
-
-    `trigger` is the reading that separates the two clocks the owner's rule is made of
-    ("30 min / 每次获得 webhook 修改信号时同步"): `scheduler` means the 30-minute poll
-    produced this run, `push` means a provider change notification did. `dur` is how
-    long the run held the tick — the tick is strictly serial, so a large number here
-    on one connector is the explanation for every other connector running late.
+    The second line per connector is the whole point of the command
+    for an operator diagnosing cadence: `trigger` separates the two
+    clocks a connector runs on (`scheduler` means the periodic poll
+    produced this run, `push` means a provider change notification
+    did), and `dur` is how long the run held the tick. The tick is
+    strictly serial, so a large number here on one connector explains
+    every other connector running late.
     """
     subject = (getattr(args, "subject", None) or connectors_mod.DEFAULT_SUBJECT).strip().lower()
     if subject not in connectors_mod.SUBJECTS:
@@ -850,13 +828,10 @@ def cmd_connectors(args) -> int:
         target, f"/admin/spaces/{space}/connectors", token=_token_for(eff)
     )
     for item in _items(payload):
-        # `type`, not `kind`. The payload has never had a `kind` key
-        # (routes/connectors.py::_connection_dict publishes `type`), so this column
-        # printed a literal "?" for every connector in every space since the command
-        # was written — measured against production 2026-09-06, three connectors, three
-        # question marks. An operator could not tell the SharePoint connector from the
-        # Airtable one in the output of the command whose whole job is telling them
-        # apart. `label` is the registry's human name for the same thing.
+        # `type`, not `kind`: the payload has never had a `kind` key, so an
+        # operator could not otherwise tell one connector type from another in
+        # the output of the command whose whole job is telling them apart.
+        # `label` is the registry's human name for the same thing.
         kind = item.get("type") or item.get("kind") or "?"
         print(f"{item.get('id')}  {str(kind).lower():<16} {item.get('status', '?')}")
         print(
@@ -890,18 +865,15 @@ def cmd_connectors(args) -> int:
 def cmd_entity_fields(args) -> int:
     """A space's custom-field schemas.
 
-    This is a PROJECT route, not an admin one, and it already exists and is
-    deployed in both prod regions — ``GET /projects/{id}/entity-fields``
-    (``routes/entity_fields.py:212``). It is here because on 2026-08-20 an
-    operator got a 404 from it and, unable to INSPECT the field shape, wrote to
-    ``project.settings`` by hand against prod. The endpoint had landed on main
-    twelve hours earlier and simply was not deployed yet. So no endpoint was
-    missing — a client and a legible 404 were.
+    This is a project route, not an admin one (``GET
+    /projects/{id}/entity-fields``): being able to inspect the field
+    shape directly means an operator never has to write to
+    ``project.settings`` by hand to work around not seeing it.
 
-    Note the gate is ``require_member``, not platform-admin (``routes/deps.py:74``
-    has no admin bypass), so this needs a session belonging to a member of the
-    space. That is the normal case for the operator and is why no new
-    admin-scoped endpoint was added for it.
+    The gate is membership, not platform-admin, so this needs a
+    session belonging to a member of the space. That is the normal
+    case for the operator and is why no admin-scoped endpoint was
+    added for it.
     """
     eff = _effective(args)
     target, space = eff.target, eff.space
@@ -957,7 +929,7 @@ def cmd_doctor(args) -> int:
         report = _with_credential(report, target.name)
         reports.append(_with_migrations(report, target, target.env))
 
-    print(f"fm doctor — {len(reports)} deployment(s)")
+    print(f"fm doctor: {len(reports)} deployment(s)")
     print(doctor_mod.rollup(reports))
     worst = doctor_mod.Status.worst([r.status for r in reports])
     if worst is not doctor_mod.Status.OK:
@@ -966,18 +938,18 @@ def cmd_doctor(args) -> int:
 
 
 def _with_credential(report, env: str):
-    """Annotate with the stored credential's state — described, never revealed.
+    """Annotate with the stored credential's state, described, never revealed.
 
-    Never decodes the token: an ``fm login`` access token is opaque (``crst_at_…``,
-    no dots — mcp_app/oauth/provider.py::ACCESS_PREFIX), so the only place left to
-    read expiry from is the metadata ``fm login``/refresh wrote beside it
-    (:func:`tokens.load_meta`, :func:`tokens.describe_meta`) — the same source
-    ``fm whoami`` already uses.
+    Never decodes the token: an ``fm login`` access token is opaque,
+    so the only place left to read expiry from is the metadata
+    ``fm login``/refresh wrote beside it (:func:`tokens.load_meta`,
+    :func:`tokens.describe_meta`), the same source ``fm whoami``
+    already uses.
     """
     try:
         token, origin = tokens.load_for(env)
     except tokens.TokenError as exc:
-        return replace(report, credential=f"unusable — {exc}")
+        return replace(report, credential=f"unusable: {exc}")
     if not token:
         return replace(report, credential=f"none stored (fm login --host {env})")
     if origin == tokens.ENV_TOKEN_ORIGIN:
@@ -990,10 +962,11 @@ def _with_credential(report, env: str):
 def _with_migrations(report, target, env: str):
     """Annotate with alembic identity when /admin/instance is available.
 
-    Absence is not a failure: the endpoint is admin-gated (Global, or Formist as
-    its own single-region deployment — ``formist_cli.targets.is_admin_env``), so a
-    local or unauthenticated run against any other region legitimately has
-    nothing to say here. Reporting "unknown" would be inventing a problem.
+    Absence is not a failure: the endpoint is admin-gated (Global, or
+    Formist as its own single-region deployment), so a local or
+    unauthenticated run against any other region legitimately has
+    nothing to say here. Reporting "unknown" would be inventing a
+    problem.
     """
     if target.is_prod and not is_admin_env(env):
         return report
@@ -1011,7 +984,7 @@ def _with_migrations(report, target, env: str):
                 report,
                 migrations=(
                     f"{name}: db_head={alembic.get('db_head')} != "
-                    f"code_heads={alembic.get('code_heads')} — a migration is "
+                    f"code_heads={alembic.get('code_heads')}; a migration is "
                     "pending or failed"
                 ),
             )
@@ -1019,19 +992,19 @@ def _with_migrations(report, target, env: str):
 
 
 def cmd_use(args) -> int:
-    """Remember a default space, and — for reads only — a default environment.
+    """Remember a default space, and, for reads only, a default environment.
 
-    Records the space's REGION as reported by the server, so a later write whose
-    --env contradicts it is refused before a socket is opened. That is the cheapest
-    possible catch for the accident this tool exists to prevent, and it costs one
-    comparison.
+    Records the space's region as reported by the server, so a later
+    write whose --env contradicts it is refused before a socket is
+    opened. That is a cheap catch for a costly accident, and it costs
+    one comparison.
     """
     if args.clear:
         print("forgot the remembered defaults" if prefs.clear() else "nothing remembered")
         return 0
 
     if not args.show and args.space is None and args.host is None:
-        print("nothing to set. → fm use --space <uuid> [--host <host>] | --show | --clear",
+        print("nothing to set. Usage: fm use --space <uuid> [--host <host>] | --show | --clear",
               file=sys.stderr)
         return 2
 
@@ -1051,7 +1024,7 @@ def cmd_use(args) -> int:
 
     current = prefs.load()
     print(f"space  {current.space or '(none)'}")
-    print(f"host   {current.env or '(none)'}   ← reads only; a write always needs --host")
+    print(f"host   {current.env or '(none)'}   (reads only; a write always needs --host)")
     if current.space_region:
         print(f"region {current.space_region}   (recorded from the server)")
     if current.set_at:
@@ -1062,10 +1035,11 @@ def cmd_use(args) -> int:
 def _lookup_region(space: str, env: str | None) -> object:
     """The region /admin/spaces reports for ``space``, or ``_UNSET`` if unknown.
 
-    Never guessed from the env being set: an unknown region must stay unknown, so
-    that `prefs.effective` treats it as absence of knowledge rather than as
-    evidence. A lookup that fails is not a reason to refuse `fm use` — the operator
-    may legitimately be offline or not logged in.
+    Never guessed from the env being set: an unknown region must stay
+    unknown, so that `prefs.effective` treats it as absence of
+    knowledge rather than as evidence. A lookup that fails is not a
+    reason to refuse `fm use`, since the operator may legitimately be
+    offline or not logged in.
     """
     for candidate in (env or DEFAULT_HOST,):
         if candidate is None:
@@ -1074,11 +1048,9 @@ def _lookup_region(space: str, env: str | None) -> object:
             target = resolve(prefs.canonical_env(candidate))
         except (TargetError, PrefsError):
             continue
-        # Only a PROD instance can make a residency claim. A local dev server
-        # reports every space it holds as its own HOME_REGION (`global`), which is
-        # a fact about the server, not about the row — recording it made every
-        # local write refuse, and told the operator to retry with `--host evane`,
-        # i.e. against production.
+        # Only a prod instance can make a residency claim. A local dev server
+        # reports every space it holds as its own home region (`global`), which
+        # is a fact about the server, not about the row.
         if not target.is_prod:
             continue
         try:
@@ -1093,7 +1065,7 @@ def _lookup_region(space: str, env: str | None) -> object:
                       file=sys.stderr)
                 return region
     print(
-        "  (no residency region recorded — only a prod instance can state one)",
+        "  (no residency region recorded; only a prod instance can state one)",
         file=sys.stderr,
     )
     return prefs._UNSET
@@ -1144,9 +1116,9 @@ def cmd_get(args) -> int:
 def cmd_update(args) -> int:
     """Dry-run a bulk change, then apply it only against the token that dry run gave.
 
-    The dry run is not optional and not skippable. The endpoint executes every op
-    for real and rolls back (`services/bulk_data.py` property 2), so what is printed
-    is what would happen — including the ids the inserts actually produced.
+    The dry run is not optional and not skippable. The server executes
+    every op for real and rolls back, so what is printed is what would
+    happen, including the ids the inserts actually produced.
     """
     eff = _effective(args, for_write=True, need_token=True)
     token = eff.token
@@ -1172,7 +1144,7 @@ def cmd_update(args) -> int:
     _print_report(report, applied=False, json_out=args.json)
     token_value = update_mod.plan_token(plan, report)
     print(
-        f"\nDRY RUN — nothing was changed.\n"
+        f"\nDRY RUN: nothing was changed.\n"
         f"To apply this exact plan:\n"
         f"  fm update --host {eff.target.name} --space {eff.space} "
         f"{args.payload} --apply {token_value}",
@@ -1182,13 +1154,12 @@ def cmd_update(args) -> int:
 
 
 def _print_report(report: object, *, applied: bool, json_out: bool) -> None:
-    """Print the SERVER's report.
+    """Print the server's report.
 
-    Every value here is read out of the response body. Nothing is echoed from the
-    payload that was sent — a confirmation line that prints what it hoped to write
-    would confirm whatever landed, which is the defect this tool was built after
-    (`scratchpad/parity/prod_ren.py:15-24` shipped its report straight from the
-    value it intended to write, with no read-back at all).
+    Every value here is read out of the response body. Nothing is
+    echoed from the payload that was sent: a confirmation line that
+    prints what it hoped to write would confirm whatever landed,
+    whether or not it matched what was sent.
     """
     if json_out:
         print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
@@ -1208,7 +1179,7 @@ def _print_report(report: object, *, applied: bool, json_out: bool) -> None:
         extra = f"  cascade={cascaded}" if cascaded else ""
         print(f"  [{result.get('index')}] {result.get('action')} "
               f"{result.get('kind')} {result.get('id')} "
-              f"→ {result.get('outcome')}{extra}")
+              f"-> {result.get('outcome')}{extra}")
     for refusal in report.get("refusals") or []:
         if isinstance(refusal, dict):
             print(f"  REFUSED [{refusal.get('index')}] {refusal.get('reason')}: "
@@ -1285,12 +1256,11 @@ def main(
     try:
         if prepare is not None:
             prepare(args)
-        # THE privilege pre-check, at the one point every command passes through.
-        # It only ever refuses what the server would also refuse — see
-        # evtool/privileges.py on why it is advisory in one direction. `resolve`
-        # here (not `_effective`) for the same reason cmd_login uses it: which
-        # credential file is read must come from the command line, never from a
-        # remembered target.
+        # The privilege pre-check, at the one point every command passes
+        # through. It only ever refuses what the server would also refuse.
+        # `resolve` here (not `_effective`) for the same reason cmd_login
+        # uses it: which credential file is read must come from the command
+        # line, never from a remembered target.
         (check_privileges or privileges.check)(
             args.command,
             tokens.local_scopes(resolve(getattr(args, "host", None)).name),
@@ -1305,7 +1275,7 @@ def main(
         return 2
     except USER_ERRORS + extra_errors as exc:
         # These carry operator-facing prose, so print the message rather than a
-        # traceback — the message IS the product.
+        # traceback: the message is the product.
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
