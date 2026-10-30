@@ -1,43 +1,24 @@
-"""``fm connector reauth`` / ``fm connector sync``: per-connector operator actions.
+"""Tests for ``fm connector reauth`` / ``fm connector sync``: per-connector
+operator actions.
 
-Deliberately a SEPARATE top-level command from ``fm connectors`` (plural): that
-one is the ADMIN view over ``/admin/spaces/{id}/connectors...`` (Global-only,
-platform-admin-gated); these two hit ordinary PROJECT routes
-(``/projects/{id}/connections/{cid}/reauth`` and
-``/projects/{id}/connectors/{cid}/sync``, both OWNER/ADMIN member-gated, never
-``/admin``): the same reason ``entity-fields`` got its own top-level command
-instead of folding into ``connectors`` (formist_cli/cli.py::cmd_entity_fields's own
-docstring).
+Deliberately a separate top-level command from ``fm connectors`` (plural):
+that one is the admin view over the space-wide connector list (global,
+platform-admin-gated), while these two hit ordinary project routes,
+member-gated, never admin.
 
-Absorbs three scripts (EV-ABSORB.md §3.1, no new endpoint):
+* ``fm connector reauth <cid>`` drives the same two-step device-code OAuth
+  flow the product's own "Reconnect" banner uses (one call to initiate,
+  then polling until the identity provider answers): it never talks to
+  the provider directly, and never sees the refresh token, since the
+  route never returns it.
+* ``fm connector sync <cid>`` triggers a per-connector sync run through
+  one endpoint that dispatches by the connection's own type server-side.
+  ``--kind`` is accepted for the operator's own bookkeeping only and is
+  not sent to the server, since there is nothing to send it to.
 
-* ``scripts/device_code_auth.py`` ran Microsoft's device-code OAuth dance
-  directly against Microsoft and wrote the refresh token into the connection's
-  payload over a direct DB session. ``fm connector reauth <cid>`` drives the
-  SAME two-step flow the product's own "Reconnect" banner uses
-  (``POST .../reauth`` to initiate, then ``POST .../reauth/poll`` until Microsoft
-  answers): never talks to Microsoft directly, and never sees the refresh
-  token (the route never returns it).
-* ``scripts/sync_calendar.py`` / ``scripts/sync_messages.py`` each ran ONE
-  connector's engine directly over a direct DB session; both are FULLY
-  absorbed and deleted. ``scripts/sync.py`` (the plain SharePoint/Drive
-  one-shot) is only PARTIALLY absorbed and stays on disk: its ``--full`` flag
-  clears the connection's stored delta cursor as the only recovery path for a
-  truncated Drive crawl, and nothing exposes that over HTTP (see
-  ``formist_cli/connectors.py``'s module comment for why that needs a new
-  endpoint). ``fm connector sync <cid>`` triggers the SAME per-connector run
-  through ``POST /projects/{id}/connectors/{cid}/sync``
-  (``routes/connectors.py::sync_connection``), which dispatches by the
-  connection's OWN type server-side: SHAREPOINT/GOOGLE_WORKSPACE get the delta
-  crawl, OUTLOOK gets calendar+mailbox together. ``--kind`` is accepted for
-  the operator's own bookkeeping/documentation (matching the scripts' separate
-  names) but is NOT sent to the server: there is nothing to send it to,
-  since one endpoint serves every connector type.
-
-Both are WRITES with real external side effects (a live OAuth flow; a real
-Graph/Attendee crawl), so both are DRY RUN by default with ``--apply``.
-
-Run: uv run pytest tests/test_formist_cli_connector_ops.py -q
+Both are writes with real external side effects (a live OAuth flow; a
+real crawl against the connector's provider), so both are dry run by
+default, requiring ``--apply``.
 """
 
 from __future__ import annotations

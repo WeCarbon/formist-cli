@@ -1,33 +1,20 @@
-"""No `ev` subcommand may be registered twice: and `_COMMANDS` may not shadow a key.
+"""No `fm` subcommand may be registered twice, and `_COMMANDS` may not
+shadow a key.
 
-MEASURED, 2026-09-07, on a real merge probe. Two lanes independently created
-`formist_cli/messages.py` (`fm messages refresh-inline-images` from `mail-inline-images`,
-`fm messages dedupe` from `message-sync-dedupe`) and both registered it in
-`formist_cli/cli.py`. Git conflicted on the module file: add/add, loudly, fine: and
-**auto-merged `formist_cli/cli.py` with no conflict at all**, because the two lanes had
-inserted their lines at different anchors:
+Two independently written modules can each register the same subcommand
+name, inserting their lines at different points in `formist_cli/cli.py`.
+Git can merge that cleanly, with no conflict at all, because the two
+insertions land at different anchors in the text. The result still
+behaves wrong: a duplicate `add_parser` call raises
+`ValueError: conflicting subparser` at import, killing every `fm` command.
 
-    268:    messages_mod.add_parser(sub)
-    374:    messages_mod.add_parser(sub)
-    1074:    "messages": messages_mod.run,
-    1084:    "messages": messages_mod.run,
-
-That merge result raises `ValueError: conflicting subparser: messages` at import, so
-EVERY `ev` command and every test that imports `formist_cli.cli` dies. Same shape as the
-`down_revision` and duplicate-gate-helper cases the project rules records: clean in git,
-wrong in behaviour, because git tracks text and not meaning.
-
-TWO HALVES, AND THE SECOND IS THE ONE THAT NEEDED A TEST
----------------------------------------------------------
-The duplicate `add_parser` is already fatal at import, so anything that builds the
-parser catches it: badly (a stack ending inside argparse), but it catches it.
-
-The duplicate `_COMMANDS` key is INVISIBLE. A Python dict literal with a repeated
-key silently keeps the last one: no error, no warning, and `build_parser()` is
-perfectly happy. Two lanes' commands would collapse into whichever module happened
-to be listed second, and the only symptom would be an operator getting the wrong
-subcommand. That is why this file reads the SOURCE with `ast` rather than the
-imported dict: by the time it is a dict, the evidence is gone.
+The duplicate `_COMMANDS` key is worse, because it is invisible. A Python
+dict literal with a repeated key silently keeps the last one: no error, no
+warning, and `build_parser()` is perfectly happy. Two modules' commands
+would collapse into whichever one happened to be listed second, and the
+only symptom would be an operator getting the wrong subcommand. That is
+why this file reads the source with `ast` rather than the imported dict:
+by the time it is a dict, the evidence is gone.
 """
 
 from __future__ import annotations
@@ -104,9 +91,9 @@ def test_no_subcommand_is_registered_twice():
     duplicates = sorted({n for n in names if names.count(n) > 1})
     assert not duplicates, (
         f"{duplicates} registered more than once in build_parser(). argparse raises "
-        "`ValueError: conflicting subparser` at import, so this kills every `ev` "
-        "command: and it is exactly what a CLEAN git merge of two lanes that both "
-        "added the same subcommand produces (measured 2026-09-07)."
+        "`ValueError: conflicting subparser` at import, so this kills every `fm` "
+        "command, and a clean git merge of two independent additions of the same "
+        "subcommand can produce exactly this."
     )
 
 
@@ -122,11 +109,10 @@ def test_the_command_table_has_no_shadowed_key():
 
 
 def test_every_registered_parser_has_a_dispatch_entry_and_vice_versa():
-    """The two lists must agree: a registration with no dispatch 'works' until run.
-
-    tests/test_ev_admin_parity.py already asserts this for the /admin surface via
-    the built parser; this asserts it over the SOURCE, so it still holds for a
-    tree that cannot be imported (which is the state a bad merge leaves behind).
+    """The two lists must agree: a registration with no dispatch 'works'
+    until run. This asserts it over the source rather than the built
+    parser, so it still holds for a tree that cannot be imported (which is
+    the state a bad merge leaves behind).
     """
     literal_names = {n for n in _registered_parser_names() if not n.startswith("<module>")}
     keys = set(_command_table_keys())
@@ -135,5 +121,5 @@ def test_every_registered_parser_has_a_dispatch_entry_and_vice_versa():
     missing = sorted(literal_names - keys)
     assert not missing, (
         f"{missing} are registered as subcommands but have no _COMMANDS entry: "
-        "`ev <that>` would parse and then dispatch to nothing"
+        "`fm <that>` would parse and then dispatch to nothing"
     )
