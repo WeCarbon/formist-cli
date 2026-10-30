@@ -15,7 +15,7 @@ DANGEROUS HALF of a decision, and the two halves are not equally dangerous:
     an env is a WHERE: one word, and the half that decides whether this is
       production.
 
-So ``ev`` remembers the what and requires the where. A write cannot happen unless
+So ``fm`` remembers the what and requires the where. A write cannot happen unless
 the operator typed the environment IN THE COMMAND THEY JUST RAN. That is not a
 prompt, so ``yes |`` does not defeat it, and it survives scripting: a script that
 writes production contains the string ``ae`` in its source where a reviewer sees it.
@@ -110,7 +110,7 @@ class TestTheRememberedSpaceIsInheritedByBoth:
     def test_a_remembered_space_must_still_be_a_uuid(self):
         """`require_space_id` is not bypassed by coming from a file."""
         with pytest.raises(PrefsError):
-            store(space="GFSS 2026")
+            store(space="Acme Summit")
 
 
 class TestProvenanceIsInTheBanner:
@@ -156,8 +156,8 @@ class TestRegionDisagreementRefusesBeforeASocket:
     """`fm use` records the region `/admin/spaces` reported for the space. A write
     whose `--env` contradicts it is refused locally: no request is made.
 
-    This is the cheapest possible catch for the exact accident this lane exists to
-    prevent, and it costs one comparison.
+    This is the cheapest possible catch for a write aimed at the wrong
+    region, and it costs one comparison.
     """
 
     def test_write_to_the_wrong_region_is_refused(self):
@@ -178,7 +178,7 @@ class TestRegionDisagreementRefusesBeforeASocket:
 
     def test_an_explicit_space_flag_does_not_inherit_the_recorded_region(self):
         """The recorded region describes the REMEMBERED space. Applying it to a
-        different space passed on the command line would refuse a correct write —
+        different space passed on the command line would refuse a correct write,
         or worse, permit a wrong one."""
         store(space=SPACE, env="evane-ae", space_region="ae")
         assert effective(
@@ -213,10 +213,11 @@ class TestStorage:
             load()
 
     def test_a_custom_origin_is_stored_as_its_host_and_port(self):
-        """The owner says `dev`; targets.py says `local`. Accept both, store one —
-        `local` wins because it is what the allow-list key, the token filename and
-        every existing string already say, and because 'dev' is ambiguous in this
-        project (EMAIL_PROVIDER=dev, the dev Attendee, .env.local)."""
+        """Both `dev` and `local` are accepted as spellings for the same
+        target, but only one is stored: `local` wins because it is what the
+        allow-list key, the token filename and every existing string
+        already say, and because 'dev' is ambiguous elsewhere in this
+        project."""
         store(env="localhost:8160")
         assert load().env == "localhost:8160"
 
@@ -245,7 +246,7 @@ class TestResidencyRegionIsNotADeploymentTarget:
 
         the remembered space lives in 'global', but this command targets 'local'
 
-    and: far worse: the refusal's own remediation line read `→ --host evane`,
+    and, far worse, the refusal's own remediation line read `--host evane`,
     which aims a local-dev payload at PRODUCTION. A safety check whose advice
     points at prod is worse than no check.
 
@@ -273,10 +274,10 @@ class TestResidencyRegionIsNotADeploymentTarget:
 class TestOneCredentialDirectory:
     """Prefs and tokens must resolve to ONE directory, by construction.
 
-    They did not. `formist_cli/prefs.py` carried a line-for-line copy of the resolver
-    whose docstring read *"same directory as the tokens, resolved the same way"* —
-    a promise held by nothing but the two authors happening to agree. Merged into
-    one implementation during the ev-cli integration.
+    They did not, once. `formist_cli/prefs.py` carried a line-for-line copy
+    of the resolver whose docstring read "same directory as the tokens,
+    resolved the same way", a promise held by nothing but the two copies
+    happening to agree. Merged into one implementation.
 
     The reason this one was deduplicated while other same-named helpers in the
     package were left alone: what drifts here is WHERE THE CREDENTIALS LIVE. Two
@@ -313,8 +314,8 @@ class TestOneCredentialDirectory:
         same thing and calling it different things.
 
         So: move `tokens.config_dir` and require `prefs_path()` to move with it. A
-        private copy in prefs: under any name, however perfectly it agrees today —
-        cannot follow, because it is not reading this function.
+        private copy in prefs, under any name, however perfectly it agrees
+        today, cannot follow, because it is not reading this function.
         """
         monkeypatch.setattr(tokens, "config_dir", lambda: Path("/moved/elsewhere"))
         assert prefs.prefs_path() == Path("/moved/elsewhere/prefs.json")

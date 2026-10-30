@@ -1,16 +1,15 @@
-"""Name → id resolution, the substrate under ``fm get`` and ``fm update``'s ``$name``.
+"""Name to id resolution, the substrate under ``fm get`` and ``fm update``'s
+``$name``.
 
-Why this module exists at all is a correction to the brief this lane started from.
-The bulk endpoint's ``$ref`` is a WITHIN-BATCH back-reference to a row the same
-request just created (`services/bulk_data.py:201-227`: "Resolution is strictly
-BACKWARD"), so every ``update`` and ``delete`` op still has to carry a literal
-UUID. The endpoint hands the transcribed-id failure straight back to the operator.
-This module is the thing that stops the operator ever typing one.
+The bulk endpoint's ``$ref`` only resolves within the same batch, backward
+to a row the same request just created, so every ``update`` and ``delete``
+op still has to carry a literal UUID that was typed or pasted by hand. This
+module is the thing that stops the operator from ever having to type one.
 
-Every test below is a refusal, because the refusals are where this module's value
-is. A resolver that returns a plausible row when it should have refused is worse
-than no resolver: the operator acts on it, and the id lands in a jsonb column with
-no FK, where nothing errors.
+Every test below is a refusal, because the refusals are where this module's
+value is. A resolver that returns a plausible row when it should have
+refused is worse than no resolver: the operator acts on it, and the id
+lands in a jsonb column with no foreign key, where nothing errors.
 """
 
 from __future__ import annotations
@@ -46,12 +45,8 @@ def _fetcher(items, total=None):
 
 
 class TestExactlyOneOrRefuse:
-    """`apply_ia_dry.py:9-13` is the one script tonight that got this right:
-
-        if len(r)!=1: raise SystemExit("ABORT: org %r resolves to %d rows")
-
-    Everything else in scratchpad/parity/ hardcodes an 8-char id prefix instead.
-    """
+    """A name must resolve to exactly one row, or the resolver refuses
+    rather than guessing from a truncated id prefix or the first match."""
 
     def test_single_exact_match_resolves(self):
         fetch = _fetcher([{"id": "a1", "name": "ADAFSA"}])
@@ -69,8 +64,7 @@ class TestExactlyOneOrRefuse:
             )
 
     def test_two_exact_matches_refuse_and_never_pick_one(self):
-        """Three GFSS-named projects exist in the retired database. A name that
-        identifies two rows identifies neither."""
+        """A name that identifies two rows identifies neither."""
         fetch = _fetcher([{"id": "a1", "name": "ADAFSA"}, {"id": "a2", "name": "ADAFSA"}])
         with pytest.raises(ResolutionError) as exc:
             resolve_one(
@@ -80,9 +74,9 @@ class TestExactlyOneOrRefuse:
         assert "a1" in str(exc.value) and "a2" in str(exc.value)
 
     def test_substring_hit_is_not_an_identity_match(self):
-        """`?q=` is an ilike '%…%' (utils/list_query.py:220-223), so the server
-        returns candidates, not answers. Accepting a substring hit as identity
-        would resolve 'Dr Haddad' onto 'Dr Haddad Jr'."""
+        """`?q=` is a substring search, so the server returns candidates, not
+        answers. Accepting a substring hit as identity would resolve
+        'Dr Haddad' onto 'Dr Haddad Jr'."""
         fetch = _fetcher([{"id": "a1", "name": "Dr Haddad Jr"}])
         with pytest.raises(ResolutionError, match="matched no STAKEHOLDER"):
             resolve_one(
@@ -102,11 +96,9 @@ class TestExactlyOneOrRefuse:
 
 
 class TestTruncatedPageCannotProveUniqueness:
-    """`parse_pagination` caps limit at MAX_LIMIT=200 (utils/list_query.py:60).
-
-    A resolver that checks only the page it was handed and declares "exactly one
-    match" has measured the page, not the table. This is the same defect shape as
-    a green test that asserts about the wrong thing.
+    """Listing is capped at a page size, so a resolver that checks only the
+    page it was handed and declares "exactly one match" has measured the
+    page, not the table.
     """
 
     def test_more_rows_than_returned_refuses_even_with_one_exact_match(self):
@@ -124,11 +116,10 @@ class TestTruncatedPageCannotProveUniqueness:
 
 
 class TestI18nShapeSplit:
-    """Prod stores `name` as an {en, ar} map; dev stores a plain string. Same
-    column, same code, different shape: `services/bulk_data.py:260-272` says so
-    and names the 14 rows a coalescing probe would have silently converted.
-
-    So: MATCH across both shapes, but carry the RAW value for `$expect`.
+    """Production stores `name` as an {en, ar} map; development stores a
+    plain string. Same column, same code, different shape, so the resolver
+    must match across both shapes while carrying the raw value for
+    `$expect`.
     """
 
     def test_matches_a_value_inside_an_i18n_map(self):
@@ -159,8 +150,8 @@ class TestI18nShapeSplit:
         unexplainable `expect-mismatch`. Worse, the reverse (sending a map where a
         string lives) would compare equal to nothing and refuse just as opaquely.
 
-        This is also the lane's rule-2 property: the value carried forward is read
-        from the thing being verified, never rebuilt locally.
+        The value carried forward must be read from the thing being
+        verified, never rebuilt locally.
         """
         raw = {"en": "ADAFSA", "ar": "أدافسا"}
         fetch = _fetcher([{"id": "a1", "name": raw}])
@@ -173,9 +164,9 @@ class TestI18nShapeSplit:
 
 class TestKindRegistry:
     def test_every_open_kind_the_bulk_endpoint_writes_is_resolvable(self):
-        """`services/bulk_data.py` OPEN_KINDS is what may be written. A kind that
-        can be written but not resolved forces the operator back to a literal
-        UUID, which is the whole failure this module exists to remove."""
+        """A kind that can be written but not resolved forces the operator
+        back to a literal UUID, which is the whole failure this module
+        exists to remove."""
         writable = {
             "STAKEHOLDER", "SESSION", "TASK", "CUSTOM", "ENTITY_TYPE",
             "SKILL", "SAVED_VIEW", "FILE_LINK", "SESSION_PARTICIPANT",
@@ -191,8 +182,7 @@ class TestKindRegistry:
             )
 
     def test_task_resolves_on_subject_not_name(self):
-        """TASK has no `name` column: TASK_SPEC searches `subject`
-        (routes/entities.py:84)."""
+        """TASK has no `name` column: TASK_SPEC searches `subject` instead."""
         fetch = _fetcher([{"id": "t1", "subject": "Draft agenda"}])
         match = resolve_one(
             "Draft agenda", kind="TASK", target=LOCAL, space=SPACE, fetch=fetch
@@ -200,8 +190,7 @@ class TestKindRegistry:
         assert match.id == "t1" and match.field == "subject"
 
     def test_custom_resolves_through_its_data_map(self):
-        """CustomEntity has no name column at all; identity lives in `data`
-        (routes/entities.py:_custom_entity_label)."""
+        """CustomEntity has no name column at all; identity lives in `data`."""
         fetch = _fetcher([{"id": "c1", "data": {"name": "Initiative A"}}])
         match = resolve_one(
             "Initiative A", kind="CUSTOM", target=LOCAL, space=SPACE, fetch=fetch
@@ -221,11 +210,10 @@ class TestFindIsTheListingForm:
 
 
 class TestKindsWithNoNameRefuseWithTheirReason:
-    """SESSION_PARTICIPANT and FILE_LINK are join rows. They are writable by the
-    bulk endpoint but have no name of their own, so they are present in the
-    registry and REFUSING rather than absent: the same reason
-    `services/bulk_data.py` enumerates its closed kinds with reasons. A kind that
-    is silently missing reads as an oversight and gets "helpfully" added.
+    """SESSION_PARTICIPANT and FILE_LINK are join rows. They are writable by
+    the bulk endpoint but have no name of their own, so they are present in
+    the registry and refusing rather than absent: a kind that is silently
+    missing reads as an oversight and gets "helpfully" added.
     """
 
     @pytest.mark.parametrize("kind", ["SESSION_PARTICIPANT", "FILE_LINK"])
@@ -250,16 +238,15 @@ class TestKindsWithNoNameRefuseWithTheirReason:
 
 
 class TestOneKindNormaliser:
-    """Kinds are typed lowercase and positional (owner's ruling, 2026-08-27), and
-    exactly ONE function turns what was typed into a canonical kind.
+    """Kinds are typed lowercase and positional, and exactly one function
+    turns what was typed into a canonical kind.
 
-    It was two. `kind = args.kind.upper().replace("-", "_")` appeared verbatim in
-    `cli.cmd_get` and `diff.cmd_diff`: two commands, two copies, and the ruling
-    that made lowercase the normal input is precisely the change that lands in one
-    copy and not the other. A third command would have made it three.
+    It was two: `kind = args.kind.upper().replace("-", "_")` appeared
+    verbatim in both `cli.cmd_get` and `diff.cmd_diff`, so a future change
+    to kind normalisation could land in one copy and not the other.
     """
 
-    def test_lowercase_is_what_the_owner_types(self):
+    def test_lowercase_is_what_an_operator_types(self):
         assert require_kind("stakeholder") == "STAKEHOLDER"
         assert require_kind("custom") == "CUSTOM"
 

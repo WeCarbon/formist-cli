@@ -1,21 +1,17 @@
-"""``fm spaces``: the CLI front end for ``/admin/spaces*`` (list, read
-sub-surfaces, and the six IRREVERSIBLE writes).
+"""Tests for ``fm spaces``: the CLI front end for ``/admin/spaces*`` (list,
+read sub-surfaces, and the six irreversible writes).
 
-WHAT THIS FILE GUARDS. This module had ZERO test coverage before this file
-(``list`` had lived here since before D224, but nothing in ``tests/`` imported
-``formist_cli.spaces``). Two shapes of gap:
+Two shapes covered:
 
   1. The render functions' "never overstate what was fetched" contract
-     (``pagination_footer``'s three cases, applied at four call sites) and the
-     "no members / no rows" empty-state messages.
-  2. The pre-network REFUSALS on the six write subjects: `delete` without
+     (``pagination_footer``'s three cases, applied at four call sites) and
+     the "no members / no rows" empty-state messages.
+  2. The pre-network refusals on the six write subjects: `delete` without
      `--confirm`, `rename` without `--name`, `transfer-ownership` without
-     `--new-owner`, a delete-child without a child id, and any write with no
-     `space_id` at all. Each is asserted to refuse WITHOUT calling the API at
-     all: a write that "fails safe" by silently not sending the request it
-     should have refused earlier is the wrong kind of safe.
-
-Run: uv run pytest tests/test_formist_cli_spaces.py -q
+     `--new-owner`, a delete-child without a child id, and any write with
+     no `space_id` at all. Each is asserted to refuse without calling the
+     API at all: a write that "fails safe" by silently not sending the
+     request it should have refused earlier is the wrong kind of safe.
 """
 
 from __future__ import annotations
@@ -54,10 +50,10 @@ def test_an_unknown_subject_names_every_valid_one():
 # ===========================================================================
 def test_render_space_list_reports_region_and_member_count():
     out = spaces.render_space_list(
-        {"items": [{"region": "ae", "member_count": 4, "name": "GFSS 2026", "id": SPACE}],
+        {"items": [{"region": "ae", "member_count": 4, "name": "Acme Summit", "id": SPACE}],
          "total": 1, "offset": 0}
     )
-    assert "ae" in out and "4" in out and "GFSS 2026" in out and "1 of 1" in out
+    assert "ae" in out and "4" in out and "Acme Summit" in out and "1 of 1" in out
 
 
 def test_render_space_list_more_exist_names_the_next_offset():
@@ -260,10 +256,9 @@ def test_create_without_name_refuses_and_never_calls_the_api(guarded):
 
 
 def test_create_without_country_refuses_and_never_calls_the_api(guarded):
-    """Regression test (finding-shape 1): fails on the pre-fix CLI,
-    which had no `--country` flag at all and sent `--region` straight through to
-    the server: exactly the `fm spaces create --region ae` (no country) call
-    that left a space stuck with NULL country in prod."""
+    """`--country` is required, so `fm spaces create --region ae` with no
+    country must refuse rather than create a space with no country at
+    all."""
     with pytest.raises(spaces.SpacesError, match="--country"):
         guarded(_args(subject="create", space_id=None, name="New WS", country=None))
 
@@ -504,7 +499,7 @@ def test_add_member_refuses_when_the_email_is_not_found_and_never_calls_admin_po
 
 
 # ===========================================================================
-# run: every READ subject dispatches to the right endpoint (§ params.py)
+# run: every READ subject dispatches to the right endpoint
 # ===========================================================================
 @pytest.fixture
 def driven_read(monkeypatch):

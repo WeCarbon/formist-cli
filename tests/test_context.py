@@ -1,32 +1,19 @@
-"""One resolver for "which env, which space, which token": and a guard on it.
+"""One resolver for "which env, which space, which token", and a guard on it.
 
-WHY THIS EXISTS
-----------------
-Every ``ev`` command that talks to the API has to answer the same three questions
-and announce where each answer came from. That operation existed TWICE before this
-module, under two different names, so neither a grep for a function name nor a
-review of one file would have found the pair:
+Every ``fm`` command that talks to the API has to answer the same three
+questions and announce where each answer came from. A second,
+independently maintained copy of that sequence is easy to miss (a grep for
+a function name or a review of one file would not find a copy under a
+different name), and the two can drift: one copy might refuse locally when
+no token is stored, while another opens a socket, waits for a 401, and
+only then translates it. Keeping this a property of the package, checked
+by ``test_the_resolver_is_not_reimplemented`` counting every caller of
+``prefs.effective``, is what survives a new command added later without
+anyone remembering the rule.
 
-  * ``cli.py::_effective`` + ``cli.py::_token_for``: 10 call sites
-  * ``logs.py::run``: the same sequence inline, written by the same person, later
-
-⚠️ AND THEY HAD ALREADY DRIFTED, which is the whole argument. ``logs.py`` refused
-locally when no token was stored: "no stored session for X → fm login": and
-``cli.py`` did not, so nine other commands opened a socket, waited for a 401 and
-translated it. Same situation, two behaviours, and the better one was reachable
-from exactly one command.
-
-A third copy of that same sentence lives in ``api.py::admin_get``. That one STAYS:
-it is a library-layer guard for a caller that did not come through the CLI
-resolver, which is defence in depth rather than duplication. Both sites say so.
-
-THE TEST THAT MATTERS
-----------------------
-``test_the_resolver_is_not_reimplemented`` counts callers of ``prefs.effective``
-across the package. Five more commands are coming (``fm users``, ``fm files``,
-``ev meetings``, ``ev cache``, ``fm connectors --keys``); at one copy each that
-would be seven. Making it a property rather than a discipline is the only thing
-that survives five more commands written at midnight.
+A separate guard with the same message lives in ``api.py::admin_get``,
+for a caller that did not come through the CLI resolver; that one is
+defence in depth rather than duplication.
 """
 
 from __future__ import annotations
@@ -49,9 +36,8 @@ class _Args:
 def _effective_callers(scan_dir: pathlib.Path) -> list[str]:
     """Every ``prefs.effective(...)`` call site under `scan_dir`, by AST.
 
-    A module-level helper so the companion test can drive THIS code. Written inline
-    first; a mutation gutting the real assertion left the companion green, which is
-    the third instance tonight of a companion test re-implementing its own guard.
+    A module-level helper so the companion test can drive this exact code
+    rather than a reimplementation of it.
     """
     callers = []
     for module in sorted(scan_dir.glob("*.py")):
@@ -69,21 +55,17 @@ def _effective_callers(scan_dir: pathlib.Path) -> list[str]:
 
 class TestTheResolverIsSingular:
     def test_the_resolver_is_not_reimplemented(self):
-        """Counted by AST across the package, not by grepping a function name —
-        the two copies had DIFFERENT names, so a name search would have missed
-        them. What is shared is the OPERATION."""
+        """Counted by AST across the package, not by grepping a function
+        name: two copies could have different names, so a name search
+        could miss one. What is shared is the operation."""
         callers = _effective_callers(pathlib.Path(context.__file__).parent)
         assert len(callers) == 1 and callers[0].startswith("context.py:"), (
             f"prefs.effective must be called from context.py only; found {callers}"
         )
 
     def test_that_count_can_actually_fail(self, tmp_path):
-        """Drives the REAL helper over a directory with two callers.
-
-        The first version re-implemented the walk inline, so a mutation gutting the
-        guard's assertion left this green: a check that cannot fail, inside the
-        test written to show the check can fail. Third time tonight for that shape.
-        """
+        """Drives the real helper over a directory with two callers, so a
+        broken helper would actually fail this test."""
         (tmp_path / "a.py").write_text("prefs.effective(env_flag=None)\n")
         (tmp_path / "b.py").write_text("prefs.effective(env_flag=None)\n")
         assert len(_effective_callers(tmp_path)) == 2
@@ -161,11 +143,10 @@ class TestItResolvesAndRefusesInOnePlace:
     def test_an_env_sourced_token_is_used_as_is_never_refreshed_and_announced(
         self, monkeypatch, capsys
     ):
-        """D301 (option C): $FORMIST_TOKEN wins over the file for THIS call and `ev`
-        must not refresh it: refreshing would call `login.store_payload`, i.e.
-        WRITE the env-sourced credential to disk, exactly what the design promises
-        never to do. Pre-fix, `resolve()` called `_refresh_if_stale`
-        unconditionally (RED: the assertion below fires)."""
+        """$FORMIST_TOKEN wins over the file for this call, and must not be
+        refreshed: refreshing would call `login.store_payload`, i.e. write
+        the env-sourced credential to disk, exactly what the design
+        promises never to do."""
         monkeypatch.setattr(
             prefs, "effective", lambda **k: _Eff(resolve_target("127.0.0.1:8160"), "sp", "flag")
         )
@@ -195,34 +176,25 @@ class _Eff:
 
 
 class TestNoCommandPaysARoundTripToLearnItHasNoToken:
-    """⚠️ C6 SURVIVED until this class existed, and the reason is worth keeping.
-
-    I *demonstrated* this fix by hand: instrumenting ``urllib.request.urlopen``
-    and watching `fm chats` stop opening a socket: and then did not write it down.
-    A demonstration proves the code worked once; only a test keeps it working. The
-    mutation that dropped ``need_token=True`` from ``chats.py`` passed 101 tests.
-
-    Measured before the fix: `fm chats --host evane` with no stored token really did
-    open ``https://api.evane.ai/projects/…/chats``. The ``/admin`` commands never
-    had this gap: ``api.admin_get`` guards them: which is why the three below are
-    named individually rather than swept.
+    """A command with `need_token=True` wired in must refuse locally before
+    opening any socket when no token is stored. With no stored token,
+    `fm chats --host evane` previously did open a connection and only
+    learned there was no token from the server's 401. The ``/admin``
+    commands never had this gap, since ``api.admin_get`` guards them, which
+    is why the commands below are named individually rather than swept.
     """
 
-    #: ``OUT`` is substituted with a path inside tmp_path. ⚠️ The first version
-    #: hardcoded ``--out /dev/null`` and the export case PASSED FOR THE WRONG
-    #: REASON: ``precheck_out`` refuses to overwrite an existing file, so the
-    #: command exited 2 with no socket whether or not the token guard existed.
-    #: A mutation dropping ``need_token`` from export survived because of it.
-    #: Both assertions were satisfied by a different mechanism than the one
-    #: under test: the shape GATE.md calls a test that cannot fail.
+    #: ``OUT`` is substituted with a path inside tmp_path. The export case
+    #: needs a path that does not already exist, or a different guard
+    #: (refusing to overwrite an existing file) would make the command exit
+    #: non-zero with no socket opened regardless of whether the token guard
+    #: runs, masking a missing token check.
     COMMANDS = [
         ["chats", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31"],
         ["get", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31",
          "task", "--name", "x"],
         ["export", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31",
          "--out", "OUT"],
-        # Added when a mutation showed `fm users` had no such guard. Every new
-        # command in the exec-parity series belongs here; the list is the register.
         ["users", "--host", "evane"],
     ]
 
