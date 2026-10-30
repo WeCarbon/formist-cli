@@ -320,16 +320,8 @@ def _now_iso() -> str:
     return _utcnow().isoformat()
 
 
-#: Environments that share one signing secret, and may therefore share a stored
-#: credential. `deploy/siefae/20-deploy-backend.sh:100` provisions
-#: `jwt-secret=$(kvref jwt-secret)` — region-INDEPENDENT, in contrast to
-#: `database-url-global` / `database-url-ae` at :56 and :63 which are explicitly
-#: per-region. So one session JWT validates at both prod hosts, and `current_user`
-#: binds the Global session for the user lookup in either.
-#:
-#: `local` is deliberately NOT a member, in either direction: a dev token is signed
-#: with `dev-secret-change-me`, and the per-file separation is what stops one ever
-#: being aimed at prod.
+#: The Evane regions are one deployment with one sign-in: a token minted on either
+#: host is accepted by both. Every other host keeps its own credential.
 _SHARED_SECRET_ENVS = frozenset({"evane", "evane-ae"})
 
 

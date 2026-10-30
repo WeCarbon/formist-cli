@@ -63,10 +63,6 @@ HOSTS: dict[str, HostSpec] = {
     ),
 }
 
-#: Named hosts that share one credential: the Evane regions are one deployment
-#: with one sign-in, so a token minted on either is accepted by both.
-SHARED_CREDENTIALS = frozenset({"evane", "evane-ae"})
-
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
