@@ -1,10 +1,9 @@
-"""`fm login` / `fm logout` / `fm whoami`: the client half of the OAuth flow.
+"""Tests for `fm login` / `fm logout` / `fm whoami`: the client half of the
+OAuth flow.
 
-Run: uv run pytest tests/test_formist_cli_login.py -q
-
-The server's guarantees are in tests/test_oauth_cli_flow.py. THESE are the ones no
-server can make, because they are properties of the process on the operator's
-laptop:
+The server's own guarantees are tested elsewhere. These are the ones no
+server can make, because they are properties of the process on the
+operator's laptop:
 
   * the PKCE verifier is generated here and only its challenge is sent, so a holder
     of the code alone cannot exchange it;
@@ -34,24 +33,19 @@ from formist_cli.targets import Target
 
 @pytest.fixture(autouse=True)
 def config_dir(monkeypatch, tmp_path):
-    """Never the operator's ~/.config/evane: GATE §N+136: a bare `fm login` in a
-    lane once overwrote the owner's stored token."""
-    monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "ev-config"))
-    # And never the owner's :8160 either. `formist_cli.targets` defaults `local` to 8160
-    # (the OAuth redirect URIs are registered against it), which is a screen a human
-    # is looking at: LANE-BRIEF. Nothing here opens a socket, but a test whose
-    # DEFAULT target is somebody's live server is one edit away from doing so.
-    # And never a real operator's $FORMIST_TOKEN either: every test in this file that
-    # wants one sets it explicitly; the rest must see file-only behaviour regardless
-    # of what the runner's own shell happens to export.
+    """Never the operator's real ``~/.config/evane``, and never a real
+    operator's $FORMIST_TOKEN: every test in this file that wants one sets
+    it explicitly, so the rest see file-only behaviour regardless of what
+    the runner's own shell happens to export.
+    """
+    monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "fm-config"))
     monkeypatch.delenv(tokens.ENV_TOKEN_VAR, raising=False)
-    return tmp_path / "ev-config"
+    return tmp_path / "fm-config"
 
 
 def _jwt(claims: dict) -> str:
-    """A 3-segment dot-separated value: the shape of the OLD pasted session
-    credential (and what ``$FORMIST_TOKEN`` must refuse). Mirrors
-    ``tests/test_formist_cli_api_and_tokens.py``'s helper of the same name."""
+    """A 3-segment dot-separated value: the shape of the old pasted session
+    credential (and what ``$FORMIST_TOKEN`` must refuse)."""
     def seg(d):
         return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
     return f"{seg({'alg': 'HS256'})}.{seg(claims)}.signature"
@@ -209,10 +203,10 @@ def test_the_admin_scope_is_only_requested_when_asked_for(monkeypatch):
 
 # --- the tool's promise -----------------------------------------------------------------
 def test_there_is_no_flag_and_exactly_one_sanctioned_env_var():
-    """A PROPERTY, not an example. `fm login --token …` was the old interface and
-    stays gone. D301 (option C, 2026-09-09) sanctioned exactly ONE
-    non-interactive credential path: $FORMIST_TOKEN (formist_cli/tokens.py): and every
-    OTHER name would be the old hole wearing a hat."""
+    """`fm login --token ...` was the old interface and stays gone. Exactly
+    one non-interactive credential path is sanctioned: $FORMIST_TOKEN
+    (formist_cli/tokens.py); every other name would be the old hole wearing
+    a hat."""
     import pathlib
 
     parser = cli.build_parser()
@@ -314,9 +308,9 @@ def test_logout_local_only_never_calls_the_server(monkeypatch):
 
 # --- the transparent refresh ---------------------------------------------------------------
 def test_a_stale_access_token_is_refreshed_before_any_request(monkeypatch):
-    """The AS issues a 1-hour access token. Without this an `ev` session would demand
-    a browser every hour: which is exactly the pressure that makes people want a
-    static token again."""
+    """The AS issues a 1-hour access token. Without this a `fm` session would
+    demand a browser every hour, which is exactly the pressure that makes
+    people want a static token again."""
     from datetime import datetime, timedelta, timezone
 
     from formist_cli import context
@@ -389,7 +383,7 @@ def test_an_admin_command_is_refused_before_any_socket(monkeypatch):
         privileges.check("users", tokens.load_meta("127.0.0.1:8160").get("scopes"))
 
 
-# --- $FORMIST_TOKEN: D301 (option C, 2026-09-09) --------------------------------------
+# --- $FORMIST_TOKEN --------------------------------------------------------------------
 class TestWhoamiNamesTheSource:
     def test_file_backed_credential_names_the_file(self, monkeypatch, capsys):
         _store_a_credential()
@@ -533,10 +527,11 @@ class TestLocalScopesDeferToTheServerForAnEnvToken:
 
 
 class TestEnvTokenRedaction:
-    """The value must never reach stdout/stderr: whoami, doctor, and the login
-    help text are the surfaces this D301(C) task named; there is no --verbose flag
-    and no header-dumping path in formist_cli/api.py to check (confirmed by reading it —
-    the credential goes only into the Authorization header, never a printed one)."""
+    """The value must never reach stdout/stderr: whoami, doctor, and the
+    login help text are the surfaces that matter here; there is no
+    --verbose flag and no header-dumping path in formist_cli/api.py to
+    check (the credential goes only into the Authorization header, never a
+    printed one)."""
 
     SECRET = "crst_at_REDACTION_MARKER_f00dcafe"
 
@@ -591,15 +586,13 @@ class TestEnvTokenRedaction:
         assert tokens.ENV_TOKEN_VAR in help_text
 
 
-# --- item 4: the admin refusal an env token without the scope gets ----------------------
-def test_the_admin_scope_refusal_names_ev_login_dash_dash_admin():
-    """This is the exact failure `deploy/release.sh`'s `fm instance` step hits when
-    the stored/env credential belongs to a platform admin who did not pass
-    `--admin` to `fm login`. D301 (item 4): accept the default, but the message must
-    say `fm login --admin`: verified here rather than assumed, because the
-    client's OWN added text (formist_cli/api.py::_cli_scope_refusal) does not spell out
-    the flag; what makes it true is the SERVER's message (routes/admin.py::
-    CLI_ADMIN_SCOPE_REQUIRED) being embedded verbatim as the first line."""
+# --- the admin refusal an env token without the scope gets --------------------------------
+def test_the_admin_scope_refusal_names_fm_login_dash_dash_admin():
+    """A credential that belongs to a platform admin but was not granted the
+    admin scope must be told to pass `--admin` to `fm login`, verified here
+    rather than assumed: the client's own added text does not spell out the
+    flag, so what makes it true is the server's message being embedded
+    verbatim as the first line."""
     from formist_cli import api
     from formist_cli.targets import resolve as resolve_target
 
@@ -631,9 +624,9 @@ def _http_error(code: int, payload: dict) -> urllib.error.HTTPError:
 
 
 # ---------------------------------------------------------------------------
-# Which server a login / refresh / whoami talks to (2026-09-30: `fm login --env
-# formist` opened EVANE's login page, because every non-local env was mapped to
-# Global; a Formist credential could then never be issued or refreshed).
+# Which server a login / refresh / whoami talks to: `fm login --env formist`
+# must open Formist's own login page, not Evane's, or a Formist credential
+# could never be issued or refreshed.
 # ---------------------------------------------------------------------------
 def test_only_ae_authenticates_against_global_and_formist_against_itself():
     from formist_cli.targets import resolve
@@ -684,16 +677,16 @@ def test_connected_as_is_asked_of_the_server_that_issued_the_credential(monkeypa
 
     def _get(target, path, **kw):
         asked.append(target.api_base + path)
-        return {"email": "owner@example.com"}
+        return {"email": "user@example.com"}
 
     monkeypatch.setattr(api, "get", _get)
-    assert cli._describe_account(resolve("formist"), {"access_token": "t"}) == "owner@example.com"
+    assert cli._describe_account(resolve("formist"), {"access_token": "t"}) == "user@example.com"
     assert asked == ["https://api.formist.ai/auth/me"]
 
 
 # ---------------------------------------------------------------------------
-# The client name `ev` registers names the TARGET's product (2026-09-30: Formist's
-# Settings > Connected apps showed "Evane CLI" for the owner's Formist login).
+# The client name `fm` registers names the target's product, so a Formist
+# login must register a "Formist CLI" app, not "Evane CLI".
 # ---------------------------------------------------------------------------
 def test_the_target_decides_the_product_name():
     from formist_cli.targets import resolve

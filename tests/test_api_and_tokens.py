@@ -55,18 +55,11 @@ class TestErrorTranslation:
         assert "cross-region" in str(err)
 
     def test_404_never_predicts_that_a_path_will_start_working(self):
-        """⚠️ The replaced test asserted the OPPOSITE, and that is why this exists.
-
-        `ev` used to hold a map of eight admin paths "on main but not deployed" and
-        answer a 404 on one of them with: *this is deploy lag, it will start working
-        after the next release.* Measured 2026-08-27, all eight answered 401 in
-        Global prod: every entry was wrong.
-
-        The defect was never the data. That sentence is a PREDICTION ABOUT A
-        DEPLOYMENT'S FUTURE made from a hardcoded list inside a client that has never
-        spoken to that deployment, and it was confident, wrong and actionable —
-        strictly worse than an unhandled error, because an operator acts on it and
-        stops looking. The old test was what held it in place.
+        """A 404 must never be rendered as a prediction about a deployment's
+        future (such as "this is deploy lag, it will start working after
+        the next release"). A hardcoded guess like that, from a client that
+        has never spoken to the deployment, is worse than an unhandled
+        error, because an operator acts on it and stops looking.
         """
         err = str(_translate(_http_error(404, {}), resolve("evane"), "/admin/usage/tokens"))
         assert "NOT DEPLOYED" not in err
@@ -81,27 +74,24 @@ class TestErrorTranslation:
         assert "fm instance" in err
         assert "not served" in err
 
-    def test_both_404s_read_the_same_because_ev_genuinely_cannot_tell_them_apart(self):
-        """A wrong path and a right-but-undeployed path are indistinguishable from
-        the client. Rendering them differently claimed a distinction ev cannot make,
-        which is precisely how the wrong sentence became believable."""
+    def test_both_404s_read_the_same_because_fm_genuinely_cannot_tell_them_apart(self):
+        """A wrong path and a right-but-undeployed path are indistinguishable
+        from the client, so rendering them differently would claim a
+        distinction the client cannot make."""
         known = str(_translate(_http_error(404, {}), resolve("evane"), "/admin/usage/tokens"))
         unknown = str(_translate(_http_error(404, {}), resolve("evane"), "/admin/nope"))
         assert known.replace("/admin/usage/tokens", "X") == unknown.replace("/admin/nope", "X")
 
     def test_a_domain_404_is_told_apart_from_an_undeployed_route(self):
         """The one case the two tests above do NOT cover: a 404 that carries a
-        structured `{"error": ..., "message": ...}` body: every ``ErrorResult``
-        this codebase raises for "that row does not exist" (``space-not-found``,
-        ``user-not-found``, ...). That is NOT the same ambiguity as a route
-        FastAPI never registered (which answers ``{"detail": "Not Found"}``, no
-        `error` key): it is a normal, expected outcome of a typo'd id, and
-        showing "may not be deployed yet" for it sends an operator to compare
-        build revisions for something that was never a deploy gap.
-
-        Found 2026-09-06 running `fm users add-space` against a space id that
-        was real but drifted (`routes/admin.py::assign_user_to_space` 404'd with
-        `space-not-found`) and getting exactly that wrong message.
+        structured `{"error": ..., "message": ...}` body that the server
+        raises for "that row does not exist" (`space-not-found`,
+        `user-not-found`, ...). That is not the same ambiguity as a route
+        FastAPI never registered (which answers `{"detail": "Not Found"}`,
+        with no `error` key): it is a normal, expected outcome of a typo'd
+        id, and showing "may not be deployed yet" for it sends an operator
+        to compare build revisions for something that was never a deploy
+        gap.
         """
         err = str(_translate(
             _http_error(404, {"error": "space-not-found", "message": "Space not found"}),
@@ -114,9 +104,8 @@ class TestErrorTranslation:
 
     def test_the_write_path_sibling_tells_a_domain_404_apart_too(self):
         """`_translate_body` (POST/PUT/PATCH/DELETE) is `_translate`'s (GET)
-        sibling for this exact ambiguity: the file's own comment on this branch
-        already warned "IT WAS MISSED WHEN THE GET PATH WAS FIXED" once. Same
-        fix, same test, the other transport."""
+        sibling for this exact ambiguity, so the same fix needs the same
+        test on the other transport."""
         payload = {"error": "user-not-found", "message": "User not found"}
         err = str(_translate_body(
             _http_error(404, payload), payload, resolve("evane"),
@@ -204,24 +193,13 @@ class TestAdminRoutingGuard:
         ],
     )
     def test_every_admin_helper_reaches_the_shared_guard(self, call):
-        """EVERY ``admin_*`` entry point, not the one someone happened to look at.
-
-        RED-FIRST on the 2026-09-14 main/prod merge, on ``admin_post_multipart``
-        alone: the prod line gave ``_check_admin_target`` a third parameter
-        (``path``, for the region-local admin carve-out) and updated the five call
-        sites IT could see; the main line had meanwhile added a SIXTH —
-        ``admin_post_multipart``, the ``ev roster`` uploads, which are the only
-        ``/admin`` writes that send a file rather than JSON. Neither branch was
-        wrong and the two texts did not overlap, so git merged them cleanly into
-        ``_check_admin_target(target, token)`` against a three-parameter function:
-        every ``ev roster ... import`` would have died with ``TypeError: missing
-        required positional argument: 'token'``: a stack trace, not a refusal,
-        and not on any path a unit test was walking.
-
-        Parametrised over the whole family on purpose (shape 2). A single case
-        added for ``admin_post_multipart`` would pin the bug that was found and
-        say nothing about the next helper added to this module, which is exactly
-        how this one got in.
+        """Every ``admin_*`` entry point must reach the shared guard, not
+        only the ones a change happens to touch: a change to
+        ``_check_admin_target``'s signature that updates every call site it
+        can see can still miss one added concurrently elsewhere, turning a
+        refusal into an unrelated ``TypeError`` at the call site instead.
+        Parametrised over the whole family so a helper added later is
+        covered automatically.
         """
         with pytest.raises(NotAuthenticated, match="fm login"):
             call()
@@ -279,12 +257,11 @@ class TestTokenStore:
 
 
 class TestDescribeMeta:
-    """``describe_meta`` replaced ``describe`` (removed): an ``fm login`` access
-    token is opaque (``crst_at_…``, no dots), so there is nothing in it to decode
-    any more: everything reportable was already written to the metadata file
-    beside it. These are the unit-level checks on the reader itself; the
-    regression this replaced is covered end-to-end in
-    tests/test_formist_cli_doctor.py (``fm doctor`` against a real stored credential)."""
+    """An ``fm login`` access token is opaque (``crst_at_...``, no dots), so
+    there is nothing in it to decode: everything reportable was already
+    written to the metadata file beside it. These are the unit-level checks
+    on the reader itself; the end-to-end behaviour is covered by the
+    ``fm doctor`` tests."""
 
     def test_reads_expiry_from_metadata_not_the_token(self):
         info = tokens.describe_meta({"expires_at": "2099-01-01T00:00:00+00:00"})
@@ -297,16 +274,18 @@ class TestDescribeMeta:
         assert "EXPIRED" in info.describe_expiry()
 
     def test_missing_expiry_is_not_an_error(self):
-        """A meta dict with no ``expires_at`` (or none at all) must describe, not
-        raise: unlike the old JWT decoder, a missing claim here is a normal,
-        expected shape (D301's env-sourced credential has no file at all)."""
+        """A meta dict with no ``expires_at`` (or none at all) must describe,
+        not raise: unlike the old JWT decoder, a missing claim here is a
+        normal, expected shape (an env-sourced credential has no file at
+        all)."""
         assert tokens.describe_meta({}).describe_expiry() == "no expiry recorded"
 
     def test_never_decodes_the_opaque_token_shape(self):
         """The value that broke the old JWT-decoding ``describe``: an opaque
-        ``crst_at_…`` access token has no dots and is not valid JWT input. It must
-        never even be looked at: ``describe_meta`` takes the metadata dict, not
-        the token, so there is no token argument to mis-decode."""
+        ``crst_at_...`` access token has no dots and is not valid JWT
+        input. It must never even be looked at: ``describe_meta`` takes the
+        metadata dict, not the token, so there is no token argument to
+        mis-decode."""
         info = tokens.describe_meta(
             {"expires_at": "2099-01-01T00:00:00+00:00", "obtained_at": None}
         )
@@ -314,9 +293,8 @@ class TestDescribeMeta:
 
 
 class TestEnvTokenVar:
-    """``$FORMIST_TOKEN``: D301 (option C, 2026-09-09). Unit-level checks on the
-    function itself; formist_cli/tests/test_formist_cli_login.py covers the same property
-    through the CLI/resolver call sites that consume it."""
+    """Unit-level checks on ``$FORMIST_TOKEN`` itself; the login tests cover
+    the same property through the CLI/resolver call sites that consume it."""
 
     def test_unset_is_blank(self, monkeypatch):
         monkeypatch.delenv(tokens.ENV_TOKEN_VAR, raising=False)
@@ -330,9 +308,9 @@ class TestEnvTokenVar:
         monkeypatch.setenv(tokens.ENV_TOKEN_VAR, "   ")
         assert tokens.env_token() == ""
 
-    def test_an_opaque_ev_login_token_passes(self, monkeypatch):
-        """The real shape (mcp_app/oauth/provider.py::ACCESS_PREFIX): a prefix plus
-        url-safe random text, never a dot."""
+    def test_an_opaque_fm_login_token_passes(self, monkeypatch):
+        """The real shape is a prefix plus url-safe random text, never a
+        dot."""
         monkeypatch.setenv(tokens.ENV_TOKEN_VAR, "crst_at_" + "x" * 40)
         assert tokens.env_token() == "crst_at_" + "x" * 40
 
