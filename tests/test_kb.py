@@ -1,26 +1,23 @@
-"""``fm kb search`` / ``fm kb read``: the client half of the ad-hoc KB surface.
+"""Tests for ``fm kb search`` / ``fm kb read``: the client half of the
+ad-hoc knowledge-base surface.
 
-Absorbs ``scripts/kb_search.py`` and ``scripts/kb_read.py`` (EV-ABSORB.md §3.1)
-into ``ev``, reached through the SAME project-scoped, member-gated routes the
-product itself uses: ``GET /projects/{id}/search`` (services/search.py) and
-``GET /projects/{id}/files/{file_id}/content`` (services/user_acl.py): never a
-local Postgres/disk read the way the scripts did.
+Reached through the same project-scoped, member-gated search and
+file-content routes the product itself uses, never a direct database or
+disk read.
 
-Not the routing or the ranking (those are proven where they live, against a real
-database). What this file pins is what the CLIENT does with the response:
+Not the routing or the ranking (those are proven where they live, against
+a real database). What this file pins is what the client does with the
+response:
 
-* ``kb search`` joins its positional terms with spaces into ONE ``q=``: the
-  ranking already happens server-side (services/search.py's own docstring:
-  "matching is per term, not per phrase"), so this command must never split the
-  work into one call per term the way the old script did.
-* ``kb read`` takes the FIRST hit that carries a ``file_id`` from that same
-  search, then reads its content: never a local ``cached_md_path`` open, which
-  is exactly the "prod should read through the blob-backed route" correction
-  EV-ABSORB.md records for this script.
-* both refuse loudly on a non-dict / malformed response rather than rendering
-  garbage.
-
-Run: uv run pytest tests/test_formist_cli_kb.py -q
+* ``kb search`` joins its positional terms with spaces into one ``q=``,
+  since the ranking already happens server-side and matches per term, not
+  per phrase, so this command must never split the work into one call per
+  term.
+* ``kb read`` takes the first hit that carries a ``file_id`` from that
+  same search, then reads its content through the file-content route,
+  never a local file open.
+* both refuse loudly on a non-dict / malformed response rather than
+  rendering garbage.
 """
 
 from __future__ import annotations
@@ -105,7 +102,7 @@ def test_search_prints_hits_grouped_with_source_and_snippet(driven, capsys):
             "items": [
                 {
                     "file_id": "f1",
-                    "path": "/GFSS/RACI.docx",
+                    "path": "/Acme/RACI.docx",
                     "name": "RACI.docx",
                     "snippet": "...responsible...",
                     "source": "document",
@@ -116,7 +113,7 @@ def test_search_prints_hits_grouped_with_source_and_snippet(driven, capsys):
     )
     driven(stub, subject="search", query=["RACI"])
     out = capsys.readouterr().out
-    assert "/GFSS/RACI.docx" in out
+    assert "/Acme/RACI.docx" in out
     assert "document" in out
     assert "responsible" in out
 
@@ -148,14 +145,14 @@ def test_read_searches_then_reads_the_top_file_id_hit(driven):
     stub = RecordingApi(
         search={
             "items": [
-                {"file_id": "f1", "path": "/GFSS/RACI.docx", "name": "RACI.docx",
+                {"file_id": "f1", "path": "/Acme/RACI.docx", "name": "RACI.docx",
                  "snippet": "...", "source": "document"},
             ],
             "total": 1,
         },
         content_by_id={
             "f1": {
-                "file_id": "f1", "path": "/GFSS/RACI.docx", "name": "RACI.docx",
+                "file_id": "f1", "path": "/Acme/RACI.docx", "name": "RACI.docx",
                 "mime_type": "application/vnd...", "source": "SHAREPOINT",
                 "access_scope": "SHARED", "web_url": "https://...",
                 "markdown": "# RACI\n\nfull text here",
