@@ -1,42 +1,43 @@
-"""WHICH `fm` SUBCOMMAND NEEDS WHAT — the privilege audit, as data.
+"""Which `fm` subcommand needs what: the privilege audit, as data.
 
-Owner's directive, 2026-09-07: `fm` must be fully usable with an ordinary user's
-login and must not do anything that oversteps that user's privilege. "Usable" and
-"bounded" are only compatible if it is written down WHICH commands are which — so
-this table exists, and ``tests/test_evtool_privileges.py`` fails if a subcommand is
-added without an entry. A new command cannot be shipped unclassified.
+`fm` must be fully usable with an ordinary user's login and must not do
+anything that oversteps that user's privilege. "Usable" and "bounded" are
+only compatible if it is written down which commands are which, so this
+table exists, and a test fails if a subcommand is added without an entry.
+A new command cannot be shipped unclassified.
 
-⚠️ THIS TABLE IS NOT A SECURITY CONTROL AND MUST NEVER BECOME ONE. The server is
-the trust boundary (the project rules); ``routes.admin.require_platform_admin`` decides, on
-every single call, both whether the ACCOUNT is a platform admin and whether THIS
-credential was granted the admin scope. What the table buys is a better failure:
-without it, running ``fm users`` on a normal login produces a 403 four hundred
-milliseconds and one network round-trip later, phrased as an HTTP status. With it,
-`ev` says which privilege is missing and how to get it, before opening a socket —
-and it says it in a way that does not suggest a workaround, because there isn't one.
+This table is not a security control and must never become one. The
+server is the trust boundary: it decides, on every single call, both
+whether the account is a platform admin and whether this credential was
+granted the admin scope. What the table buys is a better failure: without
+it, running ``fm users`` on a normal login produces a 403 phrased as an
+HTTP status after a network round-trip. With it, `fm` says which
+privilege is missing and how to get it, before opening a socket, and it
+says so in a way that does not suggest a workaround, because there isn't
+one.
 
-The check is ADVISORY IN ONE DIRECTION ONLY, and that is deliberate. It refuses
-early only when the stored credential POSITIVELY RECORDS that it lacks the admin
-scope (``fm login`` writes the granted scopes beside the token). A credential with
-no recorded scopes — an older file, a hand-placed one — is passed through to the
-server rather than guessed about. A local check that can say "no" to something the
-server would have allowed is the failure mode this codebase keeps finding: the thing
+The check is advisory in one direction only, and that is deliberate. It
+refuses early only when the stored credential positively records that it
+lacks the admin scope (``fm login`` writes the granted scopes beside the
+token). A credential with no recorded scopes (an older file, a
+hand-placed one) is passed through to the server rather than guessed
+about. A local check that can say "no" to something the server would
+have allowed is the failure mode this codebase keeps finding: the thing
 being checked stops being the thing being used.
 
-LEVELS
+Levels:
 
   ``LEVEL_LOCAL``   touches no API at all (``fm gate``, ``fm heads``, ``fm use``).
   ``LEVEL_PUBLIC``  an unauthenticated endpoint (``fm health`` without ``--admin``).
-  ``LEVEL_USER``    the caller's own permissions — project membership and role decide it
-              server-side. This is what an ordinary login is FOR, and it is the
+  ``LEVEL_USER``    the caller's own permissions: project membership and role decide
+              it server-side. This is what an ordinary login is for, and it is the
               majority of the tool.
-  ``LEVEL_ADMIN``   needs ``User.is_platform_admin`` AND the ``admin`` scope on the
-              credential. Two shapes reach it, and BOTH are gated by the same
-              dependency: the ``/admin/*`` surface, and the three project-scoped
-              paths under ``/projects/{space}/admin/…`` which hang off
-              ``require_platform_admin_for_space`` (routes/admin_data.py) — that
-              one ends at ``require_platform_admin`` too, which is why a space
-              OWNER role neither grants nor withholds it.
+  ``LEVEL_ADMIN``   needs ``User.is_platform_admin`` and the ``admin`` scope on the
+              credential. Two shapes reach it, and both are gated by the same
+              server-side check: the ``/admin/*`` surface, and a handful of
+              project-scoped paths under ``/projects/{space}/admin/...`` that end
+              at the same platform-admin check, which is why a space owner role
+              neither grants nor withholds it.
   ``LEVEL_MIXED``   subcommands differ, or one flag crosses the line (``fm health
               --admin``). Never refused early: the table cannot see which
               subcommand is about to run, so refusing would refuse the user-level
@@ -47,29 +48,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: The OAuth scopes this client asks for, and the ``software_id`` it registers
-#: itself under. Mirrors ``mcp_app/oauth/config.py`` and
-#: ``mcp_app/oauth/cli_client.py``.
+#: The OAuth scopes this client asks for, and the ``software_id`` it
+#: registers itself under.
 #:
-#: DUPLICATED as plain strings rather than imported, and that is a rule, not
-#: laziness: ``evtool`` is stdlib-only by design (evtool/targets.py) and must run
-#: under a bare system ``python3`` with no venv — ``deploy/guard.sh`` calls into it
-#: at deploy time, where the server's dependency tree is not present and an import
-#: of ``mcp_app`` would turn the guard into an ImportError. What makes the
-#: duplication safe rather than a promise is
-#: ``tests/test_evtool_privileges.py::test_the_scope_names_match_the_servers``,
-#: which asserts each string equals the server's constant.
+#: Duplicated as plain strings rather than imported, and that is a rule,
+#: not laziness: this CLI is stdlib-only by design and must run under a
+#: bare system ``python3`` with no venv, including at deploy time, where
+#: the server's dependency tree is not present. A test asserts each
+#: string equals the server's own constant, which is what makes the
+#: duplication safe rather than a promise.
 SCOPE_KB = "evane:kb"
 SCOPE_CLI = "evane:cli"
 SCOPE_ADMIN = "evane:admin"
 CLI_SOFTWARE_ID = "formist-cli"
 
-#: ⚠️ PREFIXED, and not for tidiness. Bare ``LEVEL_LOCAL`` / ``LEVEL_USER`` at a module's top
-#: level are names any module might bind — `services/md_store.py` binds ``LEVEL_LOCAL``
-#: and `services/i18n_meta.py` binds ``LEVEL_USER``, both meaning something else entirely.
-#: `tests/test_no_cross_module_drift.py` reddened on exactly that when this table
-#: was added, which is what the test is for: a name that means two things in one
-#: repo is one refactor away from someone importing the wrong one. The prefix costs
+#: Prefixed, and not for tidiness: a bare ``LEVEL_LOCAL`` / ``LEVEL_USER`` at a
+#: module's top level is a name any module might bind to mean something
+#: else entirely, and a name that means two things in one codebase is one
+#: refactor away from someone importing the wrong one. The prefix costs
 #: five characters and removes the ambiguity instead of declaring it.
 LEVEL_LOCAL = "local"
 LEVEL_PUBLIC = "public"
@@ -82,15 +78,15 @@ LEVEL_MIXED = "mixed"
 class Privilege:
     level: str
     #: The endpoint(s) this command calls, as they appear in the source. Prose is
-    #: allowed for the non-HTTP ones — the point is that a reader can check the
+    #: allowed for the non-HTTP ones: the point is that a reader can check the
     #: claim, not that a machine can parse it.
     endpoints: tuple[str, ...]
     note: str = ""
 
 
-#: ⚠️ Keys must equal ``formist_cli.cli._COMMANDS``' keys exactly — asserted by
-#: tests/test_evtool_privileges.py, in BOTH directions (a removed command must lose
-#: its row too, or the table starts describing a tool that no longer exists).
+#: Keys must equal ``formist_cli.cli._COMMANDS``' keys exactly, asserted
+#: in both directions: a removed command must lose its row too, or the
+#: table starts describing a tool that no longer exists.
 TABLE: dict[str, Privilege] = {
     # --- credentials ---------------------------------------------------------
     "login": Privilege(
@@ -102,7 +98,7 @@ TABLE: dict[str, Privilege] = {
             "POST /token",
         ),
         "the OAuth 2.1 flow the MCP connector uses; unauthenticated by "
-        "construction — it is how a credential is obtained",
+        "construction, it is how a credential is obtained",
     ),
     "logout": Privilege(
         LEVEL_USER, ("POST /auth/apps/revoke",), "revokes only the caller's own grant"
@@ -121,7 +117,7 @@ TABLE: dict[str, Privilege] = {
     ),
     "use": Privilege(LEVEL_LOCAL, (), "writes the remembered space to the config dir"),
     # --- the user's own spaces -------------------------------------------------
-    "get": Privilege(LEVEL_USER, ("GET /projects/{space}/…",)),
+    "get": Privilege(LEVEL_USER, ("GET /projects/{space}/...",)),
     "chats": Privilege(
         LEVEL_USER,
         (
@@ -198,18 +194,17 @@ TABLE: dict[str, Privilege] = {
             "GET /projects/{space}/skills",
             "POST /projects/{space}/skill-library/packages/{id}/install",
         ),
-        "member-facing (require_member/require_writer) — unlike skill-library-sync, "
+        "member-facing (require_member/require_writer): unlike skill-library-sync, "
         "which writes the GLOBAL admin-only catalog, this installs one already-"
         "synced package into the caller's own space, the same route the gallery's "
         "own 'Install' button uses",
     ),
     # These three are NOT under /admin, and that is exactly why they are easy to
-    # misfile. They are project-scoped paths gated by
-    # routes/admin_data.py::require_platform_admin_for_space, which ends at the same
-    # require_platform_admin as everything above.
+    # misfile. They are project-scoped paths gated by the same platform-admin
+    # check as everything above.
     "update": Privilege(
         LEVEL_ADMIN, ("POST /projects/{space}/admin/data-changes",),
-        "bulk data changes — site-wide admin, not a space role",
+        "bulk data changes: site-wide admin, not a space role",
     ),
     "airtable": Privilege(
         LEVEL_ADMIN, ("POST /projects/{space}/admin/airtable/direction",),
@@ -248,11 +243,10 @@ TABLE: dict[str, Privilege] = {
             "GET/POST /projects/{space}/admin/files/merge",
             "GET /projects/{space}/files, GET /projects/{space}/files/{id}/download (download)",
         ),
-        "MIXED since the 2026-09-14 integration gave `fm files` two subcommands, and "
-        "`download` (added later) is a third: `reevaluate` and `download` are ordinary "
-        "member reads/writes (require_writer / require_member), `merge` is "
-        "platform-admin (require_platform_admin_for_space, routes/admin_files.py) "
-        "because hard-deleting the dropped row is irreversible",
+        "MIXED because `fm files` carries three subcommands at different "
+        "levels: `reevaluate` and `download` are ordinary member reads/writes, "
+        "`merge` is platform-admin because hard-deleting the dropped row is "
+        "irreversible",
     ),
     "project": Privilege(
         LEVEL_USER, ("POST /projects/{space}/logo (only with --apply)",)
@@ -269,15 +263,15 @@ TABLE: dict[str, Privilege] = {
     "participants": Privilege(
         LEVEL_ADMIN,
         ("GET/POST /projects/{space}/admin/participants/dedupe",),
-        "the duplicate-people merge. Project-SCOPED but platform-admin gated "
-        "(require_platform_admin_for_space) — participants are region-local data, "
-        "so the surface cannot live under a bare /admin path (D349)",
+        "the duplicate-people merge. Project-scoped but platform-admin gated: "
+        "participants are region-local data, so the surface cannot live "
+        "under a bare /admin path",
     ),
     "skills-add": Privilege(
         LEVEL_USER,
         ("POST /projects/{space}/skills/import",),
         "creates a skill from a SKILL.md, through require_writer and apply_change "
-        "(actor_type=HUMAN) — identical to a member typing one into the app",
+        "(actor_type=HUMAN), identical to a member typing one into the app",
     ),
     "skills-update": Privilege(
         LEVEL_USER,
@@ -305,7 +299,7 @@ def check(command: str, scopes: object) -> None:
     """Refuse an LEVEL_ADMIN command whose credential positively lacks the admin scope.
 
     ``scopes`` is what `fm login` recorded beside the token. ``None``/empty means
-    "not recorded" and is passed through — see the module docstring on why this
+    "not recorded" and is passed through, see the module docstring on why this
     check only ever says no to something it KNOWS the server would also refuse.
     """
     if not requires_admin(command):
@@ -317,7 +311,7 @@ def check(command: str, scopes: object) -> None:
     raise PrivilegeError(
         f"`fm {command}` is a platform-admin action and this credential was not "
         f"granted the '{SCOPE_ADMIN}' scope (it has: {', '.join(map(str, scopes))}).\n"
-        "This is not something the CLI can work around — the server decides, on "
+        "This is not something the CLI can work around; the server decides, on "
         "every call. If your account IS a platform admin, run `fm login --admin` "
         "and approve the platform-administration scope on the authorization page. "
         "If it is not, this action is not available to you."
