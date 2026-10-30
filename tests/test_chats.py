@@ -1,32 +1,30 @@
-"""``fm chats``: reading an agent run's transcript without misreporting it.
+"""Tests for ``fm chats``: reading an agent run's transcript without
+misreporting it.
 
 Two things this command can get wrong, and only one of them is obvious.
 
-THE OBVIOUS ONE is access: a background agent run is NOT uniformly space-wide.
-``services/agent_sessions.py:240-249`` sets ``private = triggered_by_user_id is not
-None``, so a scheduler- or webhook-initiated run is ``owner_scope=WORKSPACE`` and
-readable by every member, while a user-initiated one is ``owner_scope=USER`` and
-private to that user. ``routes/chats.py:108-125`` answers 404: never 403: for
-another member's private chat, deliberately, so the API never reveals it exists.
-``require_project_member`` (``routes/chats.py:78-96``) has no platform-admin
-bypass. So ``ev`` cannot reach those transcripts, must not try, and must explain
-the 404 rather than letting it read as a missing row.
+The obvious one is access: a background agent run is not uniformly
+space-wide. A scheduler- or webhook-initiated run is readable by every
+member, while a user-initiated one is private to that user, and a private
+chat another member cannot see answers 404, never 403, so the API never
+reveals it exists. There is no platform-admin bypass, so `fm` cannot reach
+those transcripts, must not try, and must explain the 404 rather than
+letting it read as a missing row.
 
-THE NON-OBVIOUS ONE is completeness, and it is the one these tests are mostly
-about. ``list_messages`` pages through ``run_list_query`` → ``parse_pagination``,
-capped at ``MAX_LIMIT = 200`` (``utils/list_query.py:60``). A long agent run has
-more turns than that. So the failure available here is the one
-``formist_cli/resolve.py`` rule 2 already names: **a page is not a table**: except
-worse: a resolver that measures the page REFUSES, whereas a transcript that
-measures the page PRINTS, and 200 turns of real transcript look exactly like a
-complete one. Nothing in the output says otherwise unless something puts it there.
+The non-obvious one is completeness, and it is the one these tests are
+mostly about. Message listing is paginated and capped, and a long agent
+run has more turns than one page. A resolver that measures only the page
+it was handed refuses; a transcript that measures only the page prints,
+and 200 turns of real transcript look exactly like a complete one.
+Nothing in the output says otherwise unless something puts it there.
 
-Hence the property under test: **completeness is a claim, and it must come from
-``total``, not from the reader's impression.** The case that carries it is the
-third one: a response with NO ``total`` at all. "I could not tell" and "it is
-complete" are different facts, and the direction a forgetful implementation falls
-in is the wrong one: ``len(messages) >= total`` with ``total`` defaulting to 0 is
-complete for every input, including the truncated ones.
+Hence the property under test: completeness is a claim, and it must come
+from `total`, not from the reader's impression. The case that carries it
+is a response with no `total` at all: "I could not tell" and "it is
+complete" are different facts, and the direction a forgetful
+implementation falls in is the wrong one (`len(messages) >= total` with
+`total` defaulting to 0 is complete for every input, including the
+truncated ones).
 """
 
 from __future__ import annotations
@@ -149,16 +147,15 @@ class TestPagingStopsHonestly:
         """A page that adds nothing must terminate the walk rather than spin.
 
         The server claiming 450 while handing back an empty page is a server bug,
-        but an infinite loop in the client is a worse way to discover it: and the
+        but an infinite loop in the client is a worse way to discover it, and the
         transcript stays honestly marked incomplete.
 
-        ⚠️ THE CALL COUNT IS THE ASSERTION. The two obvious ones: incomplete, 200
-        turns: are both true when the empty-page guard is DELETED, because
-        ``MAX_PAGES`` then bounds the walk instead and the extra iterations add no
-        rows. That is a neighbouring guard covering the one under test: the
-        mutation survives, and the test reads as if it were watching. Only the
-        number of requests distinguishes "stopped when the server went quiet"
-        from "hammered it 200 times and gave up".
+        The call count is the assertion that matters here: without it, a
+        removed empty-page guard could still leave the walk looking
+        correct, because a separate ``MAX_PAGES`` ceiling would also bound
+        it while adding no rows. Only the number of requests distinguishes
+        "stopped when the server went quiet" from "hammered it 200 times
+        and gave up".
         """
         fetch = _fetcher(
             _envelope([_msg(i) for i in range(200)], total=450),
@@ -191,11 +188,10 @@ class TestKindVocabulary:
         assert "background-agent" in str(exc.value)
 
     def test_the_kind_filter_reaches_the_server(self):
-        """Filtered server-side, not in the client.
-
-        ``routes/chats.py:239`` takes ``?kind=`` natively and applies it *inside*
-        the privacy predicate. Filtering a page client-side would both measure the
-        page and re-derive a filter the server already owns.
+        """Filtered server-side, not in the client. The server applies
+        ``?kind=`` inside its own privacy predicate; filtering a page
+        client-side would both measure the page and re-derive a filter the
+        server already owns.
         """
         fetch = _fetcher(_envelope([]))
         list_chats(
@@ -208,10 +204,10 @@ class TestLatest:
     """``--latest`` removes a transcription. It must not invent a row."""
 
     def test_picks_the_first_row_the_server_ordered(self):
-        """Newest-first is the SERVER's order (``routes/chats.py:288`` orders by
-        ``updated_at`` desc). The client takes the first row rather than re-sorting
-        on a field it would have to parse: a second ordering that can disagree
-        with the first is how the wrong run gets shown."""
+        """Newest-first is the server's order (``updated_at`` desc). The
+        client takes the first row rather than re-sorting on a field it
+        would have to parse: a second ordering that can disagree with the
+        first is how the wrong run gets shown."""
         fetch = _fetcher(
             _envelope([
                 {"id": "newer", "updated_at": "2026-08-27T10:00:00"},
@@ -229,23 +225,16 @@ class TestLatest:
 
 
 class TestTheSingleChatEnvelope:
-    """The shape the SERVER sends, captured from it rather than assumed.
+    """The shape the server sends, captured from it rather than assumed.
 
-    This class exists because of a bug that no fake-fetcher test could have
-    caught. ``get_chat`` returned the response body directly, but
-    ``GET /chats/{id}`` answers ``{"chat": {...}, "messages": [...]}``
-    (``routes/chats.py:366-371``) while the LIST endpoint's items are bare chat
-    dicts. Every field rendered as ``None`` and the suite stayed green: the fake
-    returned whatever shape this module imagined, so the test and the code agreed
-    with each other and not with the server. It was found by running the command
-    against a live dev server.
-
-    So the key list below is TRANSCRIBED FROM A REAL RESPONSE, not written from
-    memory of the route: a fixture quoting a source from memory agrees with
-    itself, which is the same failure one level down.
+    ``GET /chats/{id}`` answers ``{"chat": {...}, "messages": [...]}``,
+    while the list endpoint's items are bare chat dicts. A fake fetcher
+    built from memory of the route rather than a real response would agree
+    with itself and not with the server, so the key list below is
+    transcribed from a real response.
     """
 
-    #: Captured 2026-08-27 from GET /projects/{space}/chats/{id} on local dev.
+    #: Captured from GET /projects/{space}/chats/{id} against a real server.
     REAL_CHAT_KEYS = [
         "agent_status", "archived", "cancel_requested", "created_at",
         "help_article_id", "help_locale", "id", "kind", "knowledge_scope",
