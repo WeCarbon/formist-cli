@@ -1,12 +1,9 @@
-"""``fm skill-library-install``: installing one skill-library package into a
-space, idempotently.
+"""Tests for ``fm skill-library-install``: installing one skill-library
+package into a space, idempotently.
 
-Its own file, matching `test_formist_cli_skill_library_sync.py`'s reasoning: that
-file guards `ev skill-library-sync` (the GLOBAL admin-surface command);
-`skill-library-install` is a different, PROJECT-scoped surface added later, and
+`skill-library-install` is a project-scoped surface, distinct from the
+global admin-surface `skill-library-sync` command covered elsewhere;
 neither module's tests should have to know about the other.
-
-Run: uv run pytest tests/test_formist_cli_skill_library_install.py -q
 """
 
 from __future__ import annotations
@@ -85,9 +82,8 @@ class TestAlreadyInstalled:
 
 
 # ===========================================================================
-# The fake transport: member-facing project routes only, matching the real
-# response shapes (routes/skill_library.py::SkillPackageRead / InstallResult,
-# routes/skills.py's generic list envelope).
+# The fake transport: member-facing project routes only, matching the
+# real response shapes.
 # ===========================================================================
 class FakeLibraryServer:
     def __init__(self, *, packages=None, skills=None):
