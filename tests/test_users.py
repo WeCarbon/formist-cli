@@ -1,25 +1,15 @@
-"""``fm users``: platform user rows, over routes that already exist.
+"""Tests for ``fm users``: platform user rows, over routes that already
+exist (``/admin/users*``, platform-admin gated).
 
-Step 1 of retiring ``az containerapp exec``: the operator read ``public.user`` and
-``project_user_rel`` through the exec channel at roughly one call per two minutes.
-Both are already served by ``/admin/users*`` (platform-admin gated), so this is a
-client, not an endpoint.
+The defect class this command can introduce is a report that is true
+about what it fetched and false about what exists: ``/admin/users`` is
+paginated (``{items,total,limit,offset}``) and capped, so a listing that
+prints 50 rows without saying there are 312 has told the operator the
+platform has 50 users.
 
-WHAT THESE TESTS ARE ACTUALLY GUARDING
----------------------------------------
-Not the HTTP call: ``api.admin_get`` is tested elsewhere. The defect class this
-command can introduce is **a report that is true about what it fetched and false
-about what exists**: ``/admin/users`` is paginated (``{items,total,limit,offset}``)
-and capped by ``MAX_LIMIT``, so a listing that prints 50 rows without saying there
-are 312 has told the operator the platform has 50 users.
-
-That is the same shape as the bulk endpoint's ``changed`` field and as
-``applied_ids`` before it: a wrong account of a correct fetch, which never surfaces
-on its own because the numbers it prints are all real.
-
-⚠️ AND THE OPPOSITE FAILURE IS TESTED TOO. A truncation notice printed when nothing
-was truncated is an alarm that cries wolf, and an operator who learns to ignore it
-has lost the notice for the case that matters.
+The opposite failure is tested too: a truncation notice printed when
+nothing was truncated is an alarm that cries wolf, and an operator who
+learns to ignore it has lost the notice for the case that matters.
 """
 
 from __future__ import annotations
@@ -54,12 +44,11 @@ def _payload(n_items: int, total: int, limit: int = 50, offset: int = 0) -> dict
 
 
 class TestAListingNeverOverstatesWhatItSaw:
-    #: ⚠️ ASSERT ON THE NOTICE, NOT ON THE NUMBERS. The first version of these
-    #: tests checked `"50" in out and "312" in out`, which the FALLBACK branch
-    #: ("50 of 312") satisfies just as well as the truncation notice. A mutation
-    #: that made page 2 claim to be the whole set passed. Three times tonight an
-    #: assertion of mine has been satisfied by a mechanism other than the one
-    #: under test; the fix is always to name the mechanism.
+    #: Assert on the notice itself, not only on the numbers: the numbers
+    #: alone ("50 of 312") are satisfied by the ordinary non-truncated
+    #: fallback branch too, so a check that misses the truncation notice
+    #: specifically would miss a page that wrongly claims to be the whole
+    #: set.
     TRUNCATED = "MORE EXIST"
 
     def test_a_truncated_listing_says_so_with_BOTH_numbers(self):
@@ -95,8 +84,10 @@ class TestAListingNeverOverstatesWhatItSaw:
     def test_the_platform_admin_flag_is_visible_because_it_is_the_gate(self):
         """`is_platform_admin` decides who may use this whole surface.
 
-        ⚠️ Asserted on the ROW, not on the word "admin": the header contains it,
-        so the first version of this test passed with every value dropped.
+        Asserted on the row's value, not merely on the word "admin"
+        appearing anywhere in the output: the header also contains that
+        word, so a check that is not scoped to the row could pass with
+        every value dropped.
         """
         out = users.render_list(_payload(3, 3))
         admin_row = next(ln for ln in out.splitlines() if "user0@example.com" in ln)
@@ -127,11 +118,11 @@ class TestSpacesForAUser:
         payload = {
             "items": [
                 {"space_id": "452093ea-7b91-491e-88b6-3285edd48a31",
-                 "name": "GFSS 2026", "region": "ae", "role": "OWNER"},
+                 "name": "Acme Summit", "region": "ae", "role": "OWNER"},
             ]
         }
         out = users.render_spaces(payload)
-        assert "ae" in out and "OWNER" in out and "GFSS 2026" in out
+        assert "ae" in out and "OWNER" in out and "Acme Summit" in out
 
     def test_a_user_in_no_spaces_says_so_rather_than_printing_nothing(self):
         """Blank output is indistinguishable from a command that failed quietly."""
@@ -142,9 +133,10 @@ class TestSpacesForAUser:
 
 class TestHelpSaysWhatTheSurfaceCannotDo:
     def test_it_says_there_is_no_server_side_search(self):
-        """⚠️ `/admin/users` takes limit/offset and NOTHING else: no `q`. A
-        `--help` that stays silent invites an operator to look for a flag that does
-        not exist, or worse to assume an empty result means no such user."""
+        """`/admin/users` takes limit/offset and nothing else: no `q`. A
+        `--help` that stays silent invites an operator to look for a flag
+        that does not exist, or worse to assume an empty result means no
+        such user."""
         text = users.build_standalone_parser().format_help().lower()
         assert "no server-side search" in text or "no search" in text
 

@@ -1,30 +1,23 @@
-"""``fm messages``: the group-mailbox message surface: CLI client tests.
+"""Tests for ``fm messages``: the group-mailbox message surface.
 
 Two write-capable subjects live behind one command:
 
-  * ``dedupe`` / ``dedupe-scan``: soft-delete duplicate `message` rows. Owner
-    rule 2026-09-09 (``services/dedupe_guard.py``): NO WHOLE-CONNECTION APPLY.
-    ``--apply`` must be scoped to explicit ``--group`` remote_ids plus a
-    ``--reason``, exactly the same shape as ``fm participants dedupe``: see
-    ``tests/test_formist_cli_participants.py`` for the sibling of every test class
-    below.
+  * ``dedupe`` / ``dedupe-scan``: soft-delete duplicate `message` rows.
+    A whole-connection apply is never allowed: ``--apply`` must be scoped
+    to explicit ``--group`` remote_ids plus a ``--reason``, exactly the
+    same shape as ``fm participants dedupe``.
   * ``refresh-inline-images``: dry run unless ``--apply``.
 
-WHAT THIS FILE PINS
---------------------
-The request bodies these three subjects send (dry run vs apply must differ in
-EXACTLY the documented fields, never silently gain or lose one), the reports
-they render (DRY RUN / APPLIED banners, the truncation-free connection table,
-the zip(strict=True) pairing between a group's ``drop`` ids and
-``drop_last_synced_at``: a length mismatch must raise loudly, never drop the
-last row silently), and the two required-argument refusals that never reach
-the network (`dedupe` needs ``--connection``; `refresh-inline-images` needs a
-UUID ``--space``).
+Covers the request bodies these subjects send (dry run vs apply must
+differ in exactly the documented fields, never silently gain or lose one),
+the reports they render (DRY RUN / APPLIED banners, the truncation-free
+connection table, the zip(strict=True) pairing between a group's ``drop``
+ids and ``drop_last_synced_at``, where a length mismatch must raise
+loudly, never drop the last row silently), and the two required-argument
+refusals that never reach the network (`dedupe` needs ``--connection``;
+`refresh-inline-images` needs a UUID ``--space``).
 
-HTTP transport stubbed at the module level (``messages.api``), the same split
-``tests/test_formist_cli_admin_ops.py`` uses for ``formist_cli.admin_ops``.
-
-Run: uv run pytest tests/test_formist_cli_messages.py -q
+HTTP transport is stubbed at the module level (``messages.api``).
 """
 
 from __future__ import annotations
@@ -156,7 +149,7 @@ def _dedupe_payload(**overrides) -> dict:
 class TestRenderDedupe:
     def test_dry_run_header_says_nothing_written(self):
         out = messages.render_dedupe(_dedupe_payload(applied=False))
-        assert "DRY RUN: nothing was written" in out
+        assert "DRY RUN — nothing was written" in out
 
     def test_applied_header_says_applied(self):
         out = messages.render_dedupe(_dedupe_payload(applied=True, reason="dup", groups_applied=["conv-1"], soft_deleted=1, repointed=2))
@@ -173,8 +166,8 @@ class TestRenderDedupe:
         assert "drop m2  last_synced=2026-09-06T00:00:00" in out
 
     def test_a_drop_list_length_mismatch_raises_rather_than_dropping_the_last_row(self):
-        """GATE.md shape 2: a PROPERTY, not a single value: the zip(strict=True)
-        pairing must never silently truncate to the shorter list."""
+        """A property, not a single value: the zip(strict=True) pairing
+        must never silently truncate to the shorter list."""
         payload = _dedupe_payload()
         payload["detail"][0]["drop_last_synced_at"] = []  # one fewer than `drop`
         with pytest.raises(ValueError):
@@ -232,7 +225,7 @@ class TestRenderDedupe:
 # ===========================================================================
 def _refresh_payload(**overrides) -> dict:
     base = {
-        "target": {"space_name": "GFSS 2026", "space_id": SPACE, "project_name": "GFSS", "project_id": "proj1", "region": "ae"},
+        "target": {"space_name": "Acme Summit", "space_id": SPACE, "project_name": "Acme", "project_id": "proj1", "region": "ae"},
         "dry_run": True,
         "connections": 2,
         "candidates": 5,
@@ -298,7 +291,7 @@ class TestDedupeScan:
 
 
 # ===========================================================================
-# dedupe: the owner-rule tests (NO WHOLE-CONNECTION APPLY)
+# dedupe: the no-whole-connection-apply tests
 # ===========================================================================
 class TestDedupeRequiresAConnection:
     def test_missing_connection_refuses_before_any_request(self, driven):
@@ -316,8 +309,8 @@ class TestDedupeRequiresAConnection:
 
 class TestDedupeDryRunBody:
     def test_dry_run_sends_apply_false_and_no_group_reason_or_token_keys(self, driven):
-        """The client does not invent an empty --group/--reason on a dry run —
-        those keys are added ONLY inside `if args.apply`."""
+        """The client does not invent an empty --group/--reason on a dry
+        run: those keys are added only inside `if args.apply`."""
         stub = RecordingApi(response=_dedupe_payload(applied=False))
         rc, kwargs = driven(stub, subject="dedupe", connection=CONN, apply=False)
         assert rc == 0
@@ -351,9 +344,9 @@ class TestDedupeApplyForwardsExactlyWhatWasNamed:
         }
 
     def test_an_omitted_group_forwards_None_the_client_never_invents_a_wildcard(self, driven):
-        """The exact shape owner rule 2026-09-09 forbids is a client-side
-        'merge everything' default. `--group` not given must reach the server
-        as None, never as [] or '*': only the server's 422 owns the refusal."""
+        """A client-side 'merge everything' default is the exact shape that
+        must never happen. `--group` not given must reach the server as
+        None, never as [] or '*': only the server's 422 owns the refusal."""
         stub = RecordingApi(response=_dedupe_payload(applied=True, reason="x", groups_applied=[], soft_deleted=0, repointed=0))
         driven(stub, subject="dedupe", connection=CONN, apply=True, group=None, reason="x")
         body = stub.calls[0][2]
@@ -386,7 +379,7 @@ class TestRefreshInlineImagesRequiresASpace:
     def test_a_name_instead_of_a_uuid_is_refused(self, driven):
         stub = RecordingApi(response=_refresh_payload())
         with pytest.raises(TargetError):
-            driven(stub, subject="refresh-inline-images", ctx_space="GFSS 2026")
+            driven(stub, subject="refresh-inline-images", ctx_space="Acme Summit")
         assert stub.calls == []
 
 
@@ -443,7 +436,7 @@ class TestRunDispatch:
 # ===========================================================================
 class TestAddParser:
     def _parser(self) -> argparse.ArgumentParser:
-        top = argparse.ArgumentParser(prog="ev")
+        top = argparse.ArgumentParser(prog="fm")
         messages.add_parser(top.add_subparsers(dest="command"))
         return top
 
