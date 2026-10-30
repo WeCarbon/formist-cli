@@ -1,30 +1,29 @@
-"""``fm connectors`` — what a space's connectors are authorized to do.
+"""``fm connectors`` - what a space's connectors are authorized to do.
 
-The space-side half of the ACCESS panel, over ``GET /admin/spaces/{id}/connectors/
-grants``. ``fm users grants <id>`` is the person-side half; both read the same view
-(``services/grants.py``) and share one renderer in :mod:`formist_cli.cli_support`, so the
-two commands cannot come to disagree about what a column means.
+The space-side half of the access panel, over ``GET /admin/spaces/{id}/connectors/
+grants``. ``fm users grants <id>`` is the person-side half; both read the same
+view and share one renderer in :mod:`formist_cli.cli_support`, so the two
+commands cannot come to disagree about what a column means.
 
-WHAT THIS COMMAND CAN GET WRONG, AND WHAT STOPS IT
-----------------------------------------------------
-The same defect ``fm users`` names: a report that is true about what it fetched and
-false about what exists. Two shapes of it live here specifically.
+Two shapes of a familiar defect live here specifically: a report that is
+true about what it fetched and false about what exists.
 
-**An empty scope column.** Several connector types record no scopes at all — an
-API-key connector has no scope concept. Printing an empty cell for both "records
-none" and "granted none" would say a Fireflies key may do nothing, when in fact it
-may do everything that API allows. The shared renderer prints ``-`` for the first
-and a count for the second.
+An empty scope column: several connector types record no scopes at all,
+since an API-key connector has no scope concept. Printing an empty cell
+for both "records none" and "granted none" would say a Fireflies key may
+do nothing, when in fact it may do everything that API allows. The shared
+renderer prints ``-`` for the first and a count for the second.
 
-**An expiry that is always about to lapse.** ``expires_at`` on a Google or Airtable
-connector is the ~1h ACCESS token, which the server refreshes silently. Rendered as
-a deadline it would show every healthy connector as expiring within the hour,
-permanently. It is labelled, never bare.
+An expiry that is always about to lapse: ``expires_at`` on a Google or
+Airtable connector is the roughly one-hour access token, which the server
+refreshes silently. Rendered as a deadline it would show every healthy
+connector as expiring within the hour, permanently. It is labelled, never
+bare.
 
-⚠️ THIS IS THE SPACE'S OWN CONNECTORS ONLY. A member's personal (USER-scoped)
-connector belongs to the person and has no ``project_id``; it is reported by
-``fm users grants``. An empty table here therefore does not mean nobody in the space
-has connected anything.
+This is the space's own connectors only. A member's personal
+(user-scoped) connector belongs to the person and has no ``project_id``;
+it is reported by ``fm users grants``. An empty table here therefore does
+not mean nobody in the space has connected anything.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ class ConnectorsError(Exception):
 def subject_error(subject: object) -> ConnectorsError:
     return ConnectorsError(
         f"unknown subcommand {subject!r}. Valid: {', '.join(SUBJECTS)}.\n"
-        "  list    the space's connectors (id, kind, status) — the default\n"
+        "  list    the space's connectors (id, kind, status), the default\n"
         "  grants  every connector of a space: identity, scopes, status, expiry"
     )
 
@@ -77,29 +76,31 @@ def render_grants(payload: dict) -> str:
 
 
 # ===========================================================================
-# CLI — the PARSER lives in evtool/cli.py
+# CLI - the parser lives in cli.py
 # ===========================================================================
-# ⚠️ Deliberately NOT an `add_parser` module like evtool/users.py. `fm connectors`
-# already existed as an inline command, and registering a second parser under the
-# same name raises `ValueError: conflicting subparser` at import — measured, not
-# feared. So this module supplies the SUBJECT vocabulary and the grants behaviour,
-# and cli.py keeps owning the one `connectors` parser. One command, two subjects.
+# Deliberately not an `add_parser` module like users.py. `fm connectors`
+# already existed as an inline command, and registering a second parser
+# under the same name raises a conflicting-subparser error at import. So
+# this module supplies the subject vocabulary and the grants behaviour,
+# and cli.py keeps owning the one `connectors` parser. One command, two
+# subjects.
 
 COMMAND_DESCRIPTION = """A space's connectors, and what they are authorized to do.
 
-  ev connectors [--space X]            the connector list (id, kind, status)
-  ev connectors grants [<space-id>]    identity, scopes, auth status, expiry
+  fm connectors [--space X]            the connector list (id, kind, status)
+  fm connectors grants [<space-id>]    identity, scopes, auth status, expiry
 
-⚠️ SPACE-OWNED CONNECTORS ONLY. A member's PERSONAL connector is user-scoped, has no
-project, and is not listed here — use `fm users grants <user-id>` for those. An empty
+SPACE-OWNED CONNECTORS ONLY. A member's PERSONAL connector is user-scoped, has no
+project, and is not listed here, use `fm users grants <user-id>` for those. An empty
 table means the space owns no connectors, NOT that nobody has connected anything.
 
-⚠️ THE EXPIRY COLUMN IS LABELLED, AND THE LABEL IS THE POINT. `access token,
-auto-renewed` is the ~1h token the server refreshes on its own — it is always minutes
-from expiring and that is normal, not a problem to chase. `(not recorded)` means no
-expiry is stored for that credential, which is NOT the same as "it never expires".
+THE EXPIRY COLUMN IS LABELLED, AND THE LABEL IS THE POINT. `access token,
+auto-renewed` is the roughly one-hour token the server refreshes on its own,
+it is always minutes from expiring and that is normal, not a problem to chase.
+`(not recorded)` means no expiry is stored for that credential, which is NOT
+the same as "it never expires".
 
-⚠️ A `-` IN THE SCOPES COLUMN MEANS THE PROVIDER RECORDS NO SCOPES (an API-key
+A `-` IN THE SCOPES COLUMN MEANS THE PROVIDER RECORDS NO SCOPES (an API-key
 connector), not that the credential was granted nothing.
 
 This command never writes. There is no flag that makes it write.
@@ -107,17 +108,18 @@ This command never writes. There is no flag that makes it write.
 
 
 def run_grants(args, eff) -> int:
-    """`fm connectors grants` — the space's connector grants.
+    """`fm connectors grants`, the space's connector grants.
 
-    Takes the already-resolved context from cli.py rather than resolving again: the
-    resolver PRINTS a provenance banner, and resolving twice would print it twice
-    and invite the reader to believe two different targets were consulted.
+    Takes the already-resolved context from cli.py rather than resolving
+    again: the resolver prints a provenance banner, and resolving twice
+    would print it twice and invite the reader to believe two different
+    targets were consulted.
     """
     space = getattr(eff, "space", None)
     if not space:
         raise ConnectorsError(
             "`fm connectors grants` needs a space id.\n"
-            "→ pass it positionally, with --space, or set one with `fm use`."
+            "-> pass it positionally, with --space, or set one with `fm use`."
         )
     payload = api.admin_get(
         eff.target, f"/admin/spaces/{space}/connectors/grants", token=eff.token
@@ -125,12 +127,9 @@ def run_grants(args, eff) -> int:
     if getattr(args, "json", False):
         print(json.dumps(payload, indent=2))
     else:
-        # ⚠️ The shared helper is called INLINE rather than wrapped in a local
-        # `_as_dict`. evtool/users.py has such a wrapper, and adding a second one
-        # here was flagged by tests/test_no_cross_module_drift.py — correctly: the
-        # baseline file records that this exact helper was already SHARED into
-        # cli_support once, and re-wrapping it per module is how it would drift
-        # back apart.
+        # The shared helper is called inline rather than wrapped in a local
+        # `_as_dict`, to avoid re-wrapping a helper that was already shared
+        # into cli_support once, which is how it would drift back apart.
         print(
             render_grants(
                 _shared_as_dict(
@@ -144,46 +143,30 @@ def run_grants(args, eff) -> int:
 
 
 # ===========================================================================
-# ``fm connector`` (SINGULAR) — per-connector operator ACTIONS
+# ``fm connector`` (singular) - per-connector operator actions
 # ===========================================================================
-# ⚠️ A DELIBERATELY SEPARATE TOP-LEVEL COMMAND FROM ``fm connectors`` (plural)
-# above. That one is the ADMIN surface (``/admin/spaces/{id}/connectors...`` —
-# Global-only, platform-admin-gated). These two hit ordinary PROJECT routes
-# (``/projects/{id}/connections/{cid}/reauth``,
-# ``/projects/{id}/connectors/{cid}/sync`` — OWNER/ADMIN member-gated, never
-# ``/admin``), which is the SAME reason ``fm entity-fields`` is its own
-# top-level command rather than a subject of ``fm connectors``
-# (``evtool/cli.py::cmd_entity_fields``'s own docstring). Folding a
+# A deliberately separate top-level command from ``fm connectors`` (plural)
+# above. That one is the admin surface (Global-only, platform-admin-gated).
+# These two hit ordinary project routes (member-gated, never ``/admin``),
+# which is the same reason ``fm entity-fields`` is its own top-level
+# command rather than a subject of ``fm connectors``. Folding a
 # project-scoped write into the admin listing command would blur a
-# distinction this codebase treats as load-bearing (the project rules: "the
-# server is the trust boundary").
+# distinction this codebase treats as load-bearing: the server is the
+# trust boundary.
 #
-# Absorbs (EV-ABSORB.md §3.1, both "no new endpoint"):
-#   the retired device_code_auth.py     -> `fm connector reauth <cid>`             (fully absorbed, deleted)
-#   the retired sync_calendar.py        -> `fm connector sync <cid> --kind calendar` (fully absorbed, deleted)
-#   the retired sync_messages.py        -> `fm connector sync <cid> --kind messages` (fully absorbed, deleted)
-#   scripts/sync.py                    -> `fm connector sync <cid>`  for the plain one-shot trigger ONLY.
+# `reauth` and `sync` each give the CLI a stable entry point onto an
+# existing project route, replacing a one-off script with the same effect.
 #
-# ⚠️ scripts/sync.py is only PARTIALLY absorbed and is deliberately KEPT, not
-# deleted. Its `--full` flag clears the connection's stored delta cursor
-# (`delta_link`/`delta_cursor`) as "the ONLY recovery path for a truncated
-# Drive first crawl" (its own docstring) — and there is no route that can do
-# that: `POST /connectors/{cid}/sync` (routes/connectors.py::sync_connection)
-# always runs the engine as-is, and `Connection` is not a kind the generic
-# `POST /admin/.../data-changes` bulk endpoint can reach (no `TargetKind.
-# CONNECTION` — models/Proposal.py). Absorbing `--full` needs a NEW endpoint,
-# which is out of this "no new endpoint" batch; see the lane report.
-#
-# Both subjects are WRITES with real external side effects (a live Microsoft
-# OAuth flow; a real Graph/Attendee crawl) and follow ``ev``'s write
-# convention: DRY RUN by default, ``--apply`` to actually do it.
+# Both subjects are writes with real external side effects (a live Microsoft
+# OAuth flow; a real Graph/Attendee crawl) and follow `fm`'s write
+# convention: dry run by default, ``--apply`` to actually do it.
 
 CONNECTOR_SUBJECTS = ("reauth", "sync")
 
 #: How often to poll `.../reauth/poll` while waiting for the operator to enter
 #: the device code, and for how long before giving up. The server's own flow
 #: response carries an `interval`/`expires_in` (Microsoft's own device-code
-#: timing) — these are only the CLI's fallback when the server sends neither.
+#: timing); these are only the CLI's fallback when the server sends neither.
 DEFAULT_POLL_INTERVAL = 5
 DEFAULT_POLL_TIMEOUT = 900
 
@@ -205,7 +188,7 @@ CONNECTOR_COMMAND_DESCRIPTION = """Per-connector operator actions (project-scope
 
   fm connector sync <cid> --space <id> [--kind ...] [--apply]
       Trigger a real sync for ONE connector now (the scheduler's per-connection
-      unit of work, on demand). --kind is accepted for your own bookkeeping —
+      unit of work, on demand). --kind is accepted for your own bookkeeping;
       the server dispatches by the connector's OWN type, so it is never sent.
 
 Both are WRITEs with real external side effects. DRY RUN by default; --apply
@@ -233,11 +216,11 @@ def _add_connector_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("arg", nargs="?", default=None, help="the connection/connector id (UUID)")
     parser.add_argument(
         "--provider", default="outlook",
-        help="reauth: informational only — today only OUTLOOK supports device-code reauth",
+        help="reauth: informational only, today only OUTLOOK supports device-code reauth",
     )
     parser.add_argument(
         "--kind", default=None, choices=("calendar", "messages", "sharepoint", "drive"),
-        help="sync: informational only (matches the retired scripts' names) — never sent to the server",
+        help="sync: informational only, never sent to the server",
     )
     parser.add_argument("--apply", action="store_true", help="perform the action (default: dry run)")
     parser.add_argument(
@@ -258,7 +241,7 @@ def build_connector_standalone_parser() -> argparse.ArgumentParser:
 def _require_connection_id(arg: str | None) -> str:
     if not arg:
         raise ConnectorsError(
-            "needs a connection id.\n→ fm connector reauth|sync <cid> --space <id>"
+            "needs a connection id.\n-> fm connector reauth|sync <cid> --space <id>"
         )
     return arg
 
@@ -270,7 +253,7 @@ def _run_reauth(ctx, args) -> int:
     cid = _require_connection_id(args.arg)
     if not args.apply:
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would initiate a device-code re-authorization for connection {cid} "
             f"in space {ctx.space} ({ctx.target.name}).\n"
             f"To apply: re-run with --apply.",
@@ -287,7 +270,7 @@ def _run_reauth(ctx, args) -> int:
         )
     flow = initiated.get("device_code_flow") or {}
     print("=" * 60)
-    print(f"DEVICE CODE — authorize the connection at {ctx.space}")
+    print(f"DEVICE CODE: authorize the connection at {ctx.space}")
     print(f"  URL : {flow.get('verification_uri')}")
     print(f"  CODE: {flow.get('user_code')}")
     print(f"  (expires in {flow.get('expires_in', DEFAULT_POLL_TIMEOUT)}s)")
@@ -318,7 +301,7 @@ def _run_reauth(ctx, args) -> int:
         if result.get("error"):
             print(f"FAILED: {result['error']}")
         else:
-            print("did not complete (still pending — the operator ran out of time to authorize)")
+            print("did not complete (still pending, the operator ran out of time to authorize)")
         return 2
     return 0
 
@@ -331,7 +314,7 @@ def _run_sync(ctx, args) -> int:
     kind_note = f" (kind={args.kind})" if args.kind else ""
     if not args.apply:
         print(
-            f"DRY RUN — nothing was changed.\n"
+            f"DRY RUN: nothing was changed.\n"
             f"Would trigger a sync now for connector {cid}{kind_note} "
             f"in space {ctx.space} ({ctx.target.name}).\n"
             f"To apply: re-run with --apply.",
@@ -339,10 +322,10 @@ def _run_sync(ctx, args) -> int:
         )
         return 0
 
-    # `--kind` is never sent — one endpoint dispatches by the connector's OWN
-    # type (routes/connectors.py::sync_connection), so there is no server-side
-    # parameter to send it to; it exists purely so an operator can invoke this
-    # the way the retired per-purpose scripts were named.
+    # `--kind` is never sent: one endpoint dispatches by the connector's own
+    # type, so there is no server-side parameter to send it to; it exists
+    # purely so an operator can invoke this the way per-purpose scripts were
+    # once named.
     result = api.post(ctx.target, f"/projects/{ctx.space}/connectors/{cid}/sync", {}, token=ctx.token)
     if not isinstance(result, dict):
         raise ConnectorsError(
