@@ -88,7 +88,7 @@ local server. `--host` works before or after the command: `fm --host evane space
 A space is always addressed by its id, never by its name, since names are not unique:
 
 ```sh
-fm spaces                         # every space, platform-admin only
+fm spaces                         # your own spaces
 fm use --space <space-id>         # remember a default space
 fm kb search "venue contract" --space <space-id>
 ```
@@ -101,34 +101,27 @@ remembered host: name it with `--host`, or the default (`formist`) is used.
 Most commands that change data run as a dry run first and print what they would do; add
 `--apply` to commit. `fm update`, which applies a batch of changes transactionally, is slightly
 different: the dry run prints a plan token, and `--apply <token>` re-runs the dry run to confirm
-the plan still matches before committing. A handful of platform-admin actions with no undo, such
-as `fm spaces delete`, have no dry run at all and say so in their own `--help`.
+the plan still matches before committing. A handful of actions with no undo, such as `fm spaces
+--admin delete`, have no dry run at all and say so in their own `--help`.
 
 ### Commands
 
-Run `fm --help` for the full list and `fm <command> --help` for each one. The surface splits in
-two: commands that work with your own account's permissions, the same as the web app, and
-commands that need platform-admin on top, re-checked by the server on every call.
-
-Everyday, your own permissions: `chats`, `chat`, `kb`, `get`, `export`, `import`, `diff`,
-`upload`, `skill-attach`, `entity-fields`, `skill-library-install`, `meeting`, `project`,
-`connector`, `skills-add`, `skills-update`.
-
-Platform administration, needs the extra grant: `spaces`, `users`, `proposals`, `audit-log`,
-`connectors`, `logs`, `space-plan`, `usage-tokens`, `alerts`, `settings`, `messages`, `whatsapp`,
-`update`, `airtable`, `participants`, `instance`.
-
-`fm health` is public, no login needed, unless `--admin` asks for the cross-region view; `fm
-doctor` needs no admin grant either. `fm files` mixes the two: reading and re-evaluating are
-everyday, merging two duplicate rows is platform-admin.
+Run `fm --help` for the full list and `fm <command> --help` for each one. Every command works
+with your own account's permissions, the same as the web app, and the server re-checks every
+permission on every call: `fm spaces` lists the spaces you belong to, `fm health` is public and
+needs no login, `fm doctor` rolls health up across every deployment, and the rest, `chats`,
+`chat`, `kb`, `get`, `export`, `import`, `diff`, `upload`, `skill-attach`, `entity-fields`,
+`skill-library-install`, `meeting`, `project`, `connector`, `skills-add`, `skills-update`,
+`proposals`, `audit-log`, `connectors`, `files`, read or write your own space the same way.
 
 ## FAQ
 
 **Do I need platform-admin access to use this?**
-No. Signing in with an ordinary account runs the member-level commands exactly as the web app
-would for that account. A platform-admin command refuses locally, scope named, before any
-request is sent, whenever `fm login` already recorded that the credential lacks it; otherwise
-the server itself still has the final say, the same as it would for the web app.
+No. Every command works with your own account's permissions by default, the same as the web app
+would for that account: `fm spaces`, for example, lists the spaces you belong to. A few
+commands also accept `--admin`, for a platform administrator account; without it, or without
+the matching grant, they refuse locally before any request is sent, and the server still has
+the final say either way.
 
 **Can I point it at a local dev server?**
 Yes: `--host` accepts any API origin, not only the four named deployments, for example

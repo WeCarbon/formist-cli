@@ -101,7 +101,7 @@ import sys
 from typing import Any
 
 from formist_cli import api, context
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, require_object
+from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, add_admin_flag, require_object
 from formist_cli.cli_support import build_standalone_parser as _build_standalone_parser
 
 #: The subcommands ``fm files`` dispatches to.
@@ -203,6 +203,7 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
         help="merge, if both rows still match the report_token this run printed",
     )
     merge.add_argument("--json", action="store_true", help="machine-readable output")
+    add_admin_flag(merge)
 
     reevaluate = subjects.add_parser(
         "reevaluate",
@@ -407,7 +408,13 @@ def render(report: dict, *, out=None) -> None:
 
 
 def _run_merge(args) -> int:
+    from formist_cli import privileges
     from formist_cli.cli import _effective, _token_for
+
+    # No member-level equivalent: hard-deleting the dropped row is
+    # irreversible, which is also why this is the one subject of `fm files`
+    # that needs --admin at all (`reevaluate`/`download` do not).
+    privileges.require_admin_flag("fm files merge", bool(getattr(args, "admin", False)))
 
     eff = _effective(args, for_write=bool(args.apply))
     target, space = eff.target, eff.space

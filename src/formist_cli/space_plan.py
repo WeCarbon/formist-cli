@@ -41,7 +41,7 @@ import argparse
 import json
 
 from formist_cli import api, context
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, as_dict
+from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, add_admin_flag, as_dict
 from formist_cli.cli_support import build_standalone_parser as _build_standalone_parser
 from formist_cli.targets import require_space_id
 
@@ -282,6 +282,7 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_arguments(parser)
+    add_admin_flag(parser)
     return parser
 
 

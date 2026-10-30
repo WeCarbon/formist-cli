@@ -87,7 +87,7 @@ fm logout
 空间永远用它的 id 来指定,不能用名字,因为名字不保证唯一:
 
 ```sh
-fm spaces                         # every space, platform-admin only
+fm spaces                         # your own spaces
 fm use --space <space-id>         # remember a default space
 fm kb search "venue contract" --space <space-id>
 ```
@@ -100,34 +100,26 @@ fm kb search "venue contract" --space <space-id>
 大多数会改数据的命令都会先试运行,打印出它会做什么;加上 `--apply` 才会真正提交。
 `fm update` 稍微不一样,它会批量提交一组改动:试运行会打印一个计划令牌(plan
 token),`--apply <令牌>` 会重新跑一次试运行,确认这份计划还和当初一致,然后才提
-交。少数不可撤销的平台管理操作,比如 `fm spaces delete`,根本没有试运行这一步,
+交。少数不可撤销的操作,比如 `fm spaces --admin delete`,根本没有试运行这一步,
 各自的 `--help` 里会写清楚。
 
 ### 命令
 
-完整命令列表看 `fm --help`,每条命令的细节看 `fm <command> --help`。这些命令分成
-两类:一类只用到你这个账号本身的权限,和网页版一样;另一类还需要平台管理员权限,
-服务器每次调用都会重新核实。
-
-日常使用,只看账号本身权限:`chats`、`chat`、`kb`、`get`、`export`、`import`、
+完整命令列表看 `fm --help`,每条命令的细节看 `fm <command> --help`。每条命令都
+只用到你这个账号本身的权限,和网页版一样,服务器每次调用都会重新核实权限:
+`fm spaces` 列出你所在的空间,`fm health` 不需要登录就能用,`fm doctor` 把健康
+检查汇总到所有部署;剩下的 `chats`、`chat`、`kb`、`get`、`export`、`import`、
 `diff`、`upload`、`skill-attach`、`entity-fields`、`skill-library-install`、
-`meeting`、`project`、`connector`、`skills-add`、`skills-update`。
-
-平台管理,需要额外授权:`spaces`、`users`、`proposals`、`audit-log`、`connectors`、
-`logs`、`space-plan`、`usage-tokens`、`alerts`、`settings`、`messages`、
-`whatsapp`、`update`、`airtable`、`participants`、`instance`。
-
-`fm health` 不需要登录就能用,除非加 `--admin` 看跨区域视图;`fm doctor` 也不需
-要管理员权限。`fm files` 比较特殊,读取和重新评估是日常权限,合并两条重复记录则
-需要平台管理员权限。
+`meeting`、`project`、`connector`、`skills-add`、`skills-update`、`proposals`、
+`audit-log`、`connectors`、`files`,也都是以同样的方式读写你自己的空间。
 
 ## 常见问题
 
 **用这个工具需要平台管理员权限吗?**
-不需要。用普通账号登录,能跑的那部分命令和网页版给这个账号的权限完全一致。如果
-`fm login` 当时已经记下这个凭证没有管理员权限,跑一个需要管理员权限的命令会在本
-地就被拒绝,并说明缺的是哪个权限,请求都不会发出去;如果权限状态不确定,最终还
-是由服务器说了算,和网页版一样。
+不需要。默认情况下每条命令都只用到你这个账号本身的权限,和网页版给这个账号的权限
+完全一致,比如 `fm spaces` 列出的就是你所在的空间。少数命令还能加 `--admin`,
+专门给平台管理员账号用;不加这个参数,或者账号没有对应的授权,它们会在本地就被拒
+绝、请求都不会发出去,最终还是由服务器说了算。
 
 **能不能指向本地开发服务器?**
 可以。`--host` 接受任意 API 地址,不只是那四个预设部署,比如

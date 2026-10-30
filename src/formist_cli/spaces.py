@@ -1,14 +1,19 @@
-"""``fm spaces`` - platform-admin view of every space across every region, plus
-operations on one space's members, conversations, skills, invitations and plan
-usage.
+"""``fm spaces`` - your own spaces by default, or (``--admin``) a platform-admin
+view of every space across every region, plus operations on one space's
+members, conversations, skills, invitations and plan usage.
 
-``list`` (the default, no subject needed) returns every space with member
-counts. Everything else requires a space id.
+``list`` (the default, no subject needed) returns the spaces the signed-in
+caller is a member of, needing no flag: ``GET /projects``, the same route the
+web app's own space picker reads. ``list --admin`` instead returns every
+space on the platform, with member counts: ``GET /admin/spaces``. Every other
+subject requires a space id AND ``--admin``; none of them has a member-level
+equivalent in this command.
 
-``list``, ``conversations``, ``skills`` and ``invitations`` are all
+``list --admin``, ``conversations``, ``skills`` and ``invitations`` are all
 server-paginated, so every listing reports shown and total together with the
 flag that widens the view, the same contract ``fm users list`` and ``fm
-audit-log`` use.
+audit-log --admin`` use. Plain ``list`` (no ``--admin``) is not paginated:
+nobody is a member of enough spaces for a server-side cap to matter.
 
 Writes (``rename``, ``delete``, ``transfer-ownership``, ``delete-conversation``,
 ``delete-skill``, ``delete-invitation``, ``create``, ``add-member``) have no
@@ -35,8 +40,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from formist_cli import api, context
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, pagination_footer
+from formist_cli import api, context, privileges
+from formist_cli.cli_support import add_admin_flag, pagination_footer
 from formist_cli.cli_support import as_dict as _shared_space_payload
 from formist_cli.cli_support import build_standalone_parser as _build_standalone_parser
 from formist_cli.targets import require_space_id
@@ -82,20 +87,24 @@ def canonical_subject(subject: str | None) -> str:
     if value not in SUBJECTS:
         raise SpacesError(
             f"unknown subcommand {subject!r}. Valid: {', '.join(SUBJECTS)}.\n"
-            "  list                every space, every region (paginated), the default\n"
-            "  members             a space's members and roles\n"
-            "  conversations       a space's chat sessions (paginated)\n"
-            "  delete-conversation delete one conversation + its messages\n"
-            "  skills              a space's skills (paginated)\n"
-            "  delete-skill        delete (soft) one skill\n"
-            "  invitations         a space's pending/decided invitations (paginated)\n"
-            "  delete-invitation   revoke a still-PENDING invitation\n"
-            "  usage               subscription + token usage for this space\n"
-            "  rename              set the space's name\n"
-            "  delete              PERMANENTLY delete the space and everything under it\n"
-            "  transfer-ownership  move OWNER to a different existing member\n"
+            "  list                your own spaces, the default (--admin: every "
+            "space, every region, paginated)\n"
             "  create              create a new workspace; you become its OWNER\n"
-            "  add-member          assign an existing platform user (by email) to a space"
+            "  members             a space's members and roles (--admin)\n"
+            "  conversations       a space's chat sessions, paginated (--admin)\n"
+            "  delete-conversation delete one conversation + its messages (--admin)\n"
+            "  skills              a space's skills, paginated (--admin)\n"
+            "  delete-skill        delete (soft) one skill (--admin)\n"
+            "  invitations         a space's pending/decided invitations, "
+            "paginated (--admin)\n"
+            "  delete-invitation   revoke a still-PENDING invitation (--admin)\n"
+            "  usage               subscription + token usage for this space (--admin)\n"
+            "  rename              set the space's name (--admin)\n"
+            "  delete              PERMANENTLY delete the space and everything "
+            "under it (--admin)\n"
+            "  transfer-ownership  move OWNER to a different existing member (--admin)\n"
+            "  add-member          assign an existing platform user (by email) to "
+            "a space (--admin)"
         )
     return value
 
@@ -122,6 +131,33 @@ def render_space_list(payload: dict) -> str:
         )
 
     lines.append("\n" + pagination_footer(shown=len(items), total=total, offset=offset))
+    return "\n".join(lines)
+
+
+def render_my_spaces(payload: dict) -> str:
+    """``GET /projects``: the spaces the signed-in caller is a member of.
+
+    No pagination and no ``member_count`` here: the route returns every
+    space the user belongs to in one response (nobody is a member of enough
+    spaces for a server-side cap to matter), and the admin aggregate
+    `member_count` is not something a non-admin member reads about their own
+    space. `role` takes that column instead: it is what the caller already
+    knows about each one.
+    """
+    items = payload.get("items") or []
+    if not items:
+        return "(you are not a member of any space)"
+    lines = [
+        f"{'region':<7} {'role':<6} {'name':<32} id",
+        f"{'-' * 7} {'-' * 6} {'-' * 32} {'-' * 8}",
+    ]
+    for row in items:
+        lines.append(
+            f"{str(row.get('region') or '?'):<7} "
+            f"{str(row.get('role') or '?'):<6} "
+            f"{str(row.get('name') or '-'):<32.32} "
+            f"{row.get('id')}"
+        )
     return "\n".join(lines)
 
 
@@ -260,48 +296,47 @@ def render_created(payload: dict) -> str:
 # ===========================================================================
 # CLI
 # ===========================================================================
-_HELP = (
-    "every space (admin); members/conversations/skills/invitations/usage; "
-    "rename/delete/transfer/create/add-member"
-)
+_HELP = "your own spaces, the default; --admin for every space and its members/usage/etc"
 
-_DESCRIPTION = """Platform-admin view of spaces, across every region.
+_DESCRIPTION = """Spaces: your own by default, or (--admin) a platform-admin view of any.
 
-  fm spaces                                        every space (paginated), default
-  fm spaces members <space-id>
-  fm spaces conversations <space-id> [--limit --offset]
-  fm spaces delete-conversation <space-id> <chat-id>
-  fm spaces skills <space-id> [--limit --offset]
-  fm spaces delete-skill <space-id> <skill-id>
-  fm spaces invitations <space-id> [--limit --offset]
-  fm spaces delete-invitation <space-id> <invitation-id>
-  fm spaces usage <space-id>
-  fm spaces rename <space-id> --name 'New Name'
-  fm spaces delete <space-id> --confirm                 # IRREVERSIBLE
-  fm spaces transfer-ownership <space-id> --new-owner <user-id>
+  fm spaces                                        your own spaces, the default
   fm spaces create --name 'New Workspace' --country ae
-  fm spaces add-member --space <space-id> --user <email> [--role USER]
+  fm spaces --admin                                every space, every region (paginated)
+  fm spaces --admin members <space-id>
+  fm spaces --admin conversations <space-id> [--limit --offset]
+  fm spaces --admin delete-conversation <space-id> <chat-id>
+  fm spaces --admin skills <space-id> [--limit --offset]
+  fm spaces --admin delete-skill <space-id> <skill-id>
+  fm spaces --admin invitations <space-id> [--limit --offset]
+  fm spaces --admin delete-invitation <space-id> <invitation-id>
+  fm spaces --admin usage <space-id>
+  fm spaces --admin rename <space-id> --name 'New Name'
+  fm spaces --admin delete <space-id> --confirm          # IRREVERSIBLE
+  fm spaces --admin transfer-ownership <space-id> --new-owner <user-id>
+  fm spaces --admin add-member --space <space-id> --user <email> [--role USER]
 
-`list` has no server-side search: it takes limit/offset only, same as
-`fm users`. An empty page means "not on this page", not "no such space".
+`list` (no subject, the default) and `create` work for any signed-in user and
+need no flag. `list` without --admin is the spaces you are a member of: no
+server-side pagination, no search, just id/name/role/region. `create` calls
+`POST /projects`, the ordinary product route, with your own token; you become
+the new space's owner. `--country` is required: the server infers the
+datacenter from it, and country is immutable once set. `--region` is optional
+and only checked for agreement; it cannot pick a datacenter by itself.
 
-`delete` is permanent. It deletes every row and blob under the space and
-requires --confirm on top of the server's own confirmation check. There is no
-dry run and no undo.
-
-`create` calls `POST /projects`, the ordinary product route, with your own
-token, not the admin API. You become the new space's owner. `--country` is
-required: the server infers the datacenter from the country, and country is
-immutable once set. `--region` is optional and only checked for agreement; it
-cannot pick a datacenter by itself.
-
-`add-member` resolves --user's email to a user id via `GET /admin/users`
-(admin-only, no server-side email filter, so this walks the platform's full
-user list) and then assigns them with `POST /admin/users/{id}/spaces`, same
-as `fm users add-space`: a second door onto that route, addressed by email
-because that is what an operator has on hand. Sends no invitation email; the
-membership is immediate. --role is OWNER/ADMIN/USER/VIEWER (default USER),
-case-insensitive.
+Every other subject needs --admin (platform administrators only): it reads or
+writes an arbitrary space, which is not something an ordinary member does to
+their own space through this command. `fm spaces --admin` lists every space,
+every region, paginated (same limit/offset contract as `fm users`; an empty
+page means "not on this page", not "no such space"). `delete` is permanent:
+every row and blob under the space, with no dry run and no undo, and requires
+--confirm on top of the server's own confirmation check. `add-member`
+resolves --user's email to a user id via `GET /admin/users` (no server-side
+email filter, so this walks the platform's full user list) and then assigns
+them with `POST /admin/users/{id}/spaces`, the same route `fm users add-space`
+calls: a second door onto it, addressed by email because that is what an
+operator has on hand. Sends no invitation email; the membership is immediate.
+--role is OWNER/ADMIN/USER/VIEWER (default USER), case-insensitive.
 
 `--host formist` is its own deployment, not a region of the default product.
 Use it for every one of these commands against a workspace on that
@@ -364,11 +399,12 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
         help=f"`add-member`: one of {', '.join(_ROLES)} (default: USER), "
              "case-insensitive",
     )
+    add_admin_flag(parser)
 
 
 def add_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
-        "spaces", help=_HELP, description=_DESCRIPTION, epilog=PLATFORM_ADMIN_GATE_NOTE,
+        "spaces", help=_HELP, description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_arguments(parser)
@@ -391,12 +427,27 @@ def _require_space(args) -> str:
 
 def run(args) -> int:
     subject = canonical_subject(getattr(args, "subject", None))
+    admin = bool(getattr(args, "admin", False))
     if subject in _MUTATING_SUBJECTS:
         return _run_write(subject, args)
+
+    if subject != "list":
+        # Every read here other than `list` is a platform-admin view of a space
+        # the caller may not even be a member of (members/usage/conversations/
+        # skills/invitations of an arbitrary space id); none of them has a
+        # member-level equivalent in this command, so they all need --admin.
+        privileges.require_admin_flag(f"fm spaces {subject}", admin)
 
     ctx = context.resolve(args, need_token=True)
 
     if subject == "list":
+        if not admin:
+            # GET /projects: the caller's own spaces, no server-side pagination
+            # and no member_count (that is an admin-only aggregate).
+            payload = api.get(ctx.target, "/projects", token=ctx.token)
+            print(json.dumps(payload, indent=2) if args.json else
+                  render_my_spaces(_space_payload(payload)))
+            return 0
         params: dict[str, str] = {}
         if getattr(args, "limit", None) is not None:
             params["limit"] = str(args.limit)
@@ -450,6 +501,15 @@ def run(args) -> int:
 
 
 def _run_write(subject: str, args) -> int:
+    if subject != "create":
+        # `create` calls the ordinary product route with the caller's own
+        # token (see `_create_space`'s docstring) and needs no flag. Every
+        # other write here is platform-admin: renaming/deleting an arbitrary
+        # space, transferring its ownership, or assigning a member to it by
+        # email, none of which is something an ordinary member does to their
+        # own space through this command.
+        privileges.require_admin_flag(f"fm spaces {subject}", bool(getattr(args, "admin", False)))
+
     ctx = context.resolve(args, for_write=True, need_token=True)
 
     # `create` has no existing space to require: it makes one. `add-member`

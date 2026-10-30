@@ -48,7 +48,7 @@ import re
 import time
 
 from formist_cli import api, context
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE
+from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, add_admin_flag
 from formist_cli.cli_support import as_dict as _shared_as_dict
 from formist_cli.cli_support import build_standalone_parser as _build_standalone_parser
 
@@ -295,6 +295,7 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_arguments(parser)
+    add_admin_flag(parser)
     return parser
 
 

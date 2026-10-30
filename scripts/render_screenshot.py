@@ -40,13 +40,13 @@ HEALTH_PAYLOAD = {
     ],
 }
 
-SPACES_PAYLOAD = {
+#: ``GET /projects``: the spaces the signed-in caller (not a platform admin,
+#: just a member) belongs to; see ``formist_cli.spaces.render_my_spaces``.
+MY_SPACES_PAYLOAD = {
     "items": [
-        {"id": SPACE_LAUNCH, "region": "ae", "member_count": 12, "name": "Product launch 2027"},
-        {"id": SPACE_SUMMIT, "region": "global", "member_count": 7, "name": "Annual partner summit"},
+        {"id": SPACE_LAUNCH, "region": "ae", "role": "OWNER", "name": "Product launch 2027"},
+        {"id": SPACE_SUMMIT, "region": "global", "role": "ADMIN", "name": "Annual partner summit"},
     ],
-    "total": 2,
-    "offset": 0,
 }
 
 SEARCH_PAYLOAD = {
@@ -84,8 +84,8 @@ class MockHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._json(HEALTH_PAYLOAD)
-        elif path == "/admin/spaces":
-            self._json(SPACES_PAYLOAD)
+        elif path == "/projects":
+            self._json(MY_SPACES_PAYLOAD)
         elif path.startswith("/projects/") and path.endswith("/search"):
             self._json(SEARCH_PAYLOAD)
         else:

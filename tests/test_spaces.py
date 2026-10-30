@@ -21,7 +21,7 @@ import types
 
 import pytest
 
-from formist_cli import spaces
+from formist_cli import privileges, spaces
 from formist_cli.context import Context
 from formist_cli.targets import resolve as resolve_target
 
@@ -60,6 +60,17 @@ def test_render_space_list_more_exist_names_the_next_offset():
     items = [{"region": "global", "member_count": 1, "name": f"s{i}", "id": SPACE} for i in range(5)]
     out = spaces.render_space_list({"items": items, "total": 50, "offset": 0})
     assert "MORE EXIST" in out
+
+
+def test_render_my_spaces_shows_role_and_region_not_member_count():
+    out = spaces.render_my_spaces(
+        {"items": [{"id": SPACE, "name": "Mine", "role": "OWNER", "region": "ae"}]}
+    )
+    assert "Mine" in out and "OWNER" in out and "ae" in out and SPACE in out
+
+
+def test_render_my_spaces_empty_says_so():
+    assert spaces.render_my_spaces({"items": []}) == "(you are not a member of any space)"
 
 
 def test_render_members_empty_says_so():
@@ -191,6 +202,10 @@ def _args(**overrides) -> argparse.Namespace:
         "limit": None, "offset": None, "json": False, "name": None,
         "new_owner": None, "confirm": False,
         "region": None, "country": None, "space": None, "user": None, "role": "USER",
+        # True by default: every test below except the `list`/`create` ones
+        # (which need no flag) exercises an admin-only subject, so the new
+        # --admin gate must not pre-empt the guard each of them is testing.
+        "admin": True,
     }
     return argparse.Namespace(**(base | overrides))
 
@@ -513,7 +528,7 @@ def driven_read(monkeypatch):
             calls.append((path, params))
             return payload
 
-        stub = types.SimpleNamespace(admin_get=_record)
+        stub = types.SimpleNamespace(admin_get=_record, get=_record)
         monkeypatch.setattr(spaces, "api", stub)
         monkeypatch.setattr(
             spaces.context, "resolve",
@@ -525,10 +540,54 @@ def driven_read(monkeypatch):
     return _drive
 
 
-def test_list_is_the_default_subject_and_needs_no_space_id(driven_read):
-    rc, calls = driven_read({"items": [], "total": 0, "offset": 0}, subject=None, space_id=None)
+def test_list_with_admin_is_the_default_subject_and_needs_no_space_id(driven_read):
+    rc, calls = driven_read(
+        {"items": [], "total": 0, "offset": 0}, subject=None, space_id=None, admin=True,
+    )
     assert rc == 0
     assert calls == [("/admin/spaces", {})]
+
+
+def test_list_without_admin_hits_the_user_scoped_endpoint(driven_read):
+    """The new default: no --admin, no space id, `GET /projects` (the caller's
+    own spaces), never `/admin/spaces`."""
+    rc, calls = driven_read(
+        {"items": [{"id": SPACE, "name": "Mine", "role": "OWNER", "region": "global"}]},
+        subject=None, space_id=None, admin=False,
+    )
+    assert rc == 0
+    assert calls == [("/projects", None)]
+
+
+def test_create_succeeds_without_the_admin_flag(driven):
+    """`create` is user-level unconditionally: --admin absent must not trip
+    the new gate the way every other write in this file relies on it NOT to."""
+    rc, calls = driven(
+        "post", {"id": SPACE, "name": "New WS", "region": "global", "role": "OWNER"},
+        subject="create", space_id=None, name="New WS", country="us", admin=False,
+    )
+    assert rc == 0
+    assert calls[0][0] == "/projects"
+
+
+@pytest.mark.parametrize("subject", [
+    "members", "usage", "conversations", "skills", "invitations",
+    "rename", "delete", "transfer-ownership",
+    "delete-conversation", "delete-skill", "delete-invitation", "add-member",
+])
+def test_admin_only_subjects_refuse_without_admin_and_never_resolve_context(subject, monkeypatch):
+    """Every subject other than `list`/`create` is platform-admin and needs
+    --admin; without it, `fm spaces <subject>` must refuse before even
+    resolving a target/token, let alone sending a request."""
+    monkeypatch.setattr(spaces, "api", _RefusingApi())
+    monkeypatch.setattr(
+        spaces.context, "resolve",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("must refuse before resolving a target/token")
+        ),
+    )
+    with pytest.raises(privileges.PrivilegeError, match="--admin"):
+        spaces.run(_args(subject=subject, admin=False))
 
 
 def test_members_reaches_the_members_endpoint(driven_read):

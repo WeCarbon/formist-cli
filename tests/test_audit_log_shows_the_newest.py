@@ -50,7 +50,9 @@ def _rows(n: int) -> list[dict]:
 
 @pytest.fixture
 def run(monkeypatch):
-    """Drive ``cmd_audit_log`` against a fake server, returning (params, stdout)."""
+    """Drive ``cmd_audit_log --admin`` against a fake server, returning
+    (params, stdout). The admin branch is what every test in this file was
+    written against; the default (member) branch has its own tests below."""
 
     def _run(capsys, payload):
         seen: dict = {}
@@ -74,6 +76,7 @@ class _Args:
     env = "global"
     space = "452093ea-7b91-491e-88b6-3285edd48a31"
     limit = "50"
+    admin = True
 
 
 class TestItAsksForTheNewestRows:
@@ -139,3 +142,55 @@ class TestItNeverOverstatesWhatItSaw:
             unknown.rsplit("\n\n", 1)[-1].strip(),
         }
         assert len(summaries) == 3, f"two outcomes render alike: {summaries}"
+
+
+# ===========================================================================
+# default vs --admin: which endpoint, and that --admin is never implied
+# ===========================================================================
+class _ArgsNoAdmin:
+    env = "global"
+    space = "452093ea-7b91-491e-88b6-3285edd48a31"
+    limit = "50"
+    admin = False
+
+
+def test_default_reads_the_member_endpoint_not_admin(monkeypatch, capsys):
+    """No --admin: `fm audit-log` must read the space's OWN audit log as a
+    member (`GET /projects/{space}/audit-log`), never `/admin/spaces/...`."""
+    seen: dict = {}
+
+    def fake_get(target, path, *, token, params=None, **kwargs):
+        seen["path"] = path
+        return {"items": [], "total": 0}
+
+    def boom_admin_get(*a, **k):
+        raise AssertionError("must not call the admin endpoint without --admin")
+
+    monkeypatch.setattr(cli, "_effective", lambda args, **kw: _Eff())
+    monkeypatch.setattr(cli.api, "get", fake_get)
+    monkeypatch.setattr(cli.api, "admin_get", boom_admin_get)
+
+    rc = cli.cmd_audit_log(_ArgsNoAdmin())
+    assert rc == 0
+    assert seen["path"] == f"/projects/{_ArgsNoAdmin.space}/audit-log"
+
+
+def test_admin_reads_the_admin_endpoint_not_member(monkeypatch, capsys):
+    """--admin: the reverse pin, so neither branch can silently swap with
+    the other."""
+    seen: dict = {}
+
+    def fake_admin_get(target, path, *, token, params=None, **kwargs):
+        seen["path"] = path
+        return {"items": [], "total": 0}
+
+    def boom_get(*a, **k):
+        raise AssertionError("must not call the member endpoint with --admin")
+
+    monkeypatch.setattr(cli, "_effective", lambda args, **kw: _Eff())
+    monkeypatch.setattr(cli.api, "admin_get", fake_admin_get)
+    monkeypatch.setattr(cli.api, "get", boom_get)
+
+    rc = cli.cmd_audit_log(_Args())
+    assert rc == 0
+    assert seen["path"] == f"/admin/spaces/{_Args.space}/audit-log"

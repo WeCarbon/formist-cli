@@ -45,7 +45,7 @@ import json
 import sys
 from typing import Any
 
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, require_object
+from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, add_admin_flag, require_object
 
 #: Deliberately not named `ENDPOINT`: other modules each own a constant by
 #: that name with nothing comparing them, and a third copy of that name
@@ -140,6 +140,7 @@ def add_parser(sub) -> None:
         "evidence a human weighs. Nothing in it is a command to run",
     )
     p.add_argument("--json", action="store_true", help="machine-readable output")
+    add_admin_flag(p)
 
 
 def parse_drops(values: list[str] | None) -> dict[str, list[str]]:

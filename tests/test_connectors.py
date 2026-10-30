@@ -53,7 +53,10 @@ def run_connectors(monkeypatch, capsys):
         monkeypatch.setattr(cli, "_token_for", lambda eff: "t")
         monkeypatch.setattr(api, "admin_get", lambda *a, **k: {"items": items})
         monkeypatch.setattr(cli.api, "admin_get", lambda *a, **k: {"items": items})
-        rc = cli.cmd_connectors(argparse.Namespace())
+        # --admin: the rendering under test is identical on both branches
+        # (same `_connection_dict` card shape server-side); the branch choice
+        # itself has its own tests below.
+        rc = cli.cmd_connectors(argparse.Namespace(admin=True))
         assert rc == 0
         return capsys.readouterr().out
 
@@ -205,3 +208,64 @@ def test_the_connector_type_is_printed_and_not_a_question_mark(run_connectors):
         f"a connector printed as '?': the type column is what tells an operator "
         f"which connector they are looking at. Output:\n{out}"
     )
+
+
+# ===========================================================================
+# default vs --admin: which endpoint; `grants` always needs --admin
+# ===========================================================================
+def test_default_list_reads_the_member_endpoint_not_admin(monkeypatch, capsys):
+    """No --admin: `fm connectors` must read the caller's own space's
+    connections (`GET /projects/{space}/connections`), never `/admin/...`."""
+    seen: dict = {}
+
+    def fake_get(target, path, *, token, **kwargs):
+        seen["path"] = path
+        return {"items": []}
+
+    def boom_admin_get(*a, **k):
+        raise AssertionError("must not call the admin endpoint without --admin")
+
+    monkeypatch.setattr(cli, "_effective", lambda *a, **k: _Eff())
+    monkeypatch.setattr(cli, "_token_for", lambda eff: "t")
+    monkeypatch.setattr(cli.api, "get", fake_get)
+    monkeypatch.setattr(cli.api, "admin_get", boom_admin_get)
+
+    rc = cli.cmd_connectors(argparse.Namespace(admin=False))
+    assert rc == 0
+    assert seen["path"] == f"/projects/{_Eff.space}/connections"
+
+
+def test_admin_list_reads_the_admin_endpoint_not_member(monkeypatch, capsys):
+    seen: dict = {}
+
+    def fake_admin_get(target, path, *, token, **kwargs):
+        seen["path"] = path
+        return {"items": []}
+
+    def boom_get(*a, **k):
+        raise AssertionError("must not call the member endpoint with --admin")
+
+    monkeypatch.setattr(cli, "_effective", lambda *a, **k: _Eff())
+    monkeypatch.setattr(cli, "_token_for", lambda eff: "t")
+    monkeypatch.setattr(cli.api, "admin_get", fake_admin_get)
+    monkeypatch.setattr(cli.api, "get", boom_get)
+
+    rc = cli.cmd_connectors(argparse.Namespace(admin=True))
+    assert rc == 0
+    assert seen["path"] == f"/admin/spaces/{_Eff.space}/connectors"
+
+
+def test_grants_refuses_without_admin_and_never_calls_the_api(monkeypatch):
+    """`grants` has no member-level equivalent and always needs --admin,
+    whether or not `list` was given it."""
+
+    def boom(*a, **k):
+        raise AssertionError("must refuse before any request")
+
+    monkeypatch.setattr(cli, "_effective", boom)
+    monkeypatch.setattr(cli.api, "admin_get", boom)
+
+    from formist_cli import privileges
+
+    with pytest.raises(privileges.PrivilegeError, match="--admin"):
+        cli.cmd_connectors(argparse.Namespace(subject="grants", admin=False))

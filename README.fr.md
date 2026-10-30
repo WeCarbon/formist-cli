@@ -97,7 +97,7 @@ Un espace se désigne toujours par son identifiant, jamais par son nom, puisque 
 sont pas uniques :
 
 ```sh
-fm spaces                         # every space, platform-admin only
+fm spaces                         # your own spaces
 fm use --space <space-id>         # remember a default space
 fm kb search "venue contract" --space <space-id>
 ```
@@ -112,37 +112,29 @@ La plupart des commandes qui modifient des données s'exécutent d'abord en simu
 affichent ce qu'elles feraient ; ajoutez `--apply` pour valider. `fm update`, qui applique un
 lot de changements de façon transactionnelle, fonctionne un peu différemment : la simulation
 affiche un jeton de plan, et `--apply <jeton>` relance la simulation pour confirmer que le plan
-correspond toujours avant de valider. Quelques actions d'administration irréversibles, comme
-`fm spaces delete`, n'ont aucune simulation et le précisent dans leur propre `--help`.
+correspond toujours avant de valider. Quelques actions irréversibles, comme
+`fm spaces --admin delete`, n'ont aucune simulation et le précisent dans leur propre `--help`.
 
 ### Commandes
 
-Lancez `fm --help` pour la liste complète et `fm <commande> --help` pour chacune. La surface se
-divise en deux : les commandes qui fonctionnent avec les droits de votre propre compte, comme
-dans l'application web, et celles qui demandent en plus les droits d'administration de la
-plateforme, revérifiés par le serveur à chaque appel.
-
-Usage courant, droits de votre propre compte : `chats`, `chat`, `kb`, `get`, `export`,
+Lancez `fm --help` pour la liste complète et `fm <commande> --help` pour chacune. Chaque
+commande fonctionne avec les droits de votre propre compte, comme dans l'application web, et
+le serveur revérifie chaque droit à chaque appel : `fm spaces` liste les espaces dont vous
+êtes membre, `fm health` est public et ne demande aucune connexion, `fm doctor` récapitule
+l'état de santé sur chaque déploiement, et le reste, `chats`, `chat`, `kb`, `get`, `export`,
 `import`, `diff`, `upload`, `skill-attach`, `entity-fields`, `skill-library-install`,
-`meeting`, `project`, `connector`, `skills-add`, `skills-update`.
-
-Administration de la plateforme, droit supplémentaire requis : `spaces`, `users`, `proposals`,
-`audit-log`, `connectors`, `logs`, `space-plan`, `usage-tokens`, `alerts`, `settings`,
-`messages`, `whatsapp`, `update`, `airtable`, `participants`, `instance`.
-
-`fm health` est public, aucune connexion requise, sauf si `--admin` demande la vue
-multirégion ; `fm doctor` ne demande pas non plus de droit d'administration. `fm files` mélange
-les deux : lire et réévaluer relèvent de l'usage courant, fusionner deux entrées en double
-relève de l'administration de la plateforme.
+`meeting`, `project`, `connector`, `skills-add`, `skills-update`, `proposals`, `audit-log`,
+`connectors`, `files`, lit ou écrit votre propre espace de la même façon.
 
 ## FAQ
 
 **Ai-je besoin des droits d'administration de la plateforme pour utiliser cet outil ?**
-Non. Se connecter avec un compte ordinaire exécute les commandes de niveau utilisateur
-exactement comme le ferait l'application web pour ce compte. Une commande d'administration
-est refusée localement, avec le droit manquant nommé, avant même l'envoi d'une requête,
-chaque fois que `fm login` a déjà enregistré que l'identifiant en est dépourvu ; sinon, c'est
-le serveur qui tranche en dernier ressort, comme pour l'application web.
+Non. Par défaut, chaque commande fonctionne avec les droits de votre propre compte, comme le
+ferait l'application web pour ce compte : `fm spaces`, par exemple, liste les espaces dont
+vous êtes membre. Quelques commandes acceptent aussi `--admin`, réservé à un compte
+administrateur de la plateforme ; sans cette option, ou sans le droit correspondant, elles
+sont refusées localement avant même l'envoi d'une requête, et c'est de toute façon le serveur
+qui tranche en dernier ressort.
 
 **Puis-je le pointer vers un serveur de développement local ?**
 Oui : `--host` accepte n'importe quelle origine d'API, pas seulement les quatre déploiements

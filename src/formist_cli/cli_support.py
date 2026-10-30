@@ -23,10 +23,28 @@ PLATFORM_ADMIN_GATE_NOTE = (
     "GATE: site-wide platform admin (User.is_platform_admin), re-checked fresh on "
     "every call. A project OWNER or ADMIN is NOT sufficient: membership in a space "
     "grants nothing here, so a 403 means the flag is missing from YOUR user row, not "
-    "that the user or the space is missing. `fm spaces --host evane` reads /admin "
-    "behind the identical flag, so a working `fm spaces` is the cheapest proof you "
-    "have it."
+    "that the user or the space is missing. `fm spaces --admin --host evane` reads "
+    "/admin behind the identical flag, so a working `fm spaces --admin` is the "
+    "cheapest proof you have it."
 )
+
+#: Help text for every ``--admin`` flag this CLI adds. Deliberately generic:
+#: naming, in ``--help`` output, exactly which commands ``--admin`` unlocks is
+#: the same kind of list this project's README keeps out of its public-facing
+#: half, for the same reason, so the flag's own help never grows one either.
+ADMIN_FLAG_HELP = "platform administrators only"
+
+
+def add_admin_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--admin`` to a subcommand, the same way ``cli._add_env`` wires
+    ``--host``: ``default=argparse.SUPPRESS`` so that when this flag is not
+    given on the subcommand itself, a value already set at the root parser
+    (``fm --admin <command>``) is left alone instead of being overwritten
+    back to ``False``.
+    """
+    parser.add_argument(
+        "--admin", action="store_true", default=argparse.SUPPRESS, help=ADMIN_FLAG_HELP,
+    )
 
 
 def as_dict(payload: object, *, what: str, error: type[Exception]) -> dict:

@@ -195,7 +195,10 @@ class TestNoCommandPaysARoundTripToLearnItHasNoToken:
          "task", "--name", "x"],
         ["export", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31",
          "--out", "OUT"],
-        ["users", "--host", "evane"],
+        # --admin: without it, `fm users` now refuses even earlier (the new
+        # --admin gate, which has its own tests), and this parametrize's point
+        # is the TOKEN guard specifically.
+        ["users", "--admin", "--host", "evane"],
     ]
 
     @pytest.mark.parametrize("argv", COMMANDS, ids=lambda a: a[0])

@@ -42,6 +42,14 @@ Levels:
               --admin``). Never refused early: the table cannot see which
               subcommand is about to run, so refusing would refuse the user-level
               half as well.
+
+A second, independent gate sits beside this table and is NOT about scopes at all:
+every LEVEL_ADMIN command, and every admin-only branch of a LEVEL_MIXED one, also
+requires the ``--admin`` flag on the command line itself (:func:`require_admin_flag`).
+A credential that happens to carry the admin scope does not skip it. The point is
+not "can this credential reach the server" (the server decides that, every time);
+it is that the admin-only surface stays behind one explicit flag rather than being
+the thing a bare `fm spaces` happens to do.
 """
 
 from __future__ import annotations
@@ -111,7 +119,10 @@ TABLE: dict[str, Privilege] = {
         LEVEL_MIXED, ("GET /health", "GET /admin/health (only with --admin)"),
         "public without --admin",
     ),
-    "instance": Privilege(LEVEL_ADMIN, ("GET /admin/instance",)),
+    "instance": Privilege(
+        LEVEL_ADMIN, ("GET /admin/instance",),
+        "build/migration identity has no user-level meaning",
+    ),
     "doctor": Privilege(
         LEVEL_LOCAL, ("GET /health",), "local config checks plus the public health probe"
     ),
@@ -151,13 +162,19 @@ TABLE: dict[str, Privilege] = {
     "diff": Privilege(LEVEL_USER, ("the export surface",), "compares two exports"),
     # --- platform administration ------------------------------------------------
     "spaces": Privilege(
-        LEVEL_ADMIN,
+        LEVEL_MIXED,
         (
-            "GET /admin/spaces",
-            "GET/PATCH/DELETE /admin/spaces/{space}",
-            "GET /admin/spaces/{space}/members|invitations|skills|conversations|usage",
-            "POST /admin/spaces/{space}/transfer-ownership",
+            "GET /projects (default: the caller's own spaces)",
+            "GET /admin/spaces (only with --admin: every space, every region)",
+            "POST /projects (`create`; the caller's own token, not --admin)",
+            "GET/PATCH/DELETE /admin/spaces/{space} (only with --admin)",
+            "GET /admin/spaces/{space}/members|invitations|skills|conversations|usage "
+            "(only with --admin)",
+            "POST /admin/spaces/{space}/transfer-ownership (only with --admin)",
+            "POST /admin/users/{id}/spaces (`add-member`; only with --admin)",
         ),
+        "MIXED: `list` (the default, no subject needed) and `create` work for any "
+        "signed-in user; every other subject is platform-admin and needs --admin",
     ),
     "users": Privilege(
         LEVEL_ADMIN,
@@ -168,12 +185,37 @@ TABLE: dict[str, Privilege] = {
             "DELETE /admin/users/{id}/spaces/{space}",
             "GET /admin/users/{id}/grants",
         ),
+        "platform user management has no user-level meaning: there is nothing for "
+        "an ordinary signed-in user to default to",
     ),
-    "proposals": Privilege(LEVEL_ADMIN, ("GET /admin/spaces/{space}/proposals",)),
-    "audit-log": Privilege(LEVEL_ADMIN, ("GET /admin/spaces/{space}/audit-log",)),
+    "proposals": Privilege(
+        LEVEL_MIXED,
+        (
+            "GET /projects/{space}/proposals (default: member)",
+            "GET /admin/spaces/{space}/proposals (only with --admin)",
+            "POST /admin/spaces/{space}/proposals/unstick (always needs --admin)",
+        ),
+        "MIXED: `list` (the default subject) works for any member of the space; "
+        "`unstick` is a platform-admin repair tool with no member-level equivalent",
+    ),
+    "audit-log": Privilege(
+        LEVEL_MIXED,
+        (
+            "GET /projects/{space}/audit-log (default: member)",
+            "GET /admin/spaces/{space}/audit-log (only with --admin: no membership needed)",
+        ),
+        "a member already sees their space's own audit log; --admin reads a space "
+        "this credential is not a member of",
+    ),
     "connectors": Privilege(
-        LEVEL_ADMIN,
-        ("GET /admin/spaces/{space}/connectors", "GET /admin/spaces/{space}/connectors/grants"),
+        LEVEL_MIXED,
+        (
+            "GET /projects/{space}/connections (default subject `list`: member)",
+            "GET /admin/spaces/{space}/connectors (only with --admin)",
+            "GET /admin/spaces/{space}/connectors/grants (`grants`; always needs --admin)",
+        ),
+        "MIXED: `list` (the default subject) works for any member of the space; "
+        "`grants` is a platform-admin view with no member-level equivalent",
     ),
     "logs": Privilege(
         LEVEL_ADMIN, ("GET /admin/events", "GET /admin/events/{subject}"),
@@ -240,7 +282,7 @@ TABLE: dict[str, Privilege] = {
         (
             "POST /projects/{space}/files/reevaluate (only with --apply)",
             "POST /projects/{space}/files/{id}/reevaluate (only with --apply)",
-            "GET/POST /projects/{space}/admin/files/merge",
+            "GET/POST /projects/{space}/admin/files/merge (always needs --admin)",
             "GET /projects/{space}/files, GET /projects/{space}/files/{id}/download (download)",
         ),
         "MIXED because `fm files` carries three subcommands at different "
@@ -316,3 +358,18 @@ def check(command: str, scopes: object) -> None:
         "and approve the platform-administration scope on the authorization page. "
         "If it is not, this action is not available to you."
     )
+
+
+def require_admin_flag(label: str, admin_flag: bool) -> None:
+    """Refuse before any request when ``--admin`` was not passed.
+
+    Independent of :func:`check` and of what scopes are recorded: this is the
+    gate that keeps an admin-only command, or an admin-only branch of a MIXED
+    one, off the default path. It fires on the missing FLAG alone, not on the
+    credential, so it refuses the same way whether or not this login actually
+    is a platform admin. ``label`` is how the caller names itself in the
+    message, e.g. ``"fm users"`` or ``"fm spaces members"``.
+    """
+    if admin_flag:
+        return
+    raise PrivilegeError(f"`{label}` needs --admin (platform administrators only).")

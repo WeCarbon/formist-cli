@@ -53,7 +53,8 @@ def subject_error(subject: object) -> ConnectorsError:
     return ConnectorsError(
         f"unknown subcommand {subject!r}. Valid: {', '.join(SUBJECTS)}.\n"
         "  list    the space's connectors (id, kind, status), the default\n"
-        "  grants  every connector of a space: identity, scopes, status, expiry"
+        "  grants  every connector of a space: identity, scopes, status, expiry "
+        "(always needs --admin)"
     )
 
 
@@ -87,8 +88,12 @@ def render_grants(payload: dict) -> str:
 
 COMMAND_DESCRIPTION = """A space's connectors, and what they are authorized to do.
 
-  fm connectors [--space X]            the connector list (id, kind, status)
-  fm connectors grants [<space-id>]    identity, scopes, auth status, expiry
+  fm connectors [--space X]            the connector list (id, kind, status); a
+                                        member of the space, no flag needed
+  fm connectors --admin [--space X]    the same list, for a space you are not
+                                        a member of (platform administrators only)
+  fm connectors grants [<space-id>]    identity, scopes, auth status, expiry;
+                                        always needs --admin
 
 SPACE-OWNED CONNECTORS ONLY. A member's PERSONAL connector is user-scoped, has no
 project, and is not listed here, use `fm users grants <user-id>` for those. An empty

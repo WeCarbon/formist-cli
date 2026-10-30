@@ -64,7 +64,7 @@ from formist_cli.airtable import AirtableError
 from formist_cli.alerts import AlertsError
 from formist_cli.chats import ChatsError
 from formist_cli import cli_support
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, as_dict
+from formist_cli.cli_support import as_dict
 from formist_cli.diff import DiffError
 from formist_cli.export import ExportError
 from formist_cli.files import FilesError
@@ -153,6 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--host", default=None, metavar="HOST", help=_HOST_HELP)
+    # ``default=False`` here, not SUPPRESS, so every command always has an
+    # `admin` attribute to read with a plain `getattr`/truth test. A subcommand's
+    # own `--admin` (added with `cli_support.add_admin_flag`, SUPPRESS'd) never
+    # overwrites this back to False when omitted, the same duality `--host` uses.
+    parser.add_argument(
+        "--admin", action="store_true", default=False, help=cli_support.ADMIN_FLAG_HELP,
+    )
     parser.add_argument("--version", action="version", version=f"fm {login_mod.cli_version()}")
     sub = parser.add_subparsers(
         dest="command", required=True, parser_class=cli_support.SubcommandParser
@@ -191,9 +198,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--admin",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="also request the platform-administration scope. Only granted if your "
-             "account already has it; without this flag `fm users`, `fm spaces` and "
-             "`fm update` are refused even for a platform admin",
+             "account already has it; needed for any other command's own --admin",
     )
 
     p = sub.add_parser(
@@ -220,26 +227,28 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("health", help="health checks for a region (public, no auth)")
     _add_env(p)
     p.add_argument(
-        "--admin", action="store_true",
+        "--admin", action="store_true", default=argparse.SUPPRESS,
         help="GET /admin/health instead: this region's checks plus the other "
-             "region's, in one call (needs a platform-admin session)",
+             "region's, in one call (" + cli_support.ADMIN_FLAG_HELP + ")",
     )
 
     p = sub.add_parser("instance", help="build + migration identity (Tier 1 endpoint)")
     _add_env(p)
+    cli_support.add_admin_flag(p)
 
     spaces_mod.add_parser(sub)
 
     p = sub.add_parser(
         "proposals",
         help=(
-            "list a space's AI proposals, or unstick the pre-atomic-approve ones"
+            "list a space's AI proposals (member), or unstick the "
+            "pre-atomic-approve ones (--admin)"
         ),
-        epilog=PLATFORM_ADMIN_GATE_NOTE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_env(p)
     _add_space(p)
+    cli_support.add_admin_flag(p)
     # Positional, defaulted, and NOT a second subparser level: `fm proposals` with
     # no subject has meant "list them" for months and every runbook says so.
     p.add_argument(
@@ -247,7 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default="list",
         choices=PROPOSAL_SUBJECTS,
-        help="list (default) | unstick",
+        help="list (default, member) | unstick (always needs --admin)",
     )
     p.add_argument("--status", help="list: e.g. PENDING")
     p.add_argument("--target-kind", dest="target_kind")
@@ -265,19 +274,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="unstick: commit the write. Without it nothing is written.",
     )
 
-    p = sub.add_parser("audit-log", help="a space's audit log (admin)")
+    p = sub.add_parser("audit-log", help="a space's audit log (member; --admin for a space you are not a member of)")
     _add_env(p)
     _add_space(p)
+    cli_support.add_admin_flag(p)
     p.add_argument("--limit", default="50")
 
     p = sub.add_parser(
         "connectors",
-        help="a space's connectors (admin); `grants` for what they may do",
+        help="a space's connectors (member); `grants` always needs --admin",
         description=connectors_mod.COMMAND_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_env(p)
     _add_space(p)
+    cli_support.add_admin_flag(p)
     # Optional and default-preserving: `fm connectors` alone must keep
     # printing the plain list it always printed, since a positional
     # that changed the default behaviour would silently redefine an
@@ -389,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_env(p, for_write=True)
     _add_space(p)
+    cli_support.add_admin_flag(p)
     p.add_argument("payload", help="path to a JSON file of ops")
     p.add_argument(
         "--apply",
@@ -667,15 +679,21 @@ PROPOSAL_SUBJECTS = ("list", "unstick")
 
 def cmd_proposals(args) -> int:
     subject = getattr(args, "subject", None) or "list"
+    admin = bool(getattr(args, "admin", False))
     if subject == "unstick":
+        privileges.require_admin_flag("fm proposals unstick", admin)
         return _proposals_unstick(args)
     eff = _effective(args)
     target, space = eff.target, eff.space
     params = {"limit": args.limit, "status": args.status, "target_kind": args.target_kind}
-    payload = api.admin_get(
-        target, f"/admin/spaces/{space}/proposals",
-        token=_token_for(eff), params=params,
+    # Same shared list contract on both sides (PROPOSAL_SPEC): the admin route
+    # reads any space cross-region, platform-admin only; the member route reads
+    # the caller's own space only, and needs no flag.
+    path = (
+        f"/admin/spaces/{space}/proposals" if admin else f"/projects/{space}/proposals"
     )
+    fetch = api.admin_get if admin else api.get
+    payload = fetch(target, path, token=_token_for(eff), params=params)
     for item in _items(payload):
         print(f"{item.get('id')}  {item.get('status'):<10} {item.get('target_kind'):<14}"
               f" {item.get('created_at', '')}")
@@ -772,10 +790,18 @@ def cmd_audit_log(args) -> int:
       looking like it showed the whole set would be true about what it
       fetched and false about what exists.
     """
+    admin = bool(getattr(args, "admin", False))
     eff = _effective(args)
     target, space = eff.target, eff.space
-    payload = api.admin_get(
-        target, f"/admin/spaces/{space}/audit-log",
+    # Same shared list contract (AUDIT_LOG_SPEC) either way: the member route
+    # reads only the caller's own space and needs no flag; --admin reads a
+    # space this credential is not a member of, platform-admin only.
+    path = (
+        f"/admin/spaces/{space}/audit-log" if admin else f"/projects/{space}/audit-log"
+    )
+    fetch = api.admin_get if admin else api.get
+    payload = fetch(
+        target, path,
         token=_token_for(eff),
         params={"limit": args.limit, "sort": _AUDIT_LOG_SORT},
     )
@@ -820,13 +846,21 @@ def cmd_connectors(args) -> int:
         raise connectors_mod.subject_error(getattr(args, "subject", None))
     if getattr(args, "space_id", None) and not getattr(args, "space", None):
         args.space = args.space_id
+    admin = bool(getattr(args, "admin", False))
     if subject == "grants":
+        # No member-level equivalent: the grant view (consented scopes, auth
+        # status, expiry) is platform-admin only, always.
+        privileges.require_admin_flag("fm connectors grants", admin)
         return connectors_mod.run_grants(args, _effective(args))
     eff = _effective(args)
     target, space = eff.target, eff.space
-    payload = api.admin_get(
-        target, f"/admin/spaces/{space}/connectors", token=_token_for(eff)
+    # Same card shape either way (`_connection_dict`): the member route reads
+    # only the caller's own space's connections; --admin reads any space.
+    path = (
+        f"/admin/spaces/{space}/connectors" if admin else f"/projects/{space}/connections"
     )
+    fetch = api.admin_get if admin else api.get
+    payload = fetch(target, path, token=_token_for(eff))
     for item in _items(payload):
         # `type`, not `kind`: the payload has never had a `kind` key, so an
         # operator could not otherwise tell one connector type from another in
@@ -1256,6 +1290,19 @@ def main(
     try:
         if prepare is not None:
             prepare(args)
+        # The --admin gate, for every command whose WHOLE surface is
+        # platform-admin (LEVEL_ADMIN). It fires on the missing FLAG, before
+        # any file is read or any request is built, regardless of what the
+        # stored credential's scopes say; a MIXED command (e.g. `fm spaces`,
+        # `fm files merge`) gates its own admin-only subject/subcommand
+        # itself, since this table entry cannot see which one is about to run.
+        if privileges.requires_admin(args.command) and not getattr(args, "admin", False):
+            print(
+                f"error: `fm {args.command}` needs --admin (platform administrators "
+                "only).",
+                file=sys.stderr,
+            )
+            return 2
         # The privilege pre-check, at the one point every command passes
         # through. It only ever refuses what the server would also refuse.
         # `resolve` here (not `_effective`) for the same reason cmd_login

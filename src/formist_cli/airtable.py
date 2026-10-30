@@ -55,6 +55,7 @@ def add_parser(sub) -> None:
     import argparse
 
     from formist_cli.cli import _add_env, _add_space
+    from formist_cli.cli_support import add_admin_flag
 
     p = sub.add_parser(
         "airtable",
@@ -93,6 +94,7 @@ def add_parser(sub) -> None:
         ),
     )
     p.add_argument("--json", action="store_true", help="machine-readable output")
+    add_admin_flag(p)
 
 
 def fetch_plan(target, space: str, *, token: str | None, get=None) -> dict:

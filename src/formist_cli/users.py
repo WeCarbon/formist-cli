@@ -30,7 +30,12 @@ import argparse
 import json
 
 from formist_cli import api, context
-from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, pagination_footer, render_grant_rows
+from formist_cli.cli_support import (
+    PLATFORM_ADMIN_GATE_NOTE,
+    add_admin_flag,
+    pagination_footer,
+    render_grant_rows,
+)
 from formist_cli.cli_support import as_dict as _shared_as_dict
 from formist_cli.cli_support import build_standalone_parser as _build_standalone_parser
 from formist_cli.targets import require_space_id
@@ -226,6 +231,7 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
         "--role", default="USER",
         help="`add-space`: OWNER, ADMIN, USER or VIEWER (default: USER)",
     )
+    add_admin_flag(parser)
 
 
 def add_parser(subparsers) -> argparse.ArgumentParser:
