@@ -1,45 +1,42 @@
-"""``fm participants dedupe`` — merge duplicate people in a space.
+"""``fm participants dedupe`` - merge duplicate people in a space.
 
-The decision lives on the SERVER (``services/participant_dedupe.py``); this module
-is a client and holds no copy of it. That split is not stylistic: two answers to
-"are these the same person" is precisely how the duplicates this repairs were
-created, one row at a time.
+The decision lives on the server; this module is a client and holds no
+copy of it. That split is not stylistic: two answers to "are these the
+same person" is precisely how the duplicates this repairs were created,
+one row at a time.
 
-WHY IT TALKS TO ``/projects/{space}/admin/...`` AND NOT ``api.admin_*``
------------------------------------------------------------------------
-``api.admin_get``/``admin_post`` refuse a non-Global prod target before a socket
-opens (``evtool/api.py::_check_admin_target``), which is correct for the literal
-``/admin`` tier — that tier IS Global-only. Participants are region-local, so this
-endpoint is project-scoped and MUST reach ``ae``; sending it through the admin
-helpers would refuse the only target that has the data. ``fm airtable`` made the
-same call for the same reason.
+This talks to ``/projects/{space}/admin/...`` and not the plain admin
+helpers, because those refuse a non-Global prod target before a socket
+opens, which is correct for the literal ``/admin`` tier (that tier is
+Global-only). Participants are region-local, so this endpoint is
+project-scoped and must reach ``ae``; sending it through the admin
+helpers would refuse the only target that has the data.
 
-THE SAFETY CHOREOGRAPHY
------------------------
-**A dry run always runs, including under ``--apply``** — it is printed first, and
-what is submitted is the ``plan_token`` of the plan that was printed.
+The safety choreography:
 
-**``--apply`` takes the token, not a bare flag.** The connector that produced
-these duplicates runs every 30 minutes, so "merge what is duplicated now" is a
-different set from "merge what you just showed me". A stale token is a 409 and
-nothing is written. (``fm space-plan``'s revision convention, for the same class
-of write.)
+A dry run always runs, including under ``--apply``. It is printed first,
+and what is submitted is the ``plan_token`` of the plan that was printed.
 
-**``--apply`` never inherits an environment from ``fm use``.** A remembered
+``--apply`` takes the token, not a bare flag. The connector that produced
+these duplicates runs every 30 minutes, so "merge what is duplicated now"
+is a different set from "merge what you just showed me". A stale token is
+a 409 and nothing is written.
+
+``--apply`` never inherits an environment from ``fm use``. A remembered
 environment is one somebody forgets they set.
 
-**NO WHOLE-PLAN APPLY.** Owner rule, 2026-09-09, enforced server-side
-(``services/dedupe_guard.py``) and refused **422** if this CLI is bypassed:
-``--apply`` merges ONLY the groups named by ``--group`` (repeatable), and needs
-``--reason`` — one sentence saying why the named group(s) are one person. There is
-no "merge everything" shape. Naming a group is what makes it mergeable, Tier A or
-B alike; a shared name is still never auto-merged — a human still has to name it.
+No whole-plan apply, enforced server-side and refused with 422 if this CLI
+is bypassed: ``--apply`` merges only the groups named by ``--group``
+(repeatable), and needs ``--reason``, one sentence saying why the named
+group(s) are one person. There is no "merge everything" shape. Naming a
+group is what makes it mergeable, record-id or same-name alike; a shared
+name is still never auto-merged, a human still has to name it.
 
-**``--review`` prints the describe data, not a decision.** Every row's id,
-created_at and provenance, every identity field side by side across the group's
-rows with conflicts marked, the tool's keeper SUGGESTION and why, and the evidence
-(session participations, audit history) a human weighs before naming a group.
-Nothing in it is a command to run.
+``--review`` prints the describe data, not a decision: every row's id,
+created_at and provenance, every identity field side by side across the
+group's rows with conflicts marked, the tool's keeper suggestion and why,
+and the evidence (session participations, audit history) a human weighs
+before naming a group. Nothing in it is a command to run.
 """
 
 from __future__ import annotations
@@ -50,12 +47,10 @@ from typing import Any
 
 from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, require_object
 
-#: Deliberately NOT named `ENDPOINT`. That name is a DEBT row in
-#: `tests/cross_module_drift_baseline.py` — `evtool/airtable.py` and
-#: `evtool/update.py` each own one with nothing comparing them — and a third copy
-#: joining a row that already records a hazard makes the hazard bigger. Same
-#: decision `evtool/skill_library.py` took (`SKILL_LIBRARY_SYNC_ENDPOINT`), and
-#: the baseline's own reason text says so.
+#: Deliberately not named `ENDPOINT`: other modules each own a constant by
+#: that name with nothing comparing them, and a third copy of that name
+#: would make the collision worse. Same decision `skill_library.py` took
+#: (`SKILL_LIBRARY_SYNC_ENDPOINT`).
 DEDUPE_PATH = "/projects/{space}/admin/participants/dedupe"
 
 SUBJECTS = ("dedupe",)
@@ -76,14 +71,14 @@ def add_parser(sub) -> None:
         description=(
             "Groups a space's participants by the SOURCE record id a connector "
             "stamped on them (data.<connector>.record_id) and, advisory only, by "
-            "normalised name. DESCRIBES ONLY — nothing here is a decision.\n\n"
+            "normalised name. DESCRIBES ONLY: nothing here is a decision.\n\n"
             "DRY RUN BY DEFAULT. --apply takes the plan_token this run printed; "
             "if the duplicates have changed since (the sync runs every 30 "
             "minutes), the server answers 409 and writes nothing.\n\n"
-            "NO WHOLE-PLAN APPLY (owner rule, 2026-09-09). --apply merges ONLY "
+            "NO WHOLE-PLAN APPLY. --apply merges ONLY "
             "the groups named by --group (repeatable), record-id or same-name "
             "alike, and needs --reason: one sentence saying why the named "
-            "group(s) are one person. There is no 'merge everything' shape — a "
+            "group(s) are one person. There is no 'merge everything' shape, a "
             "request naming no group, an empty list, or a wildcard is refused "
             "422 by the server.\n\n"
             "Merging keeps the OLDEST row, unions every non-empty value onto it "
@@ -106,7 +101,7 @@ def add_parser(sub) -> None:
         help=(
             "a group key to include ('airtable:recXXXX' or 'name:<normalised "
             "name>'), repeatable. On a dry run: scopes what is described (and "
-            "the plan_token, to exactly these groups). Under --apply: REQUIRED — "
+            "the plan_token, to exactly these groups). Under --apply: REQUIRED, "
             "the exact groups to merge, and nothing else"
         ),
     )
@@ -140,7 +135,7 @@ def add_parser(sub) -> None:
     p.add_argument(
         "--review",
         action="store_true",
-        help="markdown describe output — per-row provenance, side-by-side "
+        help="markdown describe output: per-row provenance, side-by-side "
         "identity fields with conflicts marked, the keeper suggestion, and the "
         "evidence a human weighs. Nothing in it is a command to run",
     )
@@ -182,10 +177,10 @@ def _plan(body: object) -> dict:
 def fetch_plan(target, space: str, *, token: str | None, groups: list[str] | None = None, get=None) -> dict:
     """The dry run. Writes nothing.
 
-    ``groups`` is repeated as ``?group=`` (a plain dict can only carry one value
-    per key, which is why this builds the query string itself rather than passing
-    ``params=``) — the server treats it as a pure DISPLAY filter and scopes the
-    returned ``plan_token`` to exactly what came back.
+    ``groups`` is repeated as ``?group=`` (a plain dict can only carry one
+    value per key, which is why this builds the query string itself rather
+    than passing ``params=``): the server treats it as a pure display
+    filter and scopes the returned ``plan_token`` to exactly what came back.
     """
     from urllib.parse import urlencode
 
@@ -209,12 +204,12 @@ def submit(
     drop_data_keys: dict[str, list[str]] | None = None,
     post=None,
 ) -> dict:
-    """Merge EXACTLY ``groups`` of the plan whose fingerprint is ``plan_token``.
+    """Merge exactly ``groups`` of the plan whose fingerprint is ``plan_token``.
 
-    Sends ``groups``/``reason`` as-is and lets the server refuse (422) an empty
-    list, a wildcard, or a blank reason — ``services/dedupe_guard.py`` is the one
-    place that rule is checked; duplicating it here would be exactly the drift
-    the project rules warns about.
+    Sends ``groups``/``reason`` as-is and lets the server refuse (422) an
+    empty list, a wildcard, or a blank reason: the server is the one place
+    that rule is checked, and duplicating it here would be a second copy
+    that can drift from it.
     """
     from formist_cli import api
 
@@ -226,7 +221,7 @@ def submit(
 
 
 def render_plan(plan: dict, *, applying: bool = False, out=None) -> None:
-    """DESCRIBE only. Neither tier nor ``applying`` decides what merges — naming a
+    """DESCRIBE only. Neither tier nor ``applying`` decides what merges: naming a
     group with ``--group --reason --apply`` does. See :func:`render_review` for the
     fuller per-row/per-field describe output.
     """
@@ -251,11 +246,11 @@ def render_plan(plan: dict, *, applying: bool = False, out=None) -> None:
         if updates:
             print(f"          would merge in: {', '.join(sorted(updates))}", file=out)
         for conflict in group.get("conflicts") or []:
-            # NEVER folded into the summary count. A conflict is the reason a human
+            # Never folded into the summary count. A conflict is the reason a human
             # is reading this, and a plan that reported "3 groups" while silently
             # picking a side would be a check that cannot fail.
             print(
-                f"          ⚠ CONFLICT {conflict.get('field')}: "
+                f"          CONFLICT {conflict.get('field')}: "
                 f"keeping {conflict.get('keeper')!r}, discarding "
                 f"{conflict.get('loser')!r} (from {conflict.get('loser_id')})",
                 file=out,
@@ -263,26 +258,26 @@ def render_plan(plan: dict, *, applying: bool = False, out=None) -> None:
     print(
         f"\n{plan.get('rows_to_soft_delete', 0)} row(s) in a record-id group | "
         f"plan_token {plan.get('plan_token')} (scoped to the groups printed above)\n"
-        "NOTHING HERE IS APPLIED — pass --group <key> (repeatable) --reason "
+        "NOTHING HERE IS APPLIED. Pass --group <key> (repeatable) --reason "
         "\"<why>\" --apply <plan_token> to merge exactly the groups you name.",
         file=out,
     )
 
 
 def render_review(plan: dict, *, out=None) -> None:
-    """The full describe output, as markdown. NOTHING here is a command to run —
+    """The full describe output, as markdown. Nothing here is a command to run:
     it is what a human reads to decide which groups (if any) to name."""
     out = out or sys.stdout
     groups = plan.get("groups") or []
-    print(f"# participants dedupe — review ({len(groups)} duplicate group(s))\n", file=out)
+    print(f"# participants dedupe, review ({len(groups)} duplicate group(s))\n", file=out)
     if not groups:
         print("no duplicate groups in this space (or in the --group scope given).", file=out)
         return
     for group in groups:
-        print(f"## [{group.get('tier')}] `{group.get('key')}` — {group.get('label')!r}\n", file=out)
+        print(f"## [{group.get('tier')}] `{group.get('key')}`: {group.get('label')!r}\n", file=out)
         suggestion = group.get("keeper_suggestion") or {}
         print(
-            f"keeper SUGGESTION (not a decision): `{suggestion.get('id')}` — "
+            f"keeper SUGGESTION (not a decision): `{suggestion.get('id')}`: "
             f"{suggestion.get('reason')}\n",
             file=out,
         )
@@ -312,10 +307,10 @@ def render_review(plan: dict, *, out=None) -> None:
             for f in fields:
                 values = f.get("values") or {}
                 cells = [
-                    "—" if values.get(rid) in (None, "", []) else str(values.get(rid))
+                    "-" if values.get(rid) in (None, "", []) else str(values.get(rid))
                     for rid in row_ids
                 ]
-                mark = "⚠ CONFLICT" if f.get("conflict") else "agree"
+                mark = "CONFLICT" if f.get("conflict") else "agree"
                 print(f"| {f.get('field')} | " + " | ".join(cells) + f" | {mark} |", file=out)
         print("\n", file=out)
 
@@ -325,9 +320,9 @@ def render_outcomes(report: dict, *, out=None) -> None:
     print("\napplied:", file=out)
     for outcome in report.get("outcomes") or []:
         if outcome.get("error"):
-            print(f"  ✗ {outcome.get('key')}: {outcome['error']}", file=out)
+            print(f"  ERROR {outcome.get('key')}: {outcome['error']}", file=out)
         elif outcome.get("skipped"):
-            print(f"  · {outcome.get('key')}: {outcome['skipped']}", file=out)
+            print(f"  SKIP {outcome.get('key')}: {outcome['skipped']}", file=out)
         else:
             for gone in outcome.get("dropped_values") or []:
                 print(
@@ -338,7 +333,7 @@ def render_outcomes(report: dict, *, out=None) -> None:
             refs = outcome.get("references_repointed") or {}
             detail = ", ".join(f"{k}={v}" for k, v in sorted(refs.items())) or "no live references"
             print(
-                f"  ✓ {outcome.get('key')}: merged {outcome.get('merged')} into "
+                f"  OK {outcome.get('key')}: merged {outcome.get('merged')} into "
                 f"{outcome.get('keep_id')} ({detail})",
                 file=out,
             )
@@ -366,7 +361,7 @@ def cmd_participants(args) -> int:
             print(json.dumps(plan, indent=2))
         elif plan.get("groups"):
             print(
-                f"\n→ re-run with --group <key> (repeat) --reason \"<why>\" "
+                f"\n-> re-run with --group <key> (repeat) --reason \"<why>\" "
                 f"--apply {plan.get('plan_token')} --host <host> to merge exactly "
                 "the groups you name."
             )
@@ -374,7 +369,7 @@ def cmd_participants(args) -> int:
 
     if args.apply != plan.get("plan_token"):
         raise ParticipantsError(
-            "REFUSING TO APPLY — this is not the plan you were shown.\n"
+            "REFUSING TO APPLY: this is not the plan you were shown.\n"
             f"  you passed : {args.apply}\n"
             f"  plan now   : {plan.get('plan_token')}\n"
             "The duplicates changed between your dry run and this call (the "
@@ -383,7 +378,7 @@ def cmd_participants(args) -> int:
             "instead, with the same --group keys."
         )
     if not plan.get("groups"):
-        print("\nnothing to merge — no request was sent.")
+        print("\nnothing to merge, no request was sent.")
         return 0
 
     report = submit(
@@ -401,6 +396,6 @@ def cmd_participants(args) -> int:
     render_outcomes(report)
     failed = [o for o in report.get("outcomes") or [] if o.get("error")]
     if failed:
-        print(f"\n⚠️ {len(failed)} group(s) were NOT merged — see above.", file=sys.stderr)
+        print(f"\n{len(failed)} group(s) were NOT merged, see above.", file=sys.stderr)
         return 1
     return 0
