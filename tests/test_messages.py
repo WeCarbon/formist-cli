@@ -149,7 +149,7 @@ def _dedupe_payload(**overrides) -> dict:
 class TestRenderDedupe:
     def test_dry_run_header_says_nothing_written(self):
         out = messages.render_dedupe(_dedupe_payload(applied=False))
-        assert "DRY RUN — nothing was written" in out
+        assert "DRY RUN: nothing was written" in out
 
     def test_applied_header_says_applied(self):
         out = messages.render_dedupe(_dedupe_payload(applied=True, reason="dup", groups_applied=["conv-1"], soft_deleted=1, repointed=2))

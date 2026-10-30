@@ -242,7 +242,7 @@ def test_store_payload_turns_a_duration_into_an_instant_and_hides_the_refresh_to
         "127.0.0.1:8160",
         {"access_token": "crst_at_x", "refresh_token": "crst_rt_y",
          "scope": "evane:kb evane:cli", "expires_in": 3600},
-        client_id="cid-1", client_name="Evane CLI · box",
+        client_id="cid-1", client_name="Evane CLI - box",
     )
     meta = tokens.load_meta("127.0.0.1:8160")
     assert meta["expires_at"], "a duration alone is only meaningful beside its instant"
@@ -710,4 +710,4 @@ def test_the_registered_client_name_follows_the_target(monkeypatch, env, product
     auth = login.auth_target(resolve(env))
     meta = {k: v.replace("http://127.0.0.1:8177", auth.api_base) for k, v in META.items()}
     login.register_client(auth, meta, [f"{auth.api_base}/oauth/cli/code"], [privileges.SCOPE_KB])
-    assert sent["client_name"].startswith(f"{product} CLI · "), sent["client_name"]
+    assert sent["client_name"].startswith(f"{product} CLI - "), sent["client_name"]

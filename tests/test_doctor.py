@@ -115,7 +115,7 @@ def test_a_real_stored_credential_is_readable_not_unreadable():
         "local",
         {"access_token": "crst_at_realtoken", "refresh_token": "crst_rt_y",
          "scope": "evane:kb evane:cli", "expires_in": 3600},
-        client_id="cid-1", client_name="Evane CLI · box",
+        client_id="cid-1", client_name="Evane CLI - box",
     )
     report = cli._with_credential(_blank_report("local"), "local")
     assert report.credential is not None

@@ -210,7 +210,7 @@ class TestDirApplyFailures:
 
         assert rc == 1
         combined = "".join(capsys.readouterr())
-        assert "empty file (server refuses 0-byte uploads; see decs D626)" in combined
+        assert "empty file (server refuses 0-byte uploads)" in combined
         assert "empty.txt" in combined
         # the client-side 0-byte refusal never opens a network connection for
         # THAT file: good.txt's session is the only one opened.
@@ -246,4 +246,4 @@ class TestDirApplyFailures:
         payload = json_mod.loads(capsys.readouterr().out)
         assert payload["uploaded"] == 0
         assert payload["failed"][0]["path"] == "empty.txt"
-        assert "D626" in payload["failed"][0]["reason"]
+        assert "empty file" in payload["failed"][0]["reason"]

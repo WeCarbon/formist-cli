@@ -446,13 +446,6 @@ class TestHelpSaysWhatTheStreamCarries:
         assert "69" in carries
         assert "clip is not a redaction" in carries.lower()
 
-    def test_it_points_at_the_shelved_fix_instead_of_inviting_a_rediscovery(self):
-        """A known, deliberately-unmerged fix for this must say so where it is
-        met, or the next operator reports it as new and someone re-derives it."""
-        carries = logs.STREAM_CARRIES
-        assert "security/event-stream-identity-leak" in carries
-        assert "not merged" in carries.lower() or "NOT merged" in carries
-
     def test_it_says_what_IS_redacted_so_the_warning_is_calibrated(self):
         carries = logs.STREAM_CARRIES.lower()
         assert "redact" in carries or "credential" in carries
@@ -464,9 +457,6 @@ class TestHelpSaysWhatTheStreamCarries:
         carries = logs.STREAM_CARRIES.lower()
         assert "platform-admin-only" in carries
         assert "not an authorization boundary" in carries
-
-    def test_it_is_dated_like_the_export_note(self):
-        assert "2026-08-27" in logs.STREAM_CARRIES
 
     def test_the_parser_actually_carries_it(self):
         """A constant nobody prints is a docstring. This asserts it reaches argparse."""

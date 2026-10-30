@@ -233,7 +233,7 @@ class TestRenderPlan:
         buf = io.StringIO()
         participants.render_plan(_plan_with_groups(), out=buf)
         out = buf.getvalue()
-        assert "⚠ CONFLICT org: keeping 'IFC', discarding 'I.F.C.' (from p2)" in out
+        assert "CONFLICT org: keeping 'IFC', discarding 'I.F.C.' (from p2)" in out
 
     def test_updates_line_omitted_when_no_updates(self):
         import io
@@ -301,11 +301,11 @@ class TestRenderReview:
         }
         participants.render_review(plan, out=buf)
         out = buf.getvalue()
-        assert "## [record_id] `airtable:rec1` — 'Jane Doe'" in out
-        assert "keeper SUGGESTION (not a decision): `p1` — oldest row" in out
+        assert "## [record_id] `airtable:rec1`: 'Jane Doe'" in out
+        assert "keeper SUGGESTION (not a decision): `p1`: oldest row" in out
         assert "proposal pr1" in out
-        assert "| org | IFC | — | agree |" in out
-        assert "| title | A | B | ⚠ CONFLICT |" in out
+        assert "| org | IFC | - | agree |" in out
+        assert "| title | A | B | CONFLICT |" in out
 
 
 class TestRenderOutcomes:
@@ -315,14 +315,14 @@ class TestRenderOutcomes:
              "live_participants": 41, "auto_mergeable": 0}
         )
         out = capsys.readouterr().out
-        assert "✗ g1: 409 stale" in out
+        assert "ERROR g1: 409 stale" in out
 
     def test_skipped_outcome(self, capsys):
         participants.render_outcomes(
             {"outcomes": [{"key": "g1", "skipped": "already merged"}],
              "live_participants": 41, "auto_mergeable": 0}
         )
-        assert "· g1: already merged" in capsys.readouterr().out
+        assert "SKIP g1: already merged" in capsys.readouterr().out
 
     def test_success_outcome_shows_repointed_refs_sorted_and_dropped_values(self, capsys):
         participants.render_outcomes(
@@ -336,7 +336,7 @@ class TestRenderOutcomes:
             }
         )
         out = capsys.readouterr().out
-        assert "✓ g1: merged p2 into p1 (comments=1, tasks=2)" in out
+        assert "OK g1: merged p2 into p1 (comments=1, tasks=2)" in out
         assert "dropped data.airtable.contact_email = 'x@y.com'" in out
         assert "soft-deleted row" in out
 
