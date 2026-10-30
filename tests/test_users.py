@@ -1,4 +1,4 @@
-"""``fm users`` — platform user rows, over routes that already exist.
+"""``fm users``: platform user rows, over routes that already exist.
 
 Step 1 of retiring ``az containerapp exec``: the operator read ``public.user`` and
 ``project_user_rel`` through the exec channel at roughly one call per two minutes.
@@ -7,7 +7,7 @@ client, not an endpoint.
 
 WHAT THESE TESTS ARE ACTUALLY GUARDING
 ---------------------------------------
-Not the HTTP call — ``api.admin_get`` is tested elsewhere. The defect class this
+Not the HTTP call: ``api.admin_get`` is tested elsewhere. The defect class this
 command can introduce is **a report that is true about what it fetched and false
 about what exists**: ``/admin/users`` is paginated (``{items,total,limit,offset}``)
 and capped by ``MAX_LIMIT``, so a listing that prints 50 rows without saying there
@@ -85,7 +85,7 @@ class TestAListingNeverOverstatesWhatItSaw:
 
     def test_a_MISSING_total_is_said_out_loud_not_papered_over(self):
         """The route always sends `total`. If it stops, a count with no denominator
-        is the most confident-looking way to be wrong — so say it is unknown."""
+        is the most confident-looking way to be wrong: so say it is unknown."""
         payload = _payload(5, 0)
         del payload["total"]
         out = users.render_list(payload)
@@ -95,7 +95,7 @@ class TestAListingNeverOverstatesWhatItSaw:
     def test_the_platform_admin_flag_is_visible_because_it_is_the_gate(self):
         """`is_platform_admin` decides who may use this whole surface.
 
-        ⚠️ Asserted on the ROW, not on the word "admin" — the header contains it,
+        ⚠️ Asserted on the ROW, not on the word "admin": the header contains it,
         so the first version of this test passed with every value dropped.
         """
         out = users.render_list(_payload(3, 3))
@@ -115,7 +115,7 @@ class TestAListingNeverOverstatesWhatItSaw:
         assert self.TRUNCATED not in out, out
 
     def test_a_non_dict_payload_RAISES_rather_than_rendering_an_empty_table(self):
-        """An empty table reads as "no users" — a wrong answer where an error is
+        """An empty table reads as "no users": a wrong answer where an error is
         the right one. A server contract change must not look like a fact."""
         with pytest.raises(users.UsersError) as exc:
             users.render_list(users._as_dict(["not", "a", "dict"]))
@@ -142,7 +142,7 @@ class TestSpacesForAUser:
 
 class TestHelpSaysWhatTheSurfaceCannotDo:
     def test_it_says_there_is_no_server_side_search(self):
-        """⚠️ `/admin/users` takes limit/offset and NOTHING else — no `q`. A
+        """⚠️ `/admin/users` takes limit/offset and NOTHING else: no `q`. A
         `--help` that stays silent invites an operator to look for a flag that does
         not exist, or worse to assume an empty result means no such user."""
         text = users.build_standalone_parser().format_help().lower()
@@ -153,7 +153,7 @@ class TestHelpSaysWhatTheSurfaceCannotDo:
         assert "platform admin" in text.lower()
 
     def test_it_says_which_database_these_rows_live_in(self):
-        """Auth rows live in Global regardless of the space's region — an operator
+        """Auth rows live in Global regardless of the space's region: an operator
         pointing this at `ae` and seeing nothing would otherwise conclude the user
         does not exist."""
         text = users.build_standalone_parser().format_help().lower()

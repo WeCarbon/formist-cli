@@ -1,4 +1,4 @@
-"""``fm space-plan`` — the client half of the plan surface.
+"""``fm space-plan``: the client half of the plan surface.
 
 WHAT THESE TESTS GUARD
 ----------------------
@@ -6,7 +6,7 @@ Not the HTTP transport (``formist_cli/api.py`` is tested elsewhere) and not the 
 (``tests/test_admin_space_plan.py`` owns that, against two real databases). What
 this file pins is what the COMMAND is allowed to send and to say:
 
-* it never sends ``apply: true`` unless ``--apply`` was given — the dry-run default
+* it never sends ``apply: true`` unless ``--apply`` was given: the dry-run default
   again, one layer up, where an operator's muscle memory reaches it;
 * it re-runs the dry run before an apply, and refuses when the revision has moved,
   so a stale revision cannot commit a plan nobody read;
@@ -72,7 +72,7 @@ class RecordingApi:
     """A stand-in for ``formist_cli.api`` that records every request and answers scripted.
 
     ``revisions`` is consumed one per PUT, so a test can make the row move between
-    the dry run and the apply — the race the revision exists to refuse.
+    the dry run and the apply: the race the revision exists to refuse.
     """
 
     def __init__(self, *, plan=None, revisions=("rev-aaaa",), outcome="would-create"):
@@ -155,7 +155,7 @@ def test_set_without_apply_sends_no_apply_flag_at_all(driven, capsys):
     assert [method for method, _p, _b in stub.calls] == ["PUT"]
     body = stub.bodies[0]
     assert "apply" not in body, (
-        "a dry run must not carry `apply` at all — the server's default is what "
+        "a dry run must not carry `apply` at all: the server's default is what "
         "makes a forgotten flag safe, and sending apply:false relies on the client "
         "remembering instead"
     )
@@ -213,7 +213,7 @@ def test_off_switches_additional_usage_off_rather_than_omitting_it(driven):
     """``--additional-usage off`` is a VALUE, not an absence.
 
     ``False`` is falsy and an omitted flag is ``None``; collapsing the two would
-    make "turn overage off" silently mean "leave it as it is" — on a column whose
+    make "turn overage off" silently mean "leave it as it is": on a column whose
     whole job is to decide whether money keeps being spent.
     """
     stub = RecordingApi()
@@ -293,7 +293,7 @@ def test_the_parser_offers_no_way_to_name_a_database():
 
 
 def test_the_flag_scan_would_catch_a_region_flag():
-    """Ablation for the two scans above — written against the real bad shape."""
+    """Ablation for the two scans above: written against the real bad shape."""
     assert _DATABASE_NAMING.search("--region")
     assert _DATABASE_NAMING.search("region")
     assert not _DATABASE_NAMING.search("--rolling-limit")
@@ -319,7 +319,7 @@ def test_a_dry_run_states_that_the_gate_flips_to_fail_closed(driven, capsys):
 
 
 def test_a_deployment_with_the_gate_switched_off_says_so(driven, capsys):
-    """The row changes nothing today if the kill switch is off — and a quiet graph
+    """The row changes nothing today if the kill switch is off: and a quiet graph
     afterwards would otherwise read as "the plan is working"."""
     stub = RecordingApi()
     original = _EFFECTS["usage_gate_enabled_on_this_deployment"]

@@ -1,4 +1,4 @@
-"""``fm users grants`` / ``fm connectors grants`` — the renderer must not mislead.
+"""``fm users grants`` / ``fm connectors grants``: the renderer must not mislead.
 
 Run: uv run pytest tests/test_formist_cli_grants_render.py -q
 
@@ -32,8 +32,8 @@ def _row(**over) -> dict:
 def test_a_provider_that_records_no_scopes_is_not_shown_as_granted_nothing():
     """⚠️ The distinction the whole panel turns on.
 
-    An API-key connector records no scopes. Rendering that as ``0`` — the same cell
-    an empty-but-recorded grant gets — would tell an operator that a Fireflies key
+    An API-key connector records no scopes. Rendering that as ``0``: the same cell
+    an empty-but-recorded grant gets: would tell an operator that a Fireflies key
     may do nothing, when it may do everything that API allows.
     """
     none_recorded = render_grant_rows([_row(scopes=[], scopes_recorded=False)])
@@ -47,7 +47,7 @@ def test_an_access_token_expiry_is_labelled_not_printed_bare():
     """A silently-refreshed ~1h token must never read as a deadline.
 
     Printed bare it would show every healthy Google/Airtable connector as expiring
-    within the hour, permanently — an alarm that is always on, which is an alarm
+    within the hour, permanently: an alarm that is always on, which is an alarm
     nobody reads.
     """
     out = render_grant_rows(
@@ -63,7 +63,7 @@ def test_an_unrecorded_expiry_does_not_claim_the_grant_never_expires():
 
 
 def test_a_provider_with_no_recorded_auth_status_is_not_shown_as_ok():
-    """``auth_status: null`` means nothing measured it — not that it is healthy."""
+    """``auth_status: null`` means nothing measured it: not that it is healthy."""
     out = render_grant_rows([_row(auth_status=None)])
     assert "ok" not in out.split("\n")[-1]
 
@@ -92,7 +92,7 @@ def test_connector_grants_report_names_the_space_it_read():
 def test_both_commands_share_one_renderer():
     """⚠️ A property, not a behaviour: there must be exactly ONE grant-table
     implementation. Two would drift on precisely the columns above, and nothing in
-    the tree would compare them — the failure mode the project rules documents for
+    the tree would compare them: the failure mode the project rules documents for
     independently-invented helpers."""
     src_users = users_mod.render_grants.__code__.co_names
     src_conn = connectors_mod.render_grants.__code__.co_names
@@ -111,5 +111,5 @@ def test_connectors_default_subject_is_still_the_plain_list():
 
     assert connectors_mod.DEFAULT_SUBJECT == "list"
     # And the parser really does leave it unset, so the dispatcher's default is the
-    # one that runs — asserting the constant alone would not prove that.
+    # one that runs: asserting the constant alone would not prove that.
     assert cli.build_parser().parse_args(["connectors"]).subject is None

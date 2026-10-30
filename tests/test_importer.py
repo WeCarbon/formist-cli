@@ -1,4 +1,4 @@
-"""``fm import`` — the refusals, the report, and the dry-run/apply comparison.
+"""``fm import``: the refusals, the report, and the dry-run/apply comparison.
 
 Every test here is aimed at a way this command could report success over a write
 that did not happen, or over one that happened differently. That is the failure
@@ -64,7 +64,7 @@ def _report(**over):
 
 
 # ---------------------------------------------------------------------------
-# read_bundle — the ways an upload silently does nothing
+# read_bundle: the ways an upload silently does nothing
 # ---------------------------------------------------------------------------
 def test_missing_file_is_refused_by_name(tmp_path):
     with pytest.raises(ImportRefused) as exc:
@@ -120,7 +120,7 @@ def test_a_real_bundle_is_accepted_and_carries_its_bytes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# multipart — the boundary check is about a SILENT truncation
+# multipart: the boundary check is about a SILENT truncation
 # ---------------------------------------------------------------------------
 def test_multipart_body_contains_the_file_bytes_and_a_boundary_absent_from_them():
     blob = b"PK\x03\x04payload-bytes"
@@ -136,7 +136,7 @@ def test_multipart_body_contains_the_file_bytes_and_a_boundary_absent_from_them(
     # ⚠️ The CLOSE-DELIMITER's trailing `--`, asserted separately because the
     # count above CANNOT see it: `--{boundary}\r\n` (a part delimiter) and
     # `--{boundary}--\r\n` (the terminator) both contain `--{boundary}`, so the
-    # count is 3 either way. Found by mutation, not by reading — dropping the
+    # count is 3 either way. Found by mutation, not by reading: dropping the
     # trailing `--` survived every other assertion here AND a real FastAPI
     # round-trip, because python-multipart accepts a stream that simply ends.
     # RFC 7578 requires it, and the next parser in the chain (a proxy, a
@@ -175,13 +175,13 @@ def test_multipart_boundary_is_rechosen_when_it_collides_with_the_payload(monkey
 
 
 # ---------------------------------------------------------------------------
-# render_report — provenance, and the unflattering numbers
+# render_report: provenance, and the unflattering numbers
 # ---------------------------------------------------------------------------
 def test_render_report_cannot_echo_the_request_because_it_takes_only_the_response():
     """Structural, not a string search.
 
     A test that greps the output for a payload sentinel proves that ONE value did
-    not leak. A signature with no request parameter proves none CAN — GATE.md's
+    not leak. A signature with no request parameter proves none CAN: GATE.md's
     "test the wiring, not the name": a private copy under another name cannot
     follow, because there is nothing to pass it.
     """
@@ -238,7 +238,7 @@ def test_an_unrecognised_section_shape_says_so_instead_of_rendering_empty():
 
 
 # ---------------------------------------------------------------------------
-# divergences — a plan is only true of the state it ran against
+# divergences: a plan is only true of the state it ran against
 # ---------------------------------------------------------------------------
 def test_identical_reports_diverge_in_nothing():
     assert importer.divergences(_report(), _report(dry_run=False)) == []
@@ -301,7 +301,7 @@ def test_apply_resolves_for_write_and_a_dry_run_does_not(tmp_path, monkeypatch):
     """The rule that keeps an import off production: `--apply` ⇒ for_write=True.
 
     Asserted by capturing what cmd_import passes to `_effective`, because that
-    flag IS the mechanism — formist_cli/prefs.py refuses to supply a remembered `--env`
+    flag IS the mechanism: formist_cli/prefs.py refuses to supply a remembered `--env`
     when it is set. A test naming the flag instead of driving the call would pass
     against a command that never sets it.
     """
@@ -394,7 +394,7 @@ def test_a_divergent_apply_returns_nonzero(tmp_path, monkeypatch):
 def test_help_states_that_connector_credentials_do_not_travel(capsys):
     """The operator's question here is "does this configure my connectors?".
 
-    The answer is no — `routes/workspace_transfer.py:165` NULLs connection FKs —
+    The answer is no: `routes/workspace_transfer.py:165` NULLs connection FKs —
     and --help is the only place they look before running it.
     """
     from formist_cli.cli import build_parser

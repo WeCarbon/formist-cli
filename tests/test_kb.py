@@ -1,20 +1,20 @@
-"""``fm kb search`` / ``fm kb read`` — the client half of the ad-hoc KB surface.
+"""``fm kb search`` / ``fm kb read``: the client half of the ad-hoc KB surface.
 
 Absorbs ``scripts/kb_search.py`` and ``scripts/kb_read.py`` (EV-ABSORB.md §3.1)
 into ``ev``, reached through the SAME project-scoped, member-gated routes the
-product itself uses — ``GET /projects/{id}/search`` (services/search.py) and
-``GET /projects/{id}/files/{file_id}/content`` (services/user_acl.py) — never a
+product itself uses: ``GET /projects/{id}/search`` (services/search.py) and
+``GET /projects/{id}/files/{file_id}/content`` (services/user_acl.py): never a
 local Postgres/disk read the way the scripts did.
 
 Not the routing or the ranking (those are proven where they live, against a real
 database). What this file pins is what the CLIENT does with the response:
 
-* ``kb search`` joins its positional terms with spaces into ONE ``q=`` — the
+* ``kb search`` joins its positional terms with spaces into ONE ``q=``: the
   ranking already happens server-side (services/search.py's own docstring:
   "matching is per term, not per phrase"), so this command must never split the
   work into one call per term the way the old script did.
 * ``kb read`` takes the FIRST hit that carries a ``file_id`` from that same
-  search, then reads its content — never a local ``cached_md_path`` open, which
+  search, then reads its content: never a local ``cached_md_path`` open, which
   is exactly the "prod should read through the blob-backed route" correction
   EV-ABSORB.md records for this script.
 * both refuse loudly on a non-dict / malformed response rather than rendering
@@ -89,7 +89,7 @@ def driven(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# search — multi-term query is joined into ONE q=, never split per term
+# search: multi-term query is joined into ONE q=, never split per term
 # ---------------------------------------------------------------------------
 def test_search_joins_positional_terms_into_one_query_param(driven):
     stub = RecordingApi()
@@ -142,7 +142,7 @@ def test_search_json_flag_prints_raw_json(driven, capsys):
 
 
 # ---------------------------------------------------------------------------
-# read — search for the needle, then GET the top file_id hit's content
+# read: search for the needle, then GET the top file_id hit's content
 # ---------------------------------------------------------------------------
 def test_read_searches_then_reads_the_top_file_id_hit(driven):
     stub = RecordingApi(
@@ -190,7 +190,7 @@ def test_read_with_no_hits_is_a_loud_error_not_a_silent_empty_print(driven):
 
 def test_read_skips_hits_with_no_file_id_to_find_the_first_readable_one(driven):
     """A message/sharepoint-native hit carries no `file_id` and cannot be read
-    through /files/{id}/content — it must be SKIPPED, not sent as a literal
+    through /files/{id}/content: it must be SKIPPED, not sent as a literal
     string id (which would 422 the UUID path param)."""
     stub = RecordingApi(
         search={

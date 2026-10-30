@@ -144,5 +144,5 @@ class TestRememberedHost:
 
 def test_a_space_is_never_looked_up_by_name():
     with pytest.raises(TargetError, match="never looks a space up by name"):
-        require_space_id("GFSS 2026")
+        require_space_id("Acme Summit")
     assert require_space_id("452093ea-7b91-491e-88b6-3285edd48a31")

@@ -1,11 +1,8 @@
-"""``fm alerts`` — the CLI front end for ``GET /admin/alerts*``.
+"""Tests for ``fm alerts``: the CLI front end for ``GET /admin/alerts*``.
 
-WHAT THIS FILE GUARDS. This module had ZERO test coverage before this file.
-Not the HTTP transport, not the route — ``canonical_subject``, ``render_alerts``
-and ``render_conditions``' own rendering rules: the pagination "MORE EXIST"
-notice, the "(resolved)" tag, and the "NO (needs X)" unavailable-condition line.
-
-Run: uv run pytest tests/test_formist_cli_alerts.py -q
+Covers ``canonical_subject``, ``render_alerts`` and ``render_conditions``'
+own rendering rules: the pagination "MORE EXIST" notice, the "(resolved)"
+tag, and the "NO (needs X)" unavailable-condition line.
 """
 
 from __future__ import annotations
@@ -129,7 +126,7 @@ def test_render_conditions_shows_deployment_origin():
 
 
 # ===========================================================================
-# run — dispatch to the right endpoint + payload contract
+# run: dispatch to the right endpoint + payload contract
 # ===========================================================================
 def _args(**overrides) -> argparse.Namespace:
     base = {

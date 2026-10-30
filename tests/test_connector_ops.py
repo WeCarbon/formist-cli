@@ -1,11 +1,11 @@
-"""``fm connector reauth`` / ``fm connector sync`` — per-connector operator actions.
+"""``fm connector reauth`` / ``fm connector sync``: per-connector operator actions.
 
 Deliberately a SEPARATE top-level command from ``fm connectors`` (plural): that
 one is the ADMIN view over ``/admin/spaces/{id}/connectors...`` (Global-only,
 platform-admin-gated); these two hit ordinary PROJECT routes
 (``/projects/{id}/connections/{cid}/reauth`` and
 ``/projects/{id}/connectors/{cid}/sync``, both OWNER/ADMIN member-gated, never
-``/admin``) — the same reason ``entity-fields`` got its own top-level command
+``/admin``): the same reason ``entity-fields`` got its own top-level command
 instead of folding into ``connectors`` (formist_cli/cli.py::cmd_entity_fields's own
 docstring).
 
@@ -16,7 +16,7 @@ Absorbs three scripts (EV-ABSORB.md §3.1, no new endpoint):
   payload over a direct DB session. ``fm connector reauth <cid>`` drives the
   SAME two-step flow the product's own "Reconnect" banner uses
   (``POST .../reauth`` to initiate, then ``POST .../reauth/poll`` until Microsoft
-  answers) — never talks to Microsoft directly, and never sees the refresh
+  answers): never talks to Microsoft directly, and never sees the refresh
   token (the route never returns it).
 * ``scripts/sync_calendar.py`` / ``scripts/sync_messages.py`` each ran ONE
   connector's engine directly over a direct DB session; both are FULLY
@@ -28,10 +28,10 @@ Absorbs three scripts (EV-ABSORB.md §3.1, no new endpoint):
   endpoint). ``fm connector sync <cid>`` triggers the SAME per-connector run
   through ``POST /projects/{id}/connectors/{cid}/sync``
   (``routes/connectors.py::sync_connection``), which dispatches by the
-  connection's OWN type server-side — SHAREPOINT/GOOGLE_WORKSPACE get the delta
+  connection's OWN type server-side: SHAREPOINT/GOOGLE_WORKSPACE get the delta
   crawl, OUTLOOK gets calendar+mailbox together. ``--kind`` is accepted for
   the operator's own bookkeeping/documentation (matching the scripts' separate
-  names) but is NOT sent to the server — there is nothing to send it to,
+  names) but is NOT sent to the server: there is nothing to send it to,
   since one endpoint serves every connector type.
 
 Both are WRITES with real external side effects (a live OAuth flow; a real
@@ -183,7 +183,7 @@ def test_sync_apply_posts_to_the_connector_sync_route_with_no_body(driven):
 
 
 def test_sync_kind_is_never_sent_to_the_server(driven):
-    """`--kind` is operator bookkeeping only — one endpoint dispatches by the
+    """`--kind` is operator bookkeeping only: one endpoint dispatches by the
     connector's OWN type, so there is nothing server-side to send it to."""
     stub = RecordingApi()
     driven(stub, subject="sync", arg=CID, kind="calendar", apply=True)

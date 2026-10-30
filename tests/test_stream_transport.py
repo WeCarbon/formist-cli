@@ -1,4 +1,4 @@
-"""``api.stream`` — the transport half of ``fm logs``, driven for real.
+"""``api.stream``: the transport half of ``fm logs``, driven for real.
 
 Its own file, not an addition to ``test_formist_cli_api_and_tokens.py``: ``api.py`` is
 being edited by four lanes at once and a new file cannot conflict with any of them.
@@ -14,7 +14,7 @@ command is built on being able to tell them apart.
 
 ``check_api_base`` is asserted here too. ``get``, ``download`` and ``stream`` now
 share ``_build_request``, and the reason to share it is that three copies would be
-three places for the host allow-list to go missing — so the sharing is worth a test
+three places for the host allow-list to go missing: so the sharing is worth a test
 that would notice.
 """
 
@@ -37,7 +37,7 @@ class _FakeResponse:
     """Just enough of an ``http.client.HTTPResponse`` to iterate.
 
     ``chunks`` may contain an exception INSTANCE, which is raised at that point in
-    the iteration — that is how a mid-stream drop is expressed, and it is the only
+    the iteration: that is how a mid-stream drop is expressed, and it is the only
     way to write this test without an actual socket that dies on cue.
     """
 
@@ -79,7 +79,7 @@ class TestTheStreamYieldsLines:
             assert list(lines) == ["first", "second"]
 
     def test_undecodable_bytes_are_replaced_not_fatal(self, fake_urlopen):
-        """A stream must not die on one bad byte — that would turn a cosmetic
+        """A stream must not die on one bad byte: that would turn a cosmetic
         problem into a lost subscription."""
         fake_urlopen(_FakeResponse([b"ok\n", b"\xff\xfe bad\n"]))
         with api.stream(LOCAL, "/admin/events/stream", read_timeout=65) as lines:
@@ -200,7 +200,7 @@ class TestOpeningFailuresAreTranslatedLikeEveryOtherCall:
 
 
 class TestStreamPost:
-    """``api.stream_post`` — the same transport, for an endpoint that needs a
+    """``api.stream_post``: the same transport, for an endpoint that needs a
     request BODY (``POST /projects/{id}/chats/{id}/run``, ``fm chat``).
 
     Built on the SAME ``_open_stream``/`_stream_lines`` helpers as ``stream``

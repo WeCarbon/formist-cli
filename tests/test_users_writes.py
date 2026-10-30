@@ -1,4 +1,4 @@
-"""``fm users`` — the four mutating subjects: create / set / add-space / remove-space.
+"""``fm users``: the four mutating subjects: create / set / add-space / remove-space.
 
 ``tests/test_formist_cli_users.py`` already covers the READ subjects (list / show /
 spaces / grants) and --help. This file is the write half, added for D254-style
@@ -6,16 +6,16 @@ platform-admin grants: ``fm users set --platform-admin on|off`` is the highest-
 blast-radius flag on this whole surface (see the module docstring), so what
 matters here is precise:
 
-  * every write is resolved ``for_write=True`` — it NEVER inherits ``--env``
+  * every write is resolved ``for_write=True``: it NEVER inherits ``--env``
     from ``fm use``, so a remembered environment cannot turn into a prod
     write by accident;
   * ``set``'s PATCH body carries ONLY the fields the operator actually named
-    (``--name`` and/or ``--platform-admin``) — never a field nobody asked to
+    (``--name`` and/or ``--platform-admin``): never a field nobody asked to
     change;
   * ``--platform-admin on``/``off`` map onto the correct boolean, precisely
     the two directions a copy-paste flip would silently swap;
   * every subject needing a user id or a space UUID refuses BEFORE any
-    request reaches the network — this file's ONE-ID-AT-A-TIME half of the
+    request reaches the network: this file's ONE-ID-AT-A-TIME half of the
     owner rule "dedupe is manual" that ``tests/test_formist_cli_participants.py``
     covers for the merge surface: there is no bulk write shape here either;
   * a server refusal (403 not-platform-admin, or the documented
@@ -24,7 +24,7 @@ matters here is precise:
     error text IS the audit trail an operator reads at the terminal. The
     server-side audit ROW (AuditedAdminRouter, `platform_audit_log`) is a
     property of the ROUTE regardless of caller and is out of reach from a
-    stubbed-transport CLI test — see routes/admin.py's own test coverage for
+    stubbed-transport CLI test: see routes/admin.py's own test coverage for
     that half.
 
 HTTP transport stubbed at the module level (``users.api``), the same pattern
@@ -127,7 +127,7 @@ class TestCreate:
 
 
 # ===========================================================================
-# set — the platform-admin grant surface
+# set: the platform-admin grant surface
 # ===========================================================================
 class TestSetRequiresAUserIdAndAtLeastOneField:
     def test_missing_user_id_refuses_before_any_request(self, driven):
@@ -160,7 +160,7 @@ class TestSetBodyCarriesOnlyWhatWasNamed:
 
     def test_platform_admin_off_maps_to_false(self, driven):
         """The direction most likely to be silently swapped by a copy-paste
-        edit — pinned as its own case rather than folded into the 'on' test."""
+        edit: pinned as its own case rather than folded into the 'on' test."""
         stub = RecordingApi(response={"id": UID, "is_platform_admin": False})
         driven(stub, subject="set", user_id=UID, platform_admin="off")
         assert stub.calls[0][2] == {"is_platform_admin": False}
@@ -189,7 +189,7 @@ class TestSetBodyCarriesOnlyWhatWasNamed:
 
 class TestServerRefusalsPropagateVerbatim:
     """cannot-self-demote / last-platform-admin / a plain 403 must reach the
-    operator's terminal unchanged — this layer must not catch and reword a
+    operator's terminal unchanged: this layer must not catch and reword a
     server refusal about the platform's highest-blast-radius flag."""
 
     def test_a_403_from_a_non_admin_caller_is_not_swallowed(self, driven):
@@ -287,7 +287,7 @@ class TestRemoveSpace:
 
 
 # ===========================================================================
-# render_membership_change — the pure renderer
+# render_membership_change: the pure renderer
 # ===========================================================================
 class TestRenderMembershipChange:
     def test_assigned(self):
@@ -300,7 +300,7 @@ class TestRenderMembershipChange:
 
 
 # ===========================================================================
-# render_grants — untested by tests/test_formist_cli_users.py; same module, same
+# render_grants: untested by tests/test_formist_cli_users.py; same module, same
 # "coverage" scope for this lane. Pure function, no transport needed.
 # ===========================================================================
 class TestRenderGrants:
@@ -314,7 +314,7 @@ class TestRenderGrants:
 
 
 # ===========================================================================
-# users.run() — the READ subjects' dispatch. render_list/render_user/
+# users.run(): the READ subjects' dispatch. render_list/render_user/
 # render_spaces/render_grants are already pin-tested directly by
 # tests/test_formist_cli_users.py; what was NOT covered anywhere is run() actually
 # reaching api.admin_get with the right path for each subject, and the
@@ -384,7 +384,7 @@ class _WithAdminGet(RecordingApi):
 
 
 # ===========================================================================
-# add_parser — the CLI wiring (the `driven` fixture builds argparse.Namespace
+# add_parser: the CLI wiring (the `driven` fixture builds argparse.Namespace
 # by hand and never exercises argparse's own defaults, so --role's actual
 # default lives ONLY here).
 # ===========================================================================

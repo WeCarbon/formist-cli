@@ -1,4 +1,4 @@
-"""``fm audit-log`` — the newest rows, and an honest account of how many it saw.
+"""``fm audit-log``: the newest rows, and an honest account of how many it saw.
 
 WHAT WENT WRONG, AND HOW IT WAS FOUND
 --------------------------------------
@@ -6,7 +6,7 @@ WHAT WENT WRONG, AND HOW IT WAS FOUND
 and then ran ``fm audit-log --host evane --space … --limit 2000`` to confirm the
 write had been audited. It printed **zero** rows for that day.
 
-The reading that offers itself is "the write was not audited" — alarming, and
+The reading that offers itself is "the write was not audited": alarming, and
 false. The space holds 484 audit rows. The command returned the OLDEST 200
 (2026-08-20 … 2026-08-27), because:
 
@@ -20,14 +20,14 @@ page nobody asked for, presented as the answer.
 
 THE PROPERTY THESE TESTS ASSERT (shape 2), NOT JUST THE ONE VALUE
 ------------------------------------------------------------------
-``fm users`` already learned the second half of this lesson — see
+``fm users`` already learned the second half of this lesson: see
 ``formist_cli/users.py::render_list`` and the docstring of ``tests/test_formist_cli_users.py``:
 the defect class is **"a report that is true about what it fetched and false about
 what exists"**, and it never surfaces on its own because every number it prints is
 real.
 
 So these tests do not check one string. They range over the three outcomes a
-paginated listing can have — truncated, complete, and ``total`` missing — and
+paginated listing can have: truncated, complete, and ``total`` missing: and
 assert that each one is *distinguishable from the others in the output*. A
 truncation notice that also fires when nothing was truncated is an alarm that
 cries wolf, and an operator who learns to ignore it has lost the notice for the
@@ -35,7 +35,7 @@ case that matters; that direction is tested too.
 
 ⚠️ Both assertions fail on the pre-fix command. The sort one fails because the
 params dict was ``{"limit": …}`` with no ``sort`` key; the accounting ones fail
-because the pre-fix command printed rows and nothing else — there was no summary
+because the pre-fix command printed rows and nothing else: there was no summary
 line at all, in any branch.
 """
 
@@ -117,7 +117,7 @@ class TestItAsksForTheNewestRows:
 class TestItNeverOverstatesWhatItSaw:
     #: ⚠️ ASSERT THAT THE THREE OUTCOMES ARE DISTINGUISHABLE, not that one magic
     #: substring is present. `"200" in out and "484" in out` is satisfied by a
-    #: line that merely echoes both numbers in the WRONG relationship — which is
+    #: line that merely echoes both numbers in the WRONG relationship: which is
     #: exactly the bug: the pre-fix command was, in effect, claiming 200 was all
     #: there was.
 

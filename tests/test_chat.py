@@ -1,4 +1,4 @@
-"""``fm chat`` — the interactive REPL against the server-side agent.
+"""``fm chat``: the interactive REPL against the server-side agent.
 
 WHAT THESE TESTS ARE FOR
 -------------------------
@@ -11,17 +11,17 @@ on top of both: turning a run's SSE records into terminal output WITHOUT ever
 reporting a dropped or partial stream as a normal, finished turn.
 
 ``TestConsumeTurnFraming`` exercises :func:`consume_turn` directly, over lists
-of already-parsed records — the pure state machine, same style as
+of already-parsed records: the pure state machine, same style as
 ``tests/test_formist_cli_logs.py``'s ``TestSSEFrames``/``TestSilenceIsNotAmbiguous``.
 
 ``TestRunTurnEndToEnd`` drives :func:`run_turn` over FAKE raw SSE text through
-a fake ``stream_fn`` — this is the one that proves the "partial SSE frame must
+a fake ``stream_fn``: this is the one that proves the "partial SSE frame must
 not print as a complete turn" property end to end: a stream that stops
 mid-frame, with no terminating blank line and no terminal event ever having
 arrived, must not exit quietly. ``parse_sse``'s own docstring says an
 unterminated frame is still emitted (so data is never silently dropped); the
 property under test here is what THIS module does with that emitted-but-junk
-frame — it must not mistake it for a legitimate token or a finished run.
+frame: it must not mistake it for a legitimate token or a finished run.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ class TestConsumeTurnFraming:
 
     def test_final_message_is_the_fallback_when_no_tokens_ever_streamed(self):
         """A non-streaming backend (or a run with zero deltas) must still show
-        its answer — it lives only in on_chat_message in that case."""
+        its answer: it lives only in on_chat_message in that case."""
         state = TurnState(chat_id=CHAT)
         records = [
             {"event": "on_agent_run_started", "data": {"model": "x"}},
@@ -247,7 +247,7 @@ def _fake_stream(raw_lines, captured=None):
 
 
 class TestRunTurnEndToEnd:
-    """Raw SSE TEXT in, printed output + TurnState out — the whole path a real
+    """Raw SSE TEXT in, printed output + TurnState out: the whole path a real
     turn takes, minus the socket."""
 
     def test_a_complete_run_prints_the_reply_and_reports_no_warning(self, capsys):
@@ -267,12 +267,12 @@ class TestRunTurnEndToEnd:
 
     def test_a_connection_that_stops_mid_frame_is_reported_incomplete_not_done(self, capsys):
         """The property this module exists for: a partial final frame (no
-        terminating blank line — the stream just stops, as it would on a
+        terminating blank line: the stream just stops, as it would on a
         dropped connection) must not read as a normal, finished turn."""
         lines = [
             *_frame("on_agent_token", {"delta": "partial reply"}),
             # A second frame cut off mid-flight: header line present, no data
-            # line, no terminating blank line — exactly what a socket dying
+            # line, no terminating blank line: exactly what a socket dying
             # between two writes looks like on the wire.
             "event: on_agent_token",
         ]
@@ -308,7 +308,7 @@ class TestRunTurnEndToEnd:
 
 class TestParseSseIsReusedNotReimplemented:
     """``consume_turn`` must compose with the SAME frame parser ``fm logs``
-    uses — a second, subtly different SSE parser next to it is exactly the
+    uses: a second, subtly different SSE parser next to it is exactly the
     two-lanes-one-abstraction failure the project rules warns about."""
 
     def test_a_multi_line_data_field_still_arrives_as_one_record(self):

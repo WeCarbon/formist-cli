@@ -1,13 +1,13 @@
-"""``fm project set-logo`` — upload a project's logo (WRITE).
+"""``fm project set-logo``: upload a project's logo (WRITE).
 
 Absorbs ``scripts/set_project_logo.py`` (EV-ABSORB.md §3.1, no new endpoint):
 that script uploaded a local image to blob and wrote the URL onto
 ``Project.settings.logo`` over a direct DB session. ``fm project set-logo``
 does the same thing through ``POST /projects/{id}/logo``
-(``routes/projects.py::upload_project_logo``) — a plain multipart upload, magic-
+(``routes/projects.py::upload_project_logo``): a plain multipart upload, magic-
 byte sniffed server-side, never the declared Content-Type.
 
-Idempotent (re-running overwrites the stored URL), but still a WRITE — DRY RUN
+Idempotent (re-running overwrites the stored URL), but still a WRITE: DRY RUN
 by default, ``--apply`` performs the upload.
 
 Run: uv run pytest tests/test_formist_cli_projects.py -q
@@ -108,7 +108,7 @@ def test_no_path_is_a_loud_error(driven):
 def test_project_id_positional_is_an_alternative_to_space_flag(monkeypatch, tmp_path):
     """`fm project set-logo` reads the plan doc's `<id>` positional as an
     alternative to --space, the same convention `fm connectors <space_id>` uses
-    (formist_cli/cli.py::cmd_connectors) — merged into args.space BEFORE the
+    (formist_cli/cli.py::cmd_connectors): merged into args.space BEFORE the
     resolver runs, so a caller that only ever reads args.space (like
     formist_cli.context.resolve) sees it regardless of which spelling was used."""
     seen_args = {}

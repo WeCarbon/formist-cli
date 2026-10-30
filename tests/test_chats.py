@@ -1,4 +1,4 @@
-"""``fm chats`` — reading an agent run's transcript without misreporting it.
+"""``fm chats``: reading an agent run's transcript without misreporting it.
 
 Two things this command can get wrong, and only one of them is obvious.
 
@@ -6,7 +6,7 @@ THE OBVIOUS ONE is access: a background agent run is NOT uniformly space-wide.
 ``services/agent_sessions.py:240-249`` sets ``private = triggered_by_user_id is not
 None``, so a scheduler- or webhook-initiated run is ``owner_scope=WORKSPACE`` and
 readable by every member, while a user-initiated one is ``owner_scope=USER`` and
-private to that user. ``routes/chats.py:108-125`` answers 404 — never 403 — for
+private to that user. ``routes/chats.py:108-125`` answers 404: never 403: for
 another member's private chat, deliberately, so the API never reveals it exists.
 ``require_project_member`` (``routes/chats.py:78-96``) has no platform-admin
 bypass. So ``ev`` cannot reach those transcripts, must not try, and must explain
@@ -16,14 +16,14 @@ THE NON-OBVIOUS ONE is completeness, and it is the one these tests are mostly
 about. ``list_messages`` pages through ``run_list_query`` → ``parse_pagination``,
 capped at ``MAX_LIMIT = 200`` (``utils/list_query.py:60``). A long agent run has
 more turns than that. So the failure available here is the one
-``formist_cli/resolve.py`` rule 2 already names — **a page is not a table** — except
+``formist_cli/resolve.py`` rule 2 already names: **a page is not a table**: except
 worse: a resolver that measures the page REFUSES, whereas a transcript that
 measures the page PRINTS, and 200 turns of real transcript look exactly like a
 complete one. Nothing in the output says otherwise unless something puts it there.
 
 Hence the property under test: **completeness is a claim, and it must come from
 ``total``, not from the reader's impression.** The case that carries it is the
-third one — a response with NO ``total`` at all. "I could not tell" and "it is
+third one: a response with NO ``total`` at all. "I could not tell" and "it is
 complete" are different facts, and the direction a forgetful implementation falls
 in is the wrong one: ``len(messages) >= total`` with ``total`` defaulting to 0 is
 complete for every input, including the truncated ones.
@@ -101,8 +101,8 @@ class TestCompletenessIsAClaim:
         """The guard with no neighbour covering it.
 
         An envelope with no ``total`` supports no completeness claim in either
-        direction. The tempting implementation — ``len(messages) >= (total or 0)``
-        — reports complete here, and reports complete for a truncated page too,
+        direction. The tempting implementation: ``len(messages) >= (total or 0)``
+       : reports complete here, and reports complete for a truncated page too,
         because 0 is not a count, it is the absence of one.
         """
         fetch = _fetcher(_envelope([_msg(i) for i in range(200)], omit_total=True))
@@ -149,11 +149,11 @@ class TestPagingStopsHonestly:
         """A page that adds nothing must terminate the walk rather than spin.
 
         The server claiming 450 while handing back an empty page is a server bug,
-        but an infinite loop in the client is a worse way to discover it — and the
+        but an infinite loop in the client is a worse way to discover it: and the
         transcript stays honestly marked incomplete.
 
-        ⚠️ THE CALL COUNT IS THE ASSERTION. The two obvious ones — incomplete, 200
-        turns — are both true when the empty-page guard is DELETED, because
+        ⚠️ THE CALL COUNT IS THE ASSERTION. The two obvious ones: incomplete, 200
+        turns: are both true when the empty-page guard is DELETED, because
         ``MAX_PAGES`` then bounds the walk instead and the extra iterations add no
         rows. That is a neighbouring guard covering the one under test: the
         mutation survives, and the test reads as if it were watching. Only the
@@ -210,7 +210,7 @@ class TestLatest:
     def test_picks_the_first_row_the_server_ordered(self):
         """Newest-first is the SERVER's order (``routes/chats.py:288`` orders by
         ``updated_at`` desc). The client takes the first row rather than re-sorting
-        on a field it would have to parse — a second ordering that can disagree
+        on a field it would have to parse: a second ordering that can disagree
         with the first is how the wrong run gets shown."""
         fetch = _fetcher(
             _envelope([
@@ -241,7 +241,7 @@ class TestTheSingleChatEnvelope:
     against a live dev server.
 
     So the key list below is TRANSCRIBED FROM A REAL RESPONSE, not written from
-    memory of the route — a fixture quoting a source from memory agrees with
+    memory of the route: a fixture quoting a source from memory agrees with
     itself, which is the same failure one level down.
     """
 
@@ -303,7 +303,7 @@ class TestPrivateChatIsExplained:
         Every other test here hands ``fetch`` an ``ApiError`` built with
         ``status=`` by hand, so they prove ``chats.py`` branches correctly on a
         status that was set for it. Nothing in them proves ``api.py`` sets one off
-        a real response — and if it does not, ``_explain_404`` silently stops
+        a real response: and if it does not, ``_explain_404`` silently stops
         firing while all sixteen tests stay green. That is a green suite blind to
         the only path production takes.
         """

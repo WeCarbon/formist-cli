@@ -1,38 +1,16 @@
-"""The report may only print what the SERVER said. A property, not a discipline.
+"""The outcome report may only print what the server said; `fm` must not
+rely on anyone remembering that rule by hand. A value in the outcome
+report must be traceable to the response body: a payload value (the thing
+that was about to be written, before the server confirmed anything) must
+never appear there, even partially, because a reader who spots one
+verified field stops checking whether the rest is verified too.
 
-This is the test that outlives the reason for it, so the reason is here.
-
-`scratchpad/parity/prod_ren.py:15-24` built its entire report from the value it
-was about to write and shipped it without ever selecting anything back::
-
-    tgt = "%s (%s)" % (cur, ab)
-    o["ren"].append([k, cur, tgt, ...])       # tgt is INTENDED, never re-read
-    if A:
-        c.execute("update stakeholder set name=%s where id=%s", (json.dumps(nv), i))
-    ...
-    b = base64.b64encode(...)                  # no SELECT after the commit
-
-Its successor `prod_recon.py` HALF-fixed it: `:45` adds a genuine post-commit
-`select count(*)`, but the per-row entries at `:27` are still built pre-write. So
-the row count became truly verified while "did each rename actually take its target
-name" never did — and the script now *looks* like it has a read-back. **A partially
-verified report is worse than an unverified one**, because a reader who spots the
-`select` stops looking, and the half nobody checked is the half that says which
-rows got which values.
-
-The causal link matters more than either defect: because the id was already trusted
-(hardcoded 8-char prefix), nobody thought to read the name back. **Trusting the key
-is what removes the instinct to verify the value.** The two defects are one defect.
-
-So `ev` does not rely on anyone remembering. A value in the outcome report must be
-traceable to the response body, and a payload value appearing there is a test
-failure.
-
-ONE DELIBERATE EXCEPTION, and it is not a leak: the "resolved by name" lines print
-the name FROM the payload beside the id FROM the server. That line's whole claim is
-"you asked for this name, the server returned this id" — the payload half is the
-question, not the answer. It is printed before the write, labelled as a resolution,
-and never as an outcome. `_print_report` is what this file constrains.
+One deliberate exception: the "resolved by name" lines print the name
+from the payload beside the id from the server. That line's whole claim is
+"you asked for this name, the server returned this id": the payload half
+is the question, not the answer. It is printed before the write, labelled
+as a resolution, and never as an outcome. `_print_report` is what this
+file constrains.
 """
 
 from __future__ import annotations
@@ -65,7 +43,7 @@ def _server_report(outcome="applied", committed=True):
 
 class TestTheReportPrintsOnlyWhatTheServerSaid:
     def test_server_values_are_printed(self):
-        """The report must actually carry the response through — a test that only
+        """The report must actually carry the response through: a test that only
         checks for absence would pass on a function that prints nothing."""
         import contextlib
         import io
@@ -77,8 +55,9 @@ class TestTheReportPrintsOnlyWhatTheServerSaid:
         assert "applied" in out
 
     def test_a_payload_value_never_reaches_the_report(self):
-        """THE test. `_print_report` is given ONLY the response, so a payload value
-        cannot appear unless someone reintroduces the request into this path."""
+        """`_print_report` is given only the response, so a payload value
+        cannot appear unless someone reintroduces the request into this
+        path."""
         import contextlib
         import io
         buf = io.StringIO()
@@ -99,9 +78,9 @@ class TestTheReportPrintsOnlyWhatTheServerSaid:
         )
 
     def test_counts_come_from_the_response_not_recomputed(self):
-        """A count computed locally from the ops list would agree with itself and
-        with nothing else — the `applied_ids` defect, which reported every id
-        including the failed ones as applied."""
+        """A count computed locally from the ops list would agree with
+        itself and with nothing else, which could report a failed op as
+        applied."""
         import contextlib
         import io
         report = _server_report()
@@ -122,7 +101,7 @@ class TestTheReportPrintsOnlyWhatTheServerSaid:
         assert "committed=False" in buf.getvalue()
 
     def test_refusals_are_printed_with_their_index_and_reason(self):
-        """The refusal is the product on this endpoint — one status code with
+        """The refusal is the product on this endpoint: one status code with
         reason codes, and the index is what a caller acts on."""
         import contextlib
         import io

@@ -1,13 +1,12 @@
-"""The `ev` privilege audit — every subcommand classified, and the table kept honest.
-
-Run: uv run pytest tests/test_formist_cli_privileges.py -q
+"""The `fm` privilege audit: every subcommand classified, and the table kept
+honest.
 
 ``formist_cli/privileges.py`` says which subcommands are user-level and which need
 platform admin. It is documentation with teeth: the value is not the table, it is
 that a NEW SUBCOMMAND CANNOT BE ADDED WITHOUT ONE. A table maintained by discipline
 drifts within a week; a table maintained by a failing test does not.
 
-The endpoint strings are checked too — loosely, but not vacuously. Every ADMIN entry
+The endpoint strings are checked too: loosely, but not vacuously. Every ADMIN entry
 must name a path that the app really serves behind ``require_platform_admin``, so an
 entry cannot claim a gate the server does not have.
 """
@@ -36,9 +35,9 @@ def test_every_level_is_a_known_level():
 
 
 def test_the_audit_is_not_all_one_level():
-    """A table that classified everything ADMIN would satisfy every other assertion
-    here and would say nothing. The owner's directive is that the CLI stays USABLE
-    on an ordinary login, so the user-level half has to actually exist."""
+    """A table that classified everything ADMIN would satisfy every other
+    assertion here and would say nothing. The CLI must stay usable on an
+    ordinary login, so the user-level half has to actually exist."""
     levels = [p.level for p in privileges.TABLE.values()]
     assert levels.count(privileges.LEVEL_USER) >= 8, levels.count(privileges.LEVEL_USER)
     assert levels.count(privileges.LEVEL_ADMIN) >= 8, levels.count(privileges.LEVEL_ADMIN)
@@ -58,18 +57,18 @@ def test_a_credential_with_the_admin_scope_passes():
 
 
 def test_user_level_commands_are_never_refused_locally():
-    """The directive is that `ev` stays usable on an ordinary login. A pre-flight
-    check that refused a user-level command would break exactly that."""
+    """`fm` must stay usable on an ordinary login. A pre-flight check that
+    refused a user-level command would break exactly that."""
     for name, entry in privileges.TABLE.items():
         if entry.level in (privileges.LEVEL_USER, privileges.LEVEL_PUBLIC, privileges.LEVEL_LOCAL, privileges.LEVEL_MIXED):
             privileges.check(name, ["evane:kb", "evane:cli"])
 
 
 def test_unknown_scopes_are_passed_through_to_the_server():
-    """ADVISORY IN ONE DIRECTION. A credential whose scopes were never recorded — an
-    older file, a hand-placed one — must reach the server rather than be guessed
-    about locally. A local check that can refuse what the server would allow is the
-    exact failure the project rules calls "the thing being checked is not the thing used"."""
+    """Advisory in one direction only: a credential whose scopes were never
+    recorded (an older file, a hand-placed one) must reach the server
+    rather than be guessed about locally. A local check must never refuse
+    what the server would allow."""
     privileges.check("users", None)
     privileges.check("users", [])
     privileges.check("users", "not-a-list")

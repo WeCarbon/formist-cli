@@ -1,4 +1,4 @@
-"""``fm settings`` — argument parsing and rendering, offline.
+"""``fm settings``: argument parsing and rendering, offline.
 
 The HTTP half is ``tests/test_admin_settings_route.py``; this covers the part an
 operator types, and in particular the refusals, since a CLI that guesses at

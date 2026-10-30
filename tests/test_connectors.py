@@ -1,4 +1,4 @@
-"""``fm connectors`` — the operator's only window onto what the sync tick did.
+"""``fm connectors``: the operator's only window onto what the sync tick did.
 
 WHY THIS FILE EXISTS. On 2026-09-06 a production lane found that connectors in the
 GFSS space were re-syncing every 3-4 minutes against a 30-minute setting. It could
@@ -10,20 +10,20 @@ no SharePoint connector of its own to look at.
 
 Every fact needed was already recorded. `SyncRun` has `started_at`, `finished_at`,
 `trigger` and the item counts; `routes/connectors.py::_sync_run_dict` serialises them.
-Two links were missing, and both are now covered — `routes/admin.py` passing the run
+Two links were missing, and both are now covered: `routes/admin.py` passing the run
 into `_connection_dict` (tests/test_connector_run_visibility.py) and this command
 printing it.
 
 WHAT THE OUTPUT HAS TO SEPARATE, and why each is asserted below rather than eyeballed:
 
-  * `trigger` — `scheduler` (the 30-minute poll) vs `push` (a provider change
+  * `trigger`: `scheduler` (the 30-minute poll) vs `push` (a provider change
     notification). The owner's rule is made of exactly these two clocks, and until
     2026-09-06 nothing in the tree ever wrote `"push"`, so they were one reading.
-  * `dur` — how long a run held the tick. The tick is strictly serial, so this is the
+  * `dur`: how long a run held the tick. The tick is strictly serial, so this is the
     number that names which connector is starving the others.
-  * a run in flight vs a finished one — a live run's duration is elapsed-so-far and
+  * a run in flight vs a finished one: a live run's duration is elapsed-so-far and
     must not be read as final.
-  * never-run vs failed — for a linked connector, "never ran at all" is itself the
+  * never-run vs failed: for a linked connector, "never ran at all" is itself the
     finding, and printing nothing would hide it.
 
 Run: uv run pytest tests/test_formist_cli_connectors.py -q
@@ -51,8 +51,8 @@ def run_connectors(monkeypatch, capsys):
     """Drive `cmd_connectors` over a canned admin payload and return its stdout.
 
     `api.admin_get` is the seam: it is the one network call the command makes, and
-    faking it keeps this a test of the RENDERING — which is the half that was
-    missing — rather than of the route, which has its own tests.
+    faking it keeps this a test of the RENDERING: which is the half that was
+    missing: rather than of the route, which has its own tests.
     """
 
     def _run(items: list[dict]) -> str:
@@ -71,7 +71,7 @@ def _connector(**over) -> dict:
     base = {
         "id": "11111111-1111-1111-1111-111111111111",
         # `type`, matching the real payload. This fixture said `kind` while the
-        # server has always said `type` — a hand-written fixture agreeing with
+        # server has always said `type`: a hand-written fixture agreeing with
         # itself rather than with the thing it stands in for.
         "type": "SHAREPOINT",
         "status": "ok",
@@ -104,7 +104,7 @@ def test_a_finished_run_reports_its_trigger_and_how_long_it_held_the_tick(
         ]
     )
     assert "trigger=push" in out, (
-        "the poll and a push notification must be distinguishable in the output — "
+        "the poll and a push notification must be distinguishable in the output: "
         "they are the two clocks the owner's cadence rule is made of"
     )
     assert "dur=202.0s" in out
@@ -202,13 +202,13 @@ def test_the_connector_type_is_printed_and_not_a_question_mark(run_connectors):
     `routes/connectors.py::_connection_dict` publishes `type` (and `label`), never
     `kind`, so `item.get("kind", "?")` fell through to the default on every row of
     every space this command has ever printed. Measured against production
-    2026-09-06 (GFSS space 296346bf-…): three connectors — SHAREPOINT, OUTLOOK and
-    AIRTABLE — printed as three identical `?`.
+    2026-09-06 (GFSS space 296346bf-…): three connectors: SHAREPOINT, OUTLOOK and
+    AIRTABLE: printed as three identical `?`.
 
     That is not cosmetic. The command exists so an operator can tell one connector
     from another, and this is the column that does it: the whole D193 investigation
     turns on which of the three held the tick. A default of "?" is exactly the shape
-    this codebase keeps being burned by — a lookup that cannot fail, and so reports
+    this codebase keeps being burned by: a lookup that cannot fail, and so reports
     nothing rather than reporting that it found nothing.
     """
     out = run_connectors(
@@ -219,6 +219,6 @@ def test_the_connector_type_is_printed_and_not_a_question_mark(run_connectors):
     )
     assert "sharepoint" in out and "airtable" in out
     assert "?" not in out, (
-        f"a connector printed as '?' — the type column is what tells an operator "
+        f"a connector printed as '?': the type column is what tells an operator "
         f"which connector they are looking at. Output:\n{out}"
     )

@@ -1,4 +1,4 @@
-"""``fm export`` — writing a bundle to disk without lying about what landed.
+"""``fm export``: writing a bundle to disk without lying about what landed.
 
 WHY THIS COMMAND IS NOT A THIN WRAPPER
 --------------------------------------
@@ -6,7 +6,7 @@ There are two export routes and they are not the same KIND of thing:
 
   ``GET  /projects/{id}/export``         a READ. JSON, ``require_member``, any role.
   ``POST /projects/{id}/export/bundle``  a WRITE. ``routes/workspace_transfer.py:90``
-                                         calls ``create_upload`` — it inserts a File
+                                         calls ``create_upload``: it inserts a File
                                          row under Files → Exports, writes blob
                                          bytes, and emits ``ON_PROJECT_EXPORTED``.
                                          OWNER/ADMIN.
@@ -28,7 +28,7 @@ THE THREE WAYS A FILE-WRITING COMMAND LIES
 3. **It writes somewhere else.** The filename comes from the SERVER
    (``Content-Disposition``), which means a path separator in it is a path the
    operator never chose. ``../../..`` in that header must not escape the target
-   directory — and nothing else in this tool is watching that, because nothing else
+   directory: and nothing else in this tool is watching that, because nothing else
    takes a filename from a response.
 
 The reported path must be the path that was actually written. That is the same
@@ -124,7 +124,7 @@ class TestTheServerDoesNotChooseWhereBytesLand:
         A mutation deleting that half SURVIVED the first run of this file: every
         input then in the suite ended in a separator, so `not bare` caught them all
         and the dot check never ran. Without a trailing slash `"..".rsplit("/")[-1]`
-        is `".."` — a non-empty string that basename happily returns, and that
+        is `".."`: a non-empty string that basename happily returns, and that
         names the PARENT DIRECTORY.
 
         Downstream `write_export` would still refuse it (a directory exists, so the
@@ -147,7 +147,7 @@ class TestTheReportPrintsOnlyTheResponse:
     """The property ``_print_report`` keeps, kept here by the same means.
 
     ``render_bundle_report`` takes the RESPONSE and nothing else, so the request is
-    not in scope to be echoed. A structural guarantee, not a discipline — the
+    not in scope to be echoed. A structural guarantee, not a discipline: the
     signature is the test.
     """
 
@@ -201,7 +201,7 @@ class TestTheReportPrintsOnlyTheResponse:
         """The guard the original bug had no equivalent of.
 
         Skipping an unknown shape renders as "the bundle contained no classes",
-        which is indistinguishable from a real empty bundle — and is exactly how
+        which is indistinguishable from a real empty bundle: and is exactly how
         the dict-vs-list mistake stayed invisible until the command was run.
         """
         report = render_bundle_report(
@@ -243,7 +243,7 @@ class TestTheBundleHalfCannotInheritItsEnvironment:
 class TestTheDestinationIsCheckedBeforeTheServerBuilds:
     """``--bundle`` has a side effect, so a doomed run must fail before it.
 
-    ``write_export`` refuses to overwrite, but it runs last — and for the bundle
+    ``write_export`` refuses to overwrite, but it runs last: and for the bundle
     "last" is after a POST that already inserted a File row under Files → Exports
     and emitted ``ON_PROJECT_EXPORTED``. Refusing only at the end leaves the space
     holding an artefact this run cannot hand over, and the only way forward is a
@@ -260,7 +260,7 @@ class TestTheDestinationIsCheckedBeforeTheServerBuilds:
         assert "BEFORE building" in str(exc.value)
 
     def test_a_directory_is_not_refused(self, tmp_path):
-        """The destination is not knowable yet — the server names the file."""
+        """The destination is not knowable yet: the server names the file."""
         from formist_cli.export import precheck_out
 
         precheck_out(str(tmp_path))

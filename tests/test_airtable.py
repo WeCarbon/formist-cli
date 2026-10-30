@@ -1,4 +1,4 @@
-"""``fm airtable direction`` — the client half, and the two ways it can lie.
+"""``fm airtable direction``: the client half, and the two ways it can lie.
 
 The decision lives on the server (``tests/test_airtable_direction.py`` owns it).
 What can go wrong HERE is narrower and nastier, because both failures look like
@@ -14,7 +14,7 @@ happily against a command that had already written.
 echoing the plan back to the server is that the operator authorizes what they
 read. If ``changes_from`` were to re-derive "what needs changing" instead of
 reading the server's ``would_change`` flag, the client and the server would be
-answering the question separately — which is the exact drift this consolidation
+answering the question separately: which is the exact drift this consolidation
 removed from ``scripts/airtable_sync_direction.py``. The case that catches it is an
 INCONCLUSIVE item whose ``current`` and ``wanted`` differ: a client that recomputes
 picks it up, a client that reads the flag does not.

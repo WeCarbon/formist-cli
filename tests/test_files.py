@@ -1,8 +1,8 @@
-"""``fm files reevaluate`` — the client half of the file re-evaluation surface.
+"""``fm files reevaluate``: the client half of the file re-evaluation surface.
 
 ⚠️ ENTERED THROUGH ``cmd_files``, NOT ``run``. ``fm files`` carries TWO
-subcommands since the 2026-09-14 main/prod integration — ``merge`` (the prod
-line's duplicate-File repair, D455/D461) and ``reevaluate`` (this one) — so the
+subcommands since the 2026-09-14 main/prod integration: ``merge`` (the prod
+line's duplicate-File repair, D455/D461) and ``reevaluate`` (this one): so the
 module's entry point dispatches on ``args.subject``. Calling the reevaluate
 half directly would stop covering that dispatch, which is the one line where a
 future third subcommand could silently swallow this one.
@@ -17,7 +17,7 @@ same job through the routes ``services/file_reevaluation.py`` already exposes �
 * ``--file <id>`` -> ``POST /projects/{id}/files/{file_id}/reevaluate`` (one
   row, ``ReevaluateRequest``)
 
-DRY RUN by default on BOTH forms — the sweep route already defaults
+DRY RUN by default on BOTH forms: the sweep route already defaults
 ``dry_run: true`` server-side, but the single-file route does NOT
 (``ReevaluateRequest.dry_run: bool = False``), so the CLIENT sends the same
 default on every call rather than inheriting whichever the server happens to
@@ -119,7 +119,7 @@ def test_single_file_posts_to_the_per_file_route(driven):
 
 
 def test_single_file_defaults_to_dry_run_true_even_though_the_SERVER_default_is_false(driven):
-    """ReevaluateRequest.dry_run defaults False server-side — the client must
+    """ReevaluateRequest.dry_run defaults False server-side: the client must
     never rely on that and must always send its OWN dry-run-by-default."""
     stub = RecordingApi(response={"item": {"id": FILE_ID}, "reevaluation": {}})
     driven(stub, file=FILE_ID)
@@ -133,7 +133,7 @@ def test_single_file_apply_sends_dry_run_false(driven):
 
 
 def test_single_file_only_skipped_is_not_sent_it_has_no_meaning_there(driven):
-    """`only_skipped` is a SWEEP-only option (ReevaluateSweepRequest) — the
+    """`only_skipped` is a SWEEP-only option (ReevaluateSweepRequest): the
     single-file body is `extra='forbid'` (ReevaluateRequest), so sending it
     would 422 instead of being ignored."""
     stub = RecordingApi(response={"item": {"id": FILE_ID}, "reevaluation": {}})

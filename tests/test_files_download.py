@@ -1,17 +1,17 @@
-"""``fm files download`` — every file under a folder, recursively, into a
+"""``fm files download``: every file under a folder, recursively, into a
 local directory.
 
 Its own file, matching `test_formist_cli_files.py`'s own docstring reasoning
-("ENTERED THROUGH cmd_files, NOT the reevaluate half directly" — a third
+("ENTERED THROUGH cmd_files, NOT the reevaluate half directly": a third
 subcommand is exactly the risk that dispatch line exists to catch, so this
 file goes through `cmd_files` too, never calling `_run_download` directly).
 
 WHAT THIS FILE IS ACTUALLY ABOUT. `GET /projects/{id}/files?folder=...`
-(`routes/entities.py::list_files`) exists and is exact-match only — by owner
+(`routes/entities.py::list_files`) exists and is exact-match only: by owner
 directive it deliberately does NOT cascade into subfolders (see
 `formist_cli/files.py`'s module docstring). So `fm files download` cannot use that
 filter for "under a folder, recursively" and instead pages through the WHOLE
-listing and filters by path client-side — the property these tests are built
+listing and filters by path client-side: the property these tests are built
 around is that this recursive filter is neither too narrow (misses a nested
 file) nor too wide (matches a sibling folder with a similar name prefix).
 
@@ -89,7 +89,7 @@ def driven(monkeypatch):
 
 
 # ===========================================================================
-# is_under_folder / _normalize_folder / relative_download_path — pure
+# is_under_folder / _normalize_folder / relative_download_path: pure
 # ===========================================================================
 class TestIsUnderFolder:
     def test_root_matches_everything(self):
@@ -129,7 +129,7 @@ class TestRelativeDownloadPath:
 
 
 # ===========================================================================
-# fm files download — end to end, through cmd_files
+# fm files download: end to end, through cmd_files
 # ===========================================================================
 class TestDownloadRecursesAndPreservesSubfolders:
     def test_nested_files_download_and_a_sibling_folder_is_excluded(self, tmp_path, driven, capsys):

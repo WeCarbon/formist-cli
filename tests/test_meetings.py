@@ -1,18 +1,18 @@
-"""``fm meeting transcript-refresh`` / ``fm meeting join`` — meeting-bot client ops.
+"""``fm meeting transcript-refresh`` / ``fm meeting join``: meeting-bot client ops.
 
 Absorbs two scripts (EV-ABSORB.md §3.1, both "no new endpoint"):
 
 * ``scripts/ingest_transcript.py`` looped every APPOINTMENT task with a bot_id
   in one hardcoded project and force-refreshed each transcript.
   ``fm meeting transcript-refresh <task-id>`` does ONE named task through
-  ``GET /projects/{id}/meetings/{task_id}/transcript`` — the route ALREADY
+  ``GET /projects/{id}/meetings/{task_id}/transcript``: the route ALREADY
   best-effort re-ingests before answering (routes/meetings_center.py's own
   docstring), so this is a bare client, not a re-implementation of the ingest
   logic. ``--all`` restores the "every task with a bot" behaviour by listing
   meetings first and refreshing each one that has a recording.
 * ``scripts/join_meeting.py`` classified a join URL and dispatched a bot.
   ``fm meeting join <url>`` does the SAME thing through
-  ``POST /projects/{id}/meetings/join-now`` — a WRITE (it can really dispatch a
+  ``POST /projects/{id}/meetings/join-now``: a WRITE (it can really dispatch a
   bot into a live meeting), so unlike the script it is dry-run by default and
   needs ``--apply``.
 
@@ -97,7 +97,7 @@ def driven(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# transcript-refresh — one task
+# transcript-refresh: one task
 # ---------------------------------------------------------------------------
 def test_transcript_refresh_gets_the_named_task(driven):
     stub = RecordingApi(transcripts={TASK: {"file_id": "f1", "path": "t.md", "name": "t.md", "markdown": "hi"}})
@@ -128,7 +128,7 @@ def test_transcript_refresh_missing_transcript_translates_the_404(driven):
 
 
 # ---------------------------------------------------------------------------
-# transcript-refresh --all — restores the "every task with a bot" behaviour
+# transcript-refresh --all: restores the "every task with a bot" behaviour
 # ---------------------------------------------------------------------------
 def test_transcript_refresh_all_only_refreshes_tasks_with_a_recording(driven):
     stub = RecordingApi(
@@ -155,7 +155,7 @@ def test_transcript_refresh_all_with_no_recordings_reports_zero_not_an_error(dri
 
 
 # ---------------------------------------------------------------------------
-# join — dry-run by default, --apply performs the write
+# join: dry-run by default, --apply performs the write
 # ---------------------------------------------------------------------------
 def test_join_without_apply_makes_no_write_call(driven, capsys):
     stub = RecordingApi()

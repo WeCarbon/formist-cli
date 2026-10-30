@@ -1,4 +1,4 @@
-"""``fm skill-library-install`` — installing one skill-library package into a
+"""``fm skill-library-install``: installing one skill-library package into a
 space, idempotently.
 
 Its own file, matching `test_formist_cli_skill_library_sync.py`'s reasoning: that
@@ -23,7 +23,7 @@ SPACE = "452093ea-7b91-491e-88b6-3285edd48a31"
 
 
 # ===========================================================================
-# resolve_package / _version_sort_key — pure, no HTTP
+# resolve_package / _version_sort_key: pure, no HTTP
 # ===========================================================================
 class TestVersionSortKey:
     def test_numeric_segments_sort_numerically_not_lexically(self):
@@ -85,7 +85,7 @@ class TestAlreadyInstalled:
 
 
 # ===========================================================================
-# The fake transport — member-facing project routes only, matching the real
+# The fake transport: member-facing project routes only, matching the real
 # response shapes (routes/skill_library.py::SkillPackageRead / InstallResult,
 # routes/skills.py's generic list envelope).
 # ===========================================================================
@@ -139,7 +139,7 @@ def _patch_effective(monkeypatch, server):
 
 
 # ===========================================================================
-# run_install — dry run
+# run_install: dry run
 # ===========================================================================
 class TestInstallDryRun:
     def test_dry_run_makes_no_post(self, monkeypatch, capsys):
@@ -205,7 +205,7 @@ class TestInstallApply:
 
 
 # ===========================================================================
-# The idempotency contract — the required failure-path test: an already-
+# The idempotency contract: the required failure-path test: an already-
 # installed package must send NOTHING.
 # ===========================================================================
 class TestInstallIsIdempotent:
@@ -224,7 +224,7 @@ class TestInstallIsIdempotent:
 
     def test_idempotency_is_checked_even_under_dry_run(self, monkeypatch, capsys):
         """Idempotence is a fact about the space, not a side effect of --apply
-        — a dry run must say so too, not just discover it a run later."""
+       : a dry run must say so too, not just discover it a run later."""
         server = FakeLibraryServer(
             packages=[{"id": "pkg-1", "package": "com.x.a", "name": "ESG Report", "version": "1.0.0"}],
             skills=[{"id": "skill-1", "name": "ESG Report", "package_id": "pkg-1"}],
@@ -236,4 +236,4 @@ class TestInstallIsIdempotent:
         assert rc == 0
         out = capsys.readouterr().out
         assert "already installed" in out
-        assert "DRY RUN" not in out, "there is nothing left to dry-run — say so plainly"
+        assert "DRY RUN" not in out, "there is nothing left to dry-run: say so plainly"

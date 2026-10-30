@@ -1,10 +1,10 @@
-"""``fm usage-tokens`` — the CLI front end for ``GET /admin/usage/tokens``.
+"""``fm usage-tokens``: the CLI front end for ``GET /admin/usage/tokens``.
 
 WHAT THIS FILE GUARDS. This module had ZERO test coverage before this file.
 The module's own docstring names the defect class it exists to prevent: "5,458
 runaway calls once read as costing nothing for five days because a meter's zero
 meant unknown and nothing said so." ``_row`` is the renderer responsible for
-that — it must print the LOWER BOUND / measured and priced / LOWER BOUND labels
+that: it must print the LOWER BOUND / measured and priced / LOWER BOUND labels
 on EVERY row, not only the ones that need it (an operator scanning a column for
 the one bad row would miss a flag that only sometimes appears).
 
@@ -34,7 +34,7 @@ def _bucket(**over) -> dict:
 
 
 # ===========================================================================
-# render / _row — shape 2: the label is a PROPERTY of every row, not a case
+# render / _row: shape 2: the label is a PROPERTY of every row, not a case
 # ===========================================================================
 @pytest.mark.parametrize("flag_field,label_present,label_absent", [
     ("tokens_are_lower_bound", "LOWER BOUND", "measured"),
@@ -61,7 +61,7 @@ def test_a_measured_row_is_labelled_measured_not_lower_bound():
 
 
 def test_cost_lower_bound_is_independent_of_tokens_lower_bound():
-    """The two flags are DIFFERENT facts (measured tokens, unpriced cost) — a
+    """The two flags are DIFFERENT facts (measured tokens, unpriced cost): a
     renderer that conflates them would call an unpriced-but-measured row
     entirely trustworthy or entirely not, both wrong."""
     out = usage_tokens.render(
@@ -140,7 +140,7 @@ def test_not_truncated_does_not_mention_more_groups():
 
 
 # ===========================================================================
-# run — every optional filter is forwarded, group_by defaults to source
+# run: every optional filter is forwarded, group_by defaults to source
 # ===========================================================================
 def _args(**overrides) -> argparse.Namespace:
     base = {

@@ -1,11 +1,11 @@
-"""``fm upload DIR`` — uploading every file under a directory, recursively.
+"""``fm upload DIR``: uploading every file under a directory, recursively.
 
 Its own file (`test_formist_cli_uploads.py`'s docstring: several lanes edit
 ``formist_cli/`` at once, and a new file cannot conflict with any of them).
 
-Reuses `formist_cli.uploads.upload_file` per file — the SAME resumable path
+Reuses `formist_cli.uploads.upload_file` per file: the SAME resumable path
 `test_formist_cli_uploads.py::TestChunkedUploadSendsExactBytes` already proves sends
-exact bytes — so what is new here, and what these tests are built around, is
+exact bytes: so what is new here, and what these tests are built around, is
 the DIRECTORY layer on top of it: which files get walked, how a subfolder's
 path reaches the server (`relative_path`, not a client-side re-derivation of
 `--folder-path`), and that one file failing does not stop the rest.
@@ -27,7 +27,7 @@ SPACE = "452093ea-7b91-491e-88b6-3285edd48a31"
 
 
 # ===========================================================================
-# walk_upload_dir / relative_upload_path — pure, no HTTP at all
+# walk_upload_dir / relative_upload_path: pure, no HTTP at all
 # ===========================================================================
 class TestWalkUploadDir:
     def test_skips_ds_store_thumbs_and_pycache_recursively(self, tmp_path):
@@ -55,7 +55,7 @@ class TestWalkUploadDir:
 
 
 # ===========================================================================
-# The fake transport — same shape as test_formist_cli_uploads.py's FakeServer, kept
+# The fake transport: same shape as test_formist_cli_uploads.py's FakeServer, kept
 # minimal here: a directory upload's own logic (walking, per-file continue,
 # the empty-file label) is what these tests are FOR, not the chunk math
 # (already proven elsewhere).
@@ -71,7 +71,7 @@ class FakeDirServer:
         self.calls: list[tuple[str, str]] = []
         # `_put_chunk_with_retry` resolves `_api()` internally to reach
         # `api.ApiError` for its except clause even when `put=` is not given
-        # explicitly (see formist_cli/uploads.py) — so a fake standing in for `_api()`
+        # explicitly (see formist_cli/uploads.py): so a fake standing in for `_api()`
         # needs the REAL exception class, not a re-implementation of it.
         self.ApiError = _api_mod.ApiError
 
@@ -143,7 +143,7 @@ def _patch_effective(monkeypatch, server):
 
 
 # ===========================================================================
-# fm upload DIR — dry run
+# fm upload DIR: dry run
 # ===========================================================================
 class TestDirDryRun:
     def test_lists_count_and_total_bytes_and_touches_nothing(self, tmp_path, monkeypatch, capsys):
@@ -164,7 +164,7 @@ class TestDirDryRun:
 
 
 # ===========================================================================
-# fm upload DIR --apply — the resumable path is reused per file
+# fm upload DIR --apply: the resumable path is reused per file
 # ===========================================================================
 class TestDirApply:
     def test_every_file_uploads_with_its_relative_path(self, tmp_path, monkeypatch, capsys):
@@ -182,7 +182,7 @@ class TestDirApply:
         assert "uploaded  sub/b.txt" in out
         rels = {b["relative_path"] for b in server.open_bodies}
         assert rels == {"a.txt", "sub/b.txt"}
-        # folder_path itself stays the flag's value on every call — the SERVER
+        # folder_path itself stays the flag's value on every call: the SERVER
         # (not this client) derives the destination folder from relative_path.
         assert {b["folder_path"] for b in server.open_bodies} == {"/"}
 
@@ -199,7 +199,7 @@ class TestDirApply:
 
 
 # ===========================================================================
-# fm upload DIR --apply — failures are per-file, never abort the walk
+# fm upload DIR --apply: failures are per-file, never abort the walk
 # ===========================================================================
 class TestDirApplyFailures:
     def test_an_empty_file_is_labelled_and_failed_without_opening_a_session(
@@ -217,7 +217,7 @@ class TestDirApplyFailures:
         assert "empty file (server refuses 0-byte uploads; see decs D626)" in combined
         assert "empty.txt" in combined
         # the client-side 0-byte refusal never opens a network connection for
-        # THAT file — good.txt's session is the only one opened.
+        # THAT file: good.txt's session is the only one opened.
         assert {b["filename"] for b in server.open_bodies} == {"good.txt"}
 
     def test_a_server_refusal_on_one_file_does_not_stop_the_rest(self, tmp_path, monkeypatch, capsys):

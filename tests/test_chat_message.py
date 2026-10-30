@@ -1,9 +1,9 @@
-"""``fm chat --message`` — one non-interactive turn, streamed compactly, with a
+"""``fm chat --message``: one non-interactive turn, streamed compactly, with a
 final exit code and an optional JSON summary.
 
 Its own file, matching `test_formist_cli_chat.py`'s reasoning (several lanes edit
-``formist_cli/`` at once): that file owns ``consume_turn``/``run_turn`` — the state
-machine and the streaming loop — proven end to end there with a fake
+``formist_cli/`` at once): that file owns ``consume_turn``/``run_turn``: the state
+machine and the streaming loop: proven end to end there with a fake
 ``stream_fn`` driven DIRECTLY into ``run_turn``. This file is the layer on top:
 ``cmd_chat``'s DISPATCH to non-interactive mode, never entering the REPL, never
 creating a second chat when one was given, and turning the run's outcome into
@@ -111,8 +111,8 @@ class TestMessageContinuesAnExistingChatWithoutCreatingANewOne:
 
 class TestMessageHoldsTheStreamOpenWithNoMeaningfulTimeout:
     def test_the_non_interactive_read_timeout_reaches_the_stream_call(self, monkeypatch):
-        """A real run can take an hour — services/agent_run.py ties its life to
-        this client staying connected — so --message must NOT reuse the REPL's
+        """A real run can take an hour: services/agent_run.py ties its life to
+        this client staying connected: so --message must NOT reuse the REPL's
         short interactive timeout."""
         _patch_context(monkeypatch)
         lines = _frame("on_agent_run_completed", {"status": "COMPLETED"})
@@ -149,7 +149,7 @@ class TestMessageJsonSummary:
 
     def test_streamed_tokens_are_what_final_message_reports_when_present(self, monkeypatch, capsys):
         """final_message must be the SAME text a non-JSON run streams to
-        stdout — not a second, independently-derived copy of it."""
+        stdout: not a second, independently-derived copy of it."""
         _patch_context(monkeypatch)
         lines = [
             *_frame("on_agent_token", {"delta": "Hello"}),
@@ -200,7 +200,7 @@ class TestMessageFailedRunExitsNonZero:
         assert rc == 0
 
     def test_a_dropped_stream_with_no_terminal_event_is_also_non_zero(self, monkeypatch, capsys):
-        """Not FAILED, but not a success either — a run whose outcome is
+        """Not FAILED, but not a success either: a run whose outcome is
         genuinely unknown must not exit 0."""
         _patch_context(monkeypatch)
         lines = list(_frame("on_agent_token", {"delta": "partial"}))
@@ -225,7 +225,7 @@ class TestReplIsNeverEnteredWithMessage:
         assert rc == 0
 
     def test_the_repl_IS_called_when_message_is_absent_the_control(self, monkeypatch):
-        """Proves the monkeypatch above is meaningful — REPL still runs, and
+        """Proves the monkeypatch above is meaningful: REPL still runs, and
         runs normally, on the ordinary (interactive) path."""
         _patch_context(monkeypatch)
         called = {}

@@ -1,9 +1,9 @@
-"""``fm update`` — the payload transform, the `$expect` copy-back, and the plan token.
+"""``fm update``: the payload transform, the `$expect` copy-back, and the plan token.
 
 This is the command the owner actually asked for: change production data without
 writing code. Everything here is about making that safe enough to be boring.
 
-The wire format is EXACTLY what `admin-bulk-data-api` defined — `$action`,
+The wire format is EXACTLY what `admin-bulk-data-api` defined: `$action`,
 `$kind`, `$id`, `$set`, `$expect`, `$ref`, `apply` defaulting to false, a 500-op
 bound. This module adds ONE thing on the operator's side of the wire: `$name`,
 resolved client-side seconds before the write, so no UUID is ever transcribed.
@@ -84,7 +84,7 @@ class TestNameResolutionReplacesTheTranscribedUuid:
         an `expect-mismatch` refusal of the whole batch instead of a confident
         write to the wrong row.
 
-        The value must be the RAW column — `column_snapshot` compares exactly and
+        The value must be the RAW column: `column_snapshot` compares exactly and
         deliberately does not coalesce shapes (`services/bulk_data.py:260-272`).
         Prod stores an {en, ar} map here; flattening it to "ADAFSA" would send an
         `$expect` no prod row can ever match.
@@ -134,7 +134,7 @@ class TestNameResolutionReplacesTheTranscribedUuid:
 
 
 class TestNameResolutionInsideSet:
-    """A FOREIGN reference — `parent_id`, `relationship_owner_id` — is the case the
+    """A FOREIGN reference: `parent_id`, `relationship_owner_id`: is the case the
     brief's rule 1 was actually about: *every organisation id differs between dev
     and prod*, and a wrong one lands in a jsonb column with no FK where nothing
     errors.
@@ -256,7 +256,7 @@ class TestPayloadShapeGuards:
     def test_replace_data_is_a_known_key_and_passes_through(self):
         """`$replace_data` (services/bulk_data.py's escape hatch from the default
         `data` MERGE to a wholesale replace) must not be refused as an unknown
-        key — this module's `_OP_KEYS` mirrors the endpoint's own vocabulary and
+        key: this module's `_OP_KEYS` mirrors the endpoint's own vocabulary and
         has to be kept in step with it by hand."""
         payload = {"ops": [
             {"$action": "update", "$kind": "STAKEHOLDER", "$id": UUID_A,
@@ -322,7 +322,7 @@ class TestPlanToken:
 
     def test_a_changed_dry_run_result_gives_a_different_token(self):
         """The dry run's own result is in the hash, so a plan whose meaning changed
-        server-side — a row that moved under it — cannot be applied on an old
+        server-side: a row that moved under it: cannot be applied on an old
         token even though the ops are byte-identical."""
         plan = self._plan()
         assert plan_token(plan, {"counts": {"ops": 1}}) != plan_token(
@@ -337,7 +337,7 @@ class TestPlanTokenIgnoresPerRunIdentifiers:
     """Found end-to-end against the real endpoint, not by unit test.
 
     A dry run EXECUTES every op and rolls back (`services/bulk_data.py` property
-    2), so the server mints a fresh `audit_id` on every call — and a fresh row `id`
+    2), so the server mints a fresh `audit_id` on every call: and a fresh row `id`
     for every `add`. Hashing the report verbatim therefore produced a DIFFERENT
     token each time the same plan was dry-run:
 
@@ -346,7 +346,7 @@ class TestPlanTokenIgnoresPerRunIdentifiers:
 
     which makes `--apply <token>` impossible to satisfy: the token printed by the
     dry run never matches the one recomputed at apply time. The guard would have
-    been not merely useless but permanently closed — a check that always fails is
+    been not merely useless but permanently closed: a check that always fails is
     as broken as one that never does, and this one would have been discovered by
     the owner, mid-change, on the first real use.
 

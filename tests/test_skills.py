@@ -1,4 +1,4 @@
-"""``fm skills-add`` / ``fm skills-update`` (``formist_cli/skills.py``) — the client
+"""``fm skills-add`` / ``fm skills-update`` (``formist_cli/skills.py``): the client
 half of installing/replacing a project's own skill from a local ``SKILL.md``,
 now that ``data/default_skills/`` no longer ships one (2026-09-08: skills are
 data in the database, not files in the code repository; deployments install
@@ -56,7 +56,7 @@ def _write_dir(tmp_path: Path, *, extra_files: dict[str, bytes] | None = None) -
 
 
 # ===========================================================================
-# resolve_source — directory and zip inputs
+# resolve_source: directory and zip inputs
 # ===========================================================================
 class TestResolveSourceFromADirectory:
     def test_reads_markdown_and_lists_attachments(self, tmp_path):
@@ -94,7 +94,7 @@ class TestResolveSourceFromAZip:
                 cleanup.cleanup()
 
     def test_a_zip_wrapped_in_one_top_level_directory(self, tmp_path):
-        """Most zip tools produce exactly this shape — dragging a folder into
+        """Most zip tools produce exactly this shape: dragging a folder into
         Archive Utility wraps it in one directory named after the folder."""
         zpath = tmp_path / "skill.zip"
         with zipfile.ZipFile(zpath, "w") as zf:
@@ -115,12 +115,12 @@ class TestResolveSourceFromAZip:
         with pytest.raises(SkillSourceError):
             resolve_source(str(zpath))
         # the tempdir it extracted into must not be left behind on the refusal
-        # path — implicitly checked by SkillSourceError's own cleanup call;
+        # path: implicitly checked by SkillSourceError's own cleanup call;
         # nothing further to assert without reaching into tempfile internals.
 
 
 # ===========================================================================
-# add_skill_from_source / update_skill_from_source — dependency-injected core
+# add_skill_from_source / update_skill_from_source: dependency-injected core
 # ===========================================================================
 def _fake_post(response: dict):
     calls = []
@@ -144,7 +144,7 @@ def _fake_patch(response: dict):
 
 def _fake_attachment_pair():
     """upload_file/attach_file_to_skill fakes that record the real bytes
-    handed to them — not just "was called" (the project rules' own naming of that
+    handed to them: not just "was called" (the project rules' own naming of that
     trap)."""
     uploaded = []
     attached = []
@@ -258,7 +258,7 @@ class TestUpdateSkillFromSource:
 
 
 # ===========================================================================
-# CLI dry-run — no --apply must never touch the network
+# CLI dry-run: no --apply must never touch the network
 # ===========================================================================
 class _Args:
     def __init__(self, **kw):

@@ -1,4 +1,4 @@
-"""`fm doctor` — the readable rollup, and the distinction it must never blur.
+"""`fm doctor`: the readable rollup, and the distinction it must never blur.
 
 `fm health` answers about one environment. `doctor` answers "is the deployment
 all right", which means talking to several and surviving the ones that do not
@@ -87,7 +87,7 @@ def test_a_health_payload_that_is_not_a_dict_is_not_reported_as_healthy():
 # Found 2026-09-09: `_with_credential` (formist_cli/cli.py) called `tokens.describe`
 # on the STORED credential as though it were a JWT. Since `fm login` moved to the
 # OAuth flow (formist_cli/login.py), every stored access token is opaque
-# (``crst_at_…``, no dots — mcp_app/oauth/provider.py::ACCESS_PREFIX), so
+# (``crst_at_…``, no dots: mcp_app/oauth/provider.py::ACCESS_PREFIX), so
 # `describe` raised `TokenError("not a JWT")` on every real login and `fm doctor`
 # reported "unreadable" for every logged-in user, with no test catching it.
 #
@@ -112,7 +112,7 @@ def _blank_report(env: str) -> EnvReport:
 def test_a_real_stored_credential_is_readable_not_unreadable():
     """RED on the pre-fix code: `tokens.describe("crst_at_realtoken")` raises
     `TokenError: stored credential is not a JWT (expected three segments)`, and
-    `_with_credential` turned that into `credential="unreadable — ..."`."""
+    `_with_credential` turned that into `credential="unreadable: ..."`."""
     login.store_payload(
         "local",
         {"access_token": "crst_at_realtoken", "refresh_token": "crst_rt_y",
@@ -150,7 +150,7 @@ def test_no_stored_credential_says_so_plainly():
 
 
 def test_env_token_origin_is_reported_without_reading_any_file(monkeypatch):
-    """$FORMIST_TOKEN wins over the file and is never decoded either — it is
+    """$FORMIST_TOKEN wins over the file and is never decoded either: it is
     opaque too, and `_with_credential` must not try `tokens.load_meta` on it."""
     monkeypatch.setenv(tokens.ENV_TOKEN_VAR, "crst_at_fromenv")
     report = cli._with_credential(_blank_report("local"), "local")
@@ -159,12 +159,12 @@ def test_env_token_origin_is_reported_without_reading_any_file(monkeypatch):
 
 def test_with_migrations_is_attempted_for_formist_not_just_global(monkeypatch):
     """`/admin/instance` is admin-gated, and `_with_migrations` used to skip it
-    for every env but Global (`env != REGION_GLOBAL`) — refusing Formist too,
+    for every env but Global (`env != REGION_GLOBAL`): refusing Formist too,
     even though Formist is its own single-region deployment whose one host
     serves `/admin` locally (`formist_cli.targets.is_admin_env`, also used by
     `formist_cli/api.py::_check_admin_target` and `formist_cli/logs.py::require_admin_region`
     so the three gates cannot drift from each other again). AE must still be
-    skipped — it is a real EVANE region behind the Global-only gate."""
+    skipped: it is a real EVANE region behind the Global-only gate."""
     from formist_cli.targets import resolve
 
     calls: list[tuple[str, str]] = []

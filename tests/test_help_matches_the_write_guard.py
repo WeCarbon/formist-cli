@@ -12,14 +12,14 @@ remembered environment:
 With nothing remembered by ``fm use`` that branch is never reached and the write
 proceeds against the built-in default (``local``). So ``--env`` is required for a
 write to anywhere but local, and required unconditionally once ``fm use`` has
-remembered one — a different and weaker sentence than the one five help strings
+remembered one: a different and weaker sentence than the one five help strings
 were printing. Found by an independent pre-deploy review of ``fm import`` on
 2026-09-01, reading the flag's own help against ``prefs.effective``.
 
 WHY A PROPERTY, NOT FIVE ASSERTIONS
 -----------------------------------
 The sentence was in ``formist_cli/importer.py``, ``formist_cli/airtable.py`` (twice),
-``formist_cli/export.py`` and ``formist_cli/cli.py`` — including on the ``--env`` option
+``formist_cli/export.py`` and ``formist_cli/cli.py``: including on the ``--env`` option
 itself, the copy every command prints. That is the project rules' "one rule copied N
 times with nothing comparing the copies", and a per-file fix is structurally
 incapable of seeing the sixth copy somebody adds next month.
@@ -27,7 +27,7 @@ incapable of seeing the sixth copy somebody adds next month.
 WHAT THIS FILE DOES *NOT* DO
 -----------------------------
 It does not re-test the guard. ``tests/test_formist_cli_prefs.py`` already owns that,
-case by case — ``test_write_without_env_flag_refuses_when_a_default_is_remembered``,
+case by case: ``test_write_without_env_flag_refuses_when_a_default_is_remembered``,
 ``test_write_with_no_remembered_env_at_all_falls_back_to_local`` and
 ``test_reads_DO_inherit_the_remembered_env``. Restating them here would be a second
 copy of the very thing this file exists to prevent.
@@ -36,7 +36,7 @@ What was missing is not coverage of the behaviour or coverage of the prose. It i
 the COMPARISON: nothing read the two against each other, so five help strings could
 describe a guard the code had never implemented while every test stayed green. So
 the main test below establishes the behaviour and checks the prose against it in one
-place — if ``--env`` is ever made genuinely required, that test reds on its own first
+place: if ``--env`` is ever made genuinely required, that test reds on its own first
 line and points at the help text that must change with it.
 
 Its own file, per ``test_formist_cli_api_uploads_transport.py``'s reasoning: several
@@ -68,7 +68,7 @@ FALSE_CLAIM_PATTERNS = (
     re.compile(r"must\s+(?:pass|give|supply)\s+--env", re.IGNORECASE),
 )
 
-#: Subcommands the walk must reach. Not the full list on purpose — this exists to
+#: Subcommands the walk must reach. Not the full list on purpose: this exists to
 #: prove the WALK LANDED, so it names the four that carried the false claim.
 MUST_REACH = {"import", "airtable", "export", "use"}
 
@@ -104,7 +104,7 @@ def test_the_walk_actually_reaches_the_help_it_claims_to_check():
     assert not missing, f"the parser walk never reached: {sorted(missing)}"
     corpus = "".join(text for _, text in entries)
     assert len(corpus) >= MIN_CORPUS_CHARS, (
-        f"the walk collected only {len(corpus)} characters of help text — too "
+        f"the walk collected only {len(corpus)} characters of help text: too "
         "little to be the real tree; it probably stopped at the top level instead "
         "of descending into the subparsers."
     )
@@ -117,20 +117,20 @@ def test_no_help_string_claims_env_is_required_for_a_write(tmp_path, monkeypatch
     covered and each green while contradicting each other for five help strings;
     what nobody had written down is that they answer the same question.
     """
-    # An isolated, EMPTY config — `fm use` has remembered nothing. Never the
+    # An isolated, EMPTY config: `fm use` has remembered nothing. Never the
     # operator's real ~/.config/evane; same fixture idiom as test_formist_cli_prefs.py.
     monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "evane"))
 
     # (1) What the guard actually does. If this ever raises instead, `--env` HAS
     # become required, the help strings below become true, and this test is the
-    # thing that is wrong — which is the point of pinning it here rather than
+    # thing that is wrong: which is the point of pinning it here rather than
     # leaving the prose rule to police itself.
     eff = prefs.effective(env_flag=None, space_flag=None, for_write=True)
     assert eff.for_write is True
     assert eff.target.name == DEFAULT_HOST, (
         "a write with nothing remembered no longer falls back to the default host. If that "
         "was deliberate, the help strings this test polices may now say --env is "
-        "required — update FALSE_CLAIM_PATTERNS and this assertion together."
+        "required: update FALSE_CLAIM_PATTERNS and this assertion together."
     )
 
     # (2) Therefore no help string anywhere may say --env is required for a write.
@@ -155,12 +155,12 @@ def test_no_help_string_claims_env_is_required_for_a_write(tmp_path, monkeypatch
     "sentence",
     [
         "--apply requires --env on the command line",
-        "target environment — REQUIRED for a write",
+        "target environment: REQUIRED for a write",
         "persist the changes this run reports (requires --env)",
     ],
 )
 def test_the_patterns_catch_the_sentences_that_were_actually_shipped(sentence):
-    """The detector, tested against the real strings — not against a specimen.
+    """The detector, tested against the real strings: not against a specimen.
 
     A pattern set is exactly as good as the text it was written from, and the way
     this check dies is somebody rewording a help string past it while believing the

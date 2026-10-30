@@ -1,14 +1,14 @@
-"""``fm messages`` — the group-mailbox message surface: CLI client tests.
+"""``fm messages``: the group-mailbox message surface: CLI client tests.
 
 Two write-capable subjects live behind one command:
 
-  * ``dedupe`` / ``dedupe-scan`` — soft-delete duplicate `message` rows. Owner
+  * ``dedupe`` / ``dedupe-scan``: soft-delete duplicate `message` rows. Owner
     rule 2026-09-09 (``services/dedupe_guard.py``): NO WHOLE-CONNECTION APPLY.
     ``--apply`` must be scoped to explicit ``--group`` remote_ids plus a
-    ``--reason``, exactly the same shape as ``fm participants dedupe`` — see
+    ``--reason``, exactly the same shape as ``fm participants dedupe``: see
     ``tests/test_formist_cli_participants.py`` for the sibling of every test class
     below.
-  * ``refresh-inline-images`` — dry run unless ``--apply``.
+  * ``refresh-inline-images``: dry run unless ``--apply``.
 
 WHAT THIS FILE PINS
 --------------------
@@ -16,7 +16,7 @@ The request bodies these three subjects send (dry run vs apply must differ in
 EXACTLY the documented fields, never silently gain or lose one), the reports
 they render (DRY RUN / APPLIED banners, the truncation-free connection table,
 the zip(strict=True) pairing between a group's ``drop`` ids and
-``drop_last_synced_at`` — a length mismatch must raise loudly, never drop the
+``drop_last_synced_at``: a length mismatch must raise loudly, never drop the
 last row silently), and the two required-argument refusals that never reach
 the network (`dedupe` needs ``--connection``; `refresh-inline-images` needs a
 UUID ``--space``).
@@ -156,7 +156,7 @@ def _dedupe_payload(**overrides) -> dict:
 class TestRenderDedupe:
     def test_dry_run_header_says_nothing_written(self):
         out = messages.render_dedupe(_dedupe_payload(applied=False))
-        assert "DRY RUN — nothing was written" in out
+        assert "DRY RUN: nothing was written" in out
 
     def test_applied_header_says_applied(self):
         out = messages.render_dedupe(_dedupe_payload(applied=True, reason="dup", groups_applied=["conv-1"], soft_deleted=1, repointed=2))
@@ -173,7 +173,7 @@ class TestRenderDedupe:
         assert "drop m2  last_synced=2026-09-06T00:00:00" in out
 
     def test_a_drop_list_length_mismatch_raises_rather_than_dropping_the_last_row(self):
-        """GATE.md shape 2 — a PROPERTY, not a single value: the zip(strict=True)
+        """GATE.md shape 2: a PROPERTY, not a single value: the zip(strict=True)
         pairing must never silently truncate to the shorter list."""
         payload = _dedupe_payload()
         payload["detail"][0]["drop_last_synced_at"] = []  # one fewer than `drop`
@@ -298,7 +298,7 @@ class TestDedupeScan:
 
 
 # ===========================================================================
-# dedupe — the owner-rule tests (NO WHOLE-CONNECTION APPLY)
+# dedupe: the owner-rule tests (NO WHOLE-CONNECTION APPLY)
 # ===========================================================================
 class TestDedupeRequiresAConnection:
     def test_missing_connection_refuses_before_any_request(self, driven):
@@ -353,7 +353,7 @@ class TestDedupeApplyForwardsExactlyWhatWasNamed:
     def test_an_omitted_group_forwards_None_the_client_never_invents_a_wildcard(self, driven):
         """The exact shape owner rule 2026-09-09 forbids is a client-side
         'merge everything' default. `--group` not given must reach the server
-        as None, never as [] or '*' — only the server's 422 owns the refusal."""
+        as None, never as [] or '*': only the server's 422 owns the refusal."""
         stub = RecordingApi(response=_dedupe_payload(applied=True, reason="x", groups_applied=[], soft_deleted=0, repointed=0))
         driven(stub, subject="dedupe", connection=CONN, apply=True, group=None, reason="x")
         body = stub.calls[0][2]
@@ -439,7 +439,7 @@ class TestRunDispatch:
 
 
 # ===========================================================================
-# add_parser — the CLI wiring
+# add_parser: the CLI wiring
 # ===========================================================================
 class TestAddParser:
     def _parser(self) -> argparse.ArgumentParser:

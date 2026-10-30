@@ -1,7 +1,7 @@
-"""``api.put_bytes`` / ``api.patch`` / ``api.delete`` — the transport half of
+"""``api.put_bytes`` / ``api.patch`` / ``api.delete``: the transport half of
 ``fm upload`` and ``fm skill-attach``.
 
-Its own file, not an addition to ``test_formist_cli_api_and_tokens.py`` — the same
+Its own file, not an addition to ``test_formist_cli_api_and_tokens.py``: the same
 reasoning ``test_formist_cli_stream_transport.py`` gives: ``api.py`` gets edited by
 several lanes at once and a new file cannot conflict with any of them.
 
@@ -88,7 +88,7 @@ class TestPutBytesSendsRawBytesNotJSON:
         """The whole point: a chunk is opaque binary, not something to encode.
 
         A control alongside it: `post`'s body for the SAME payload is JSON-encoded
-        and therefore different bytes — proving `put_bytes` really did skip the
+        and therefore different bytes: proving `put_bytes` really did skip the
         JSON step rather than the fake just echoing back whatever it was given.
         """
         raw = bytes(range(256)) * 4  # non-JSON, non-UTF8-safe binary
@@ -151,7 +151,7 @@ class TestDeleteSendsNoMeaningfulBody:
 
 
 class TestWriteVerbsShareTheSameRegionAndBulkRefusalHandling:
-    """`_send` is the ONE place these are handled now — one test per new verb is
+    """`_send` is the ONE place these are handled now: one test per new verb is
     enough to prove the sharing didn't silently narrow to POST-only, without
     re-testing the translation logic itself (already covered for `post` in
     ``test_formist_cli_api_and_tokens.py``)."""
@@ -183,7 +183,7 @@ class TestPostMultipartSharesTheSameTransport:
     ⚠️ THIS CLASS EXISTS BECAUSE THE MERGE THAT ADDED THE VERB NEARLY SHIPPED A
     SECOND COPY OF THE REFUSAL. ``post_multipart`` arrived on a branch that had
     extracted its own ``write_http_error`` helper for exactly the right reason —
-    a second transport is where a rule gets duplicated — while ``_send`` had
+    a second transport is where a rule gets duplicated: while ``_send`` had
     landed on main meanwhile with the identical intent. Git conflicted on the
     single ``def`` line and auto-merged the rest, so the naive resolution keeps
     BOTH, which is the duplicated-abstraction merge the project rules records from
@@ -206,7 +206,7 @@ class TestPostMultipartSharesTheSameTransport:
         """A bundle sent to a misresolved region must be REFUSED, not followed.
 
         The whole reason the region redirect is never followed is that a redirect
-        means your belief about WHERE was wrong — and this verb carries an entire
+        means your belief about WHERE was wrong: and this verb carries an entire
         workspace, so following one would import a customer's whole space into a
         database nobody named. Per the class above: one test per verb, to prove
         the sharing did not silently narrow to the verbs that existed first.
@@ -217,7 +217,7 @@ class TestPostMultipartSharesTheSameTransport:
 
     def test_it_uses_the_upload_timeout_not_the_default_one(self, fake_urlopen):
         """30s is a limit a megabyte-scale bundle hits on SIZE, not on anything
-        being wrong — the wrong cause attached to a real failure."""
+        being wrong: the wrong cause attached to a real failure."""
         captured = fake_urlopen(_ok_response({"ok": True}))
         api.post_multipart(LOCAL, "/x", fields={}, files={"file": ("b.zip", b"PK")}, token="t")
         assert captured["timeout"] == api.UPLOAD_TIMEOUT
@@ -229,7 +229,7 @@ def test_each_write_refusal_is_constructed_in_exactly_one_place():
 
     A per-verb test proves the verb that exists behaves; it cannot see a SECOND
     implementation appear beside it, and that is the failure that actually
-    happened here — two lanes independently extracting the same write-error
+    happened here: two lanes independently extracting the same write-error
     translation, git conflicting on one line and auto-merging the other 172.
     Clean in git, two rules in behaviour.
 
