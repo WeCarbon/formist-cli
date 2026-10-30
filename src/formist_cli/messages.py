@@ -1,4 +1,4 @@
-"""``fm messages`` — the group-mailbox message surface: duplicate cleanup
+"""``fm messages`` - the group-mailbox message surface: duplicate cleanup
 (``dedupe-scan`` / ``dedupe``) and the inline-image backfill
 (``refresh-inline-images``).
 
@@ -6,48 +6,41 @@
     POST /admin/messages/dedupe                               dry run unless --apply
     POST /admin/spaces/{space_id}/messages/refresh-inline-images   dry run unless --apply
 
-WHAT THE DUPLICATES ARE (dedupe-scan / dedupe). `services/message_sync.py`
-decided "does this conversation already have a row?" with a SELECT and then
-INSERTed — against a NON-unique index, while two schedulers called it
-concurrently. Two passes that both missed wrote two rows; every later pass
-then updated whichever one came back first, and the other froze where it
-was. Measured on prod 2026-09-07 (a real space / ae): 248 EMAIL rows, 69
-duplicate groups covering 205 of them, 136 orphans, and 112 of the 117
-messages that had stopped syncing sitting inside one of those groups.
+What the duplicates are (dedupe-scan / dedupe): a race in the mailbox sync
+could insert two rows for the same conversation when two scheduler runs
+checked for an existing row concurrently. Every later sync pass then
+updated whichever row came back first, and the other row froze where it
+was. The race itself is fixed; `dedupe`/`dedupe-scan` is the cleanup for
+what it already wrote.
 
-The race itself is fixed. `dedupe`/`dedupe-scan` is the cleanup for what it
-already wrote.
-
-⚠️ `dedupe` WRITES when given --apply. It SOFT-deletes (`deleted_at` +
+`dedupe` writes when given --apply. It soft-deletes (`deleted_at` +
 `deleted_by`), never hard-deletes, so clearing those two columns restores
-every retired row — but it hides rows a user can see, and it leaves a
+every retired row, but it hides rows a user can see, and it leaves a
 `platform_audit_log` entry either way.
 
-READ FIRST, THEN ACT. `dedupe-scan` is read-only and answers the question the
-freshness probe explicitly left open: it measured ONE space, while the defect
-was architectural and applies to any project with a group mailbox. Run it
-before authorising a write anywhere.
+Read first, then act. `dedupe-scan` is read-only and reports across every
+connection, since the defect is architectural and applies to any project
+with a group mailbox. Run it before authorising a write anywhere.
 
-⚠️ REGION (dedupe/dedupe-scan). `message` and `connection` are region-local,
-so `--env ae` for a real AE-region space. `--host evane` would read the control plane's own
-database and honestly report zero.
+Region (dedupe/dedupe-scan): `message` and `connection` are region-local,
+so `--env ae` for a real AE-region space. `--host evane` would read the
+control plane's own database and honestly report zero.
 
-WHAT THE INLINE-IMAGE BACKFILL IS (refresh-inline-images). Outlook group-
-conversation posts reference inline images (a company logo, social-media
-icons in a signature) as ``<img src="cid:...">`` — a scheme a browser cannot
-resolve on its own. ``services/message_sync.py`` now rewrites those
-references to ``data:`` URIs at SYNC time, but that only reaches a
-conversation the next time it is actually re-synced. This backfill re-syncs
-already-stored messages BY THEIR OWN remote_id (never Graph's
-``/conversations`` LIST — D319), so it also reaches a conversation Graph's
-list endpoint has since gone quiet on.
+What the inline-image backfill is (refresh-inline-images): Outlook
+group-conversation posts reference inline images (a company logo,
+social-media icons in a signature) as ``<img src="cid:...">``, a scheme a
+browser cannot resolve on its own. The sync now rewrites those references
+to ``data:`` URIs at sync time, but that only reaches a conversation the
+next time it is actually re-synced. This backfill re-syncs already-stored
+messages by their own remote_id, never by listing conversations, so it
+also reaches a conversation the list endpoint has since gone quiet on.
 
-DRY RUN BY DEFAULT for `refresh-inline-images` too — ``--apply`` flips it,
+Dry run by default for `refresh-inline-images` too; ``--apply`` flips it,
 same convention as `dedupe`. Idempotent: a message whose body_html was
 already rewritten (no more ``cid:``) is not a candidate on the next dry run.
 
-``api.admin_post``/``api.admin_get``, not the plain ``api`` client — this is
-the GLOBAL-only ``/admin`` surface, same rule as ``fm i18n-backfill`` /
+``api.admin_post``/``api.admin_get``, not the plain ``api`` client: this is
+the Global-only ``/admin`` surface, same rule as ``fm i18n-backfill`` /
 ``fm space-plan``.
 """
 
@@ -85,7 +78,7 @@ def canonical_subject(subject: str | None) -> str:
 
 
 # ===========================================================================
-# Rendering — dedupe-scan / dedupe
+# Rendering - dedupe-scan / dedupe
 # ===========================================================================
 def render_scan(payload: dict) -> str:
     lines = [
@@ -109,7 +102,7 @@ def render_scan(payload: dict) -> str:
 
 def render_dedupe(payload: dict) -> str:
     applied = bool(payload.get("applied"))
-    head = "APPLIED" if applied else "DRY RUN — nothing was written"
+    head = "APPLIED" if applied else "DRY RUN: nothing was written"
     lines = [
         f"{head}   connection={payload.get('connection_id')}",
         f"groups={payload.get('groups', 0)}  rows in groups={payload.get('rows_in_groups', 0)}"
@@ -125,10 +118,10 @@ def render_dedupe(payload: dict) -> str:
         lines.append(
             f"      KEEP {group.get('keep')}  last_synced={group.get('keep_last_synced_at')}"
         )
-        # strict=True on purpose: the two lists are built from the same loop in
-        # services/message_dedupe.py and a length mismatch would mean the plan is
-        # describing a row it did not measure. Better a traceback than a report
-        # that silently drops the last dropped row.
+        # strict=True on purpose: the two lists are built from the same loop
+        # server-side, and a length mismatch would mean the plan is describing
+        # a row it did not measure. Better a traceback than a report that
+        # silently drops the last dropped row.
         for row_id, synced in zip(
             group.get("drop") or [],
             group.get("drop_last_synced_at") or [],
@@ -142,7 +135,7 @@ def render_dedupe(payload: dict) -> str:
             f"--plan-token {payload['plan_token']})"
         )
         lines.append(
-            "              ⚠ it fingerprints the keep/drop of the group(s) you "
+            "              it fingerprints the keep/drop of the group(s) you "
             "named. A sync tick"
         )
         lines.append(
@@ -155,12 +148,12 @@ def render_dedupe(payload: dict) -> str:
         lines.append(f"groups applied: {payload.get('groups_applied')}")
         if payload.get("groups_skipped"):
             lines.append(
-                f"groups NOT named (left alone — pass --group to include): "
+                f"groups NOT named (left alone, pass --group to include): "
                 f"{payload.get('groups_skipped')}"
             )
         if payload.get("unknown_groups"):
             lines.append(
-                f"⚠ requested groups that are not currently duplicates (already "
+                f"requested groups that are not currently duplicates (already "
                 f"merged, or a mistyped remote_id): {payload.get('unknown_groups')}"
             )
         lines.append(f"soft-deleted: {payload.get('soft_deleted', 0)}")
@@ -175,7 +168,7 @@ def render_dedupe(payload: dict) -> str:
 
 
 # ===========================================================================
-# Rendering — refresh-inline-images
+# Rendering - refresh-inline-images
 # ===========================================================================
 def render_refresh_inline_images(payload: dict) -> str:
     """The report. Target and mode first, then whatever this run's shape carries."""
@@ -184,7 +177,7 @@ def render_refresh_inline_images(payload: dict) -> str:
         f"space     {target.get('space_name') or '?'}  ({target.get('space_id')})",
         f"project   {target.get('project_name') or '?'}  ({target.get('project_id')})",
         f"region    {target.get('region')}   (resolved by the server from the "
-        "Global space registry — not from --env)",
+        "Global space registry, not from --env)",
         "",
         f"mode          {'DRY RUN (writes nothing)' if payload.get('dry_run') else 'APPLIED'}",
         f"connections   {payload.get('connections', 0)} OUTLOOK connection(s) in this space",
@@ -204,7 +197,7 @@ def render_refresh_inline_images(payload: dict) -> str:
             f"refreshed  {payload.get('refreshed', 0)}",
             f"unchanged  {payload.get('unchanged', 0)}",
             f"gone       {payload.get('gone', 0)}   "
-            "(conversation no longer resolves by id — D319's hard case)",
+            "(conversation no longer resolves by id)",
             f"errors     {payload.get('errors', 0)}",
         ]
     return "\n".join(lines)
@@ -258,14 +251,14 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="REMOTE_ID",
         help="`dedupe` only: a duplicate group's remote_id (as printed by the "
-        "dry run), repeatable. REQUIRED under --apply — no whole-connection "
-        "apply (owner rule, 2026-09-09). Ignored on a dry run",
+        "dry run), repeatable. REQUIRED under --apply, no whole-connection "
+        "apply. Ignored on a dry run",
     )
     parser.add_argument(
         "--reason",
         default=None,
         metavar="TEXT",
-        help="`dedupe` only: REQUIRED under --apply — one sentence saying why "
+        help="`dedupe` only: REQUIRED under --apply, one sentence saying why "
         "the named group(s) are the same duplicate cluster. Becomes the audit "
         "row's explanation",
     )
@@ -273,7 +266,7 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
         "--plan-token",
         default=None,
         metavar="TOKEN",
-        help="`dedupe` only: REQUIRED under --apply — the `plan token` the dry "
+        help="`dedupe` only: REQUIRED under --apply, the `plan token` the dry "
         "run printed for the SAME --group keys. The server recomputes it from "
         "live rows and refuses (409) if a sync tick has changed which row would "
         "be kept. Ignored on a dry run",
@@ -291,38 +284,39 @@ _HELP = "group-mailbox messages: duplicate cleanup + the inline-image backfill (
 
 _DESCRIPTION = """Two admin surfaces over the group-mailbox `message` table:
 
-  ev messages dedupe-scan --env ae                                      read-only, every connection
-  ev messages dedupe --env ae --connection <id>                         dry run for one connection
-  ev messages dedupe --env ae --connection <id> \\
+  fm messages dedupe-scan --env ae                                      read-only, every connection
+  fm messages dedupe --env ae --connection <id>                         dry run for one connection
+  fm messages dedupe --env ae --connection <id> \\
       --group <remote_id> [--group <remote_id> ...] \\
       --reason "<why these are the same conversation>" \\
       --plan-token <token from the dry run> --apply                     merge exactly those groups
 
-  ev messages refresh-inline-images --env ae --space <uuid>            dry run
-  ev messages refresh-inline-images --env ae --space <uuid> --apply    the real run
+  fm messages refresh-inline-images --env ae --space <uuid>            dry run
+  fm messages refresh-inline-images --env ae --space <uuid> --apply    the real run
 
-dedupe / dedupe-scan — find and collapse the duplicate `message` rows the
-un-locked mailbox sync produced (69 groups / 136 orphan rows in a real prod space,
-measured 2026-09-07). Keep rule: per (connection, remote conversation) the
-row with the newest last_synced_at survives (ties break on the lowest id) —
-the same rule the sync itself now uses to pick which row to update, so the
-two cannot disagree. Losers are SOFT-deleted (deleted_at + deleted_by).
-Clearing those two columns restores them. Proposal/comment/status-point rows
-that named a retired row are re-pointed at the survivor; audit and metering
-rows are deliberately left alone. Region-local data: use --env ae for a real
-AE-region space, not --host evane.
+dedupe / dedupe-scan: find and collapse the duplicate `message` rows a
+mailbox sync race produced. Keep rule: per (connection, remote
+conversation) the row with the newest last_synced_at survives (ties break
+on the lowest id), the same rule the sync itself now uses to pick which
+row to update, so the two cannot disagree. Losers are SOFT-deleted
+(deleted_at + deleted_by). Clearing those two columns restores them.
+Proposal/comment/status-point rows that named a retired row are
+re-pointed at the survivor; audit and metering rows are deliberately left
+alone. Region-local data: use --env ae for a real AE-region space, not
+--host evane.
 
-⚠️ NO WHOLE-CONNECTION APPLY (owner rule, 2026-09-09 — services/dedupe_guard.py).
---apply merges ONLY the groups named by --group (repeatable, the remote_id the
-dry run printed), and needs --reason: one sentence saying why the named
-group(s) are the same duplicate cluster. `--apply` with no --group, an empty
-list, or a wildcard is refused 422. The dry run still describes every group in
-the connection regardless — only the WRITE is scoped.
+NO WHOLE-CONNECTION APPLY. --apply merges only the groups named by --group
+(repeatable, the remote_id the dry run printed), and needs --reason: one
+sentence saying why the named group(s) are the same duplicate cluster.
+`--apply` with no --group, an empty list, or a wildcard is refused 422.
+The dry run still describes every group in the connection regardless,
+only the write is scoped.
 
-refresh-inline-images — re-embed inline images (company logo, social icons)
-in already-synced messages whose body_html still carries a dangling `cid:`,
-by re-syncing each one by its OWN remote_id (never Graph's /conversations
-LIST — see D319), through the same idempotent upsert path a normal sync uses.
+refresh-inline-images: re-embed inline images (company logo, social
+icons) in already-synced messages whose body_html still carries a
+dangling `cid:`, by re-syncing each one by its own remote_id (never by
+listing conversations), through the same idempotent upsert path a normal
+sync uses.
 """
 
 
@@ -359,24 +353,24 @@ def _run_dedupe(args) -> int:
             "all-connections apply: run `fm messages dedupe-scan` first and act on "
             "one measured blast radius at a time."
         )
-    # for_write=True EVEN FOR THE DRY RUN. `context.resolve(for_write=True)` is
+    # for_write=True even for the dry run. `context.resolve(for_write=True)` is
     # what refuses to inherit the target from `fm use`, and a command that can
-    # write must never pick its environment from a remembered preference — not
+    # write must never pick its environment from a remembered preference, not
     # even on the run that happens not to write. One flag decides whether this
     # is production.
     ctx = context.resolve(args, for_write=True, need_token=True)
     body: dict = {"connection_id": connection, "apply": bool(args.apply)}
     if args.apply:
-        # Forwarded as-given, including None/empty — the server is the ONE place
-        # that refuses (422) a missing/empty/wildcard `groups` or a blank
-        # `reason` (services/dedupe_guard.py, owner rule 2026-09-09). Duplicating
-        # that check here would be the exact drift the project rules warns against.
+        # Forwarded as-given, including None/empty: the server is the one
+        # place that refuses (422) a missing/empty/wildcard `groups` or a
+        # blank `reason`. Duplicating that check here would be a second
+        # copy of a rule the server already owns.
         body["groups"] = getattr(args, "group", None)
         body["reason"] = getattr(args, "reason", None)
         # Forwarded as-given for the same reason as the two above: the server
-        # recomputes the token from live rows and is the ONE place that refuses
+        # recomputes the token from live rows and is the one place that refuses
         # (409 `plan-stale`). A client-side "did you pass one?" check here would
-        # be a second copy of a rule the server already owns — and the client
+        # be a second copy of a rule the server already owns, and the client
         # cannot compute the token anyway, which is the whole point of it.
         body["plan_token"] = getattr(args, "plan_token", None)
     payload = api.admin_post(ctx.target, DEDUPE_ENDPOINT, body, token=ctx.token)
