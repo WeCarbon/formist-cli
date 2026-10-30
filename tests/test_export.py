@@ -1,40 +1,31 @@
-"""``fm export``: writing a bundle to disk without lying about what landed.
+"""Tests for ``fm export``: writing a bundle to disk without lying about
+what landed.
 
-WHY THIS COMMAND IS NOT A THIN WRAPPER
---------------------------------------
-There are two export routes and they are not the same KIND of thing:
+There are two export routes and they are not the same kind of thing: a
+plain JSON read available to any member, and a write that creates a File
+row and a blob (member-owner/admin only). A command called "export"
+sounding like a read on both halves is exactly how the second one gets
+run against the wrong environment, so the bundle half goes through
+``for_write=True`` and can never inherit ``fm use``'s environment. With an
+env remembered and none on the command line, the read proceeds and the
+write refuses.
 
-  ``GET  /projects/{id}/export``         a READ. JSON, ``require_member``, any role.
-  ``POST /projects/{id}/export/bundle``  a WRITE. ``routes/workspace_transfer.py:90``
-                                         calls ``create_upload``: it inserts a File
-                                         row under Files → Exports, writes blob
-                                         bytes, and emits ``ON_PROJECT_EXPORTED``.
-                                         OWNER/ADMIN.
+Three ways a file-writing command can lie, each guarded here:
 
-A command called "export" sounding like a read on both halves is exactly how the
-second one gets run against the wrong environment, so the bundle half goes through
-``for_write=True`` and can never inherit ``fm use``'s environment. That is the
-first property below, and it is behavioural: with an env remembered and none on the
-command line, the read proceeds and the write refuses.
-
-THE THREE WAYS A FILE-WRITING COMMAND LIES
-------------------------------------------
-1. **It overwrites something.** Silently replacing a previous export is
+1. It overwrites something. Silently replacing a previous export is
    unrecoverable and looks like success.
-2. **It writes nothing and says it worked.** the project rules records a test that passed
-   having uploaded ZERO BYTES. An export that creates an empty file and prints a
-   path is that failure with a different noun, so an empty body is refused rather
-   than written.
-3. **It writes somewhere else.** The filename comes from the SERVER
-   (``Content-Disposition``), which means a path separator in it is a path the
-   operator never chose. ``../../..`` in that header must not escape the target
-   directory: and nothing else in this tool is watching that, because nothing else
-   takes a filename from a response.
+2. It writes nothing and says it worked. An export that creates an empty
+   file and prints a path is a false success, so an empty body is refused
+   rather than written.
+3. It writes somewhere else. The filename comes from the server
+   (``Content-Disposition``), which means a path separator in it is a
+   path the operator never chose. A traversal in that header must not
+   escape the target directory, and nothing else in this tool takes a
+   filename from a response.
 
-The reported path must be the path that was actually written. That is the same
-property ``tests/test_formist_cli_report_provenance.py`` pins for ``fm update``: a
-report that prints its intention rather than its outcome confirms whatever
-happened.
+The reported path must be the path that was actually written: the same
+property pinned for ``fm update``'s own report, where printing an
+intention rather than an outcome confirms whatever happened.
 """
 
 from __future__ import annotations
@@ -73,7 +64,8 @@ class TestNeverOverwrite:
 
 
 class TestZeroBytesIsNotAnExport:
-    """the project rules: a test passed having uploaded zero bytes. Same shape, new noun."""
+    """A write that silently succeeds with zero bytes is a false success,
+    whatever noun is attached to it."""
 
     def test_an_empty_body_is_refused(self, tmp_path):
         target = tmp_path / "empty.json"
@@ -103,8 +95,8 @@ class TestTheServerDoesNotChooseWhereBytesLand:
         assert filename_from_disposition("attachment") is None
 
     def test_a_traversal_in_the_filename_cannot_escape(self):
-        """The unique guard. Nothing else in ev takes a filename from a response,
-        so nothing else would catch this."""
+        """The unique guard. Nothing else in `fm` takes a filename from a
+        response, so nothing else would catch this."""
         assert safe_filename("../../../etc/passwd") == "passwd"
         assert safe_filename("/etc/passwd") == "passwd"
         assert safe_filename("a/b/c.zip") == "c.zip"
@@ -162,22 +154,19 @@ class TestTheReportPrintsOnlyTheResponse:
         )
 
     def test_it_prints_values_out_of_the_manifest(self):
-        """``classes`` is a LIST of ``{name, file, count}``.
-
-        Captured from a real ``manifest.json`` (local dev, 2026-08-27), not read
-        off ``services/workspace_transfer.py``. The first version of this test
-        wrote it as a dict of name→count, matching what the code assumed; both
-        were wrong the same way, so the test passed and the report silently
-        omitted every class row. That is the third appearance of this failure in
-        this lane, so the fixture is now transcribed rather than reasoned.
+        """``classes`` is a list of ``{name, file, count}``, captured from a
+        real ``manifest.json`` rather than reasoned about, since a fixture
+        with the wrong shape (a dict of name to count) can agree with a
+        matching bug in the code under test and still pass while silently
+        omitting every class row.
         """
         report = render_bundle_report(
             {
                 "file_id": "f-1",
-                "filename": "evane-export-gfss-20260827T000000Z.zip",
+                "filename": "evane-export-acme-20260827T000000Z.zip",
                 "manifest": {
                     "bundle_id": "b-1",
-                    "source_project_name": "GFSS 2026",
+                    "source_project_name": "Acme Summit",
                     "options": {"include_history": False},
                     "classes": [
                         {"name": "project", "file": "data/project.json", "count": 1},
@@ -189,8 +178,8 @@ class TestTheReportPrintsOnlyTheResponse:
                 },
             }
         )
-        assert "evane-export-gfss-20260827T000000Z.zip" in report
-        assert "GFSS 2026" in report
+        assert "evane-export-acme-20260827T000000Z.zip" in report
+        assert "Acme Summit" in report
         assert "stakeholder" in report
         assert "12" in report
         # A missing blob is a hole in the bundle. Reporting the count without it
@@ -243,10 +232,10 @@ class TestTheBundleHalfCannotInheritItsEnvironment:
 class TestTheDestinationIsCheckedBeforeTheServerBuilds:
     """``--bundle`` has a side effect, so a doomed run must fail before it.
 
-    ``write_export`` refuses to overwrite, but it runs last: and for the bundle
-    "last" is after a POST that already inserted a File row under Files → Exports
-    and emitted ``ON_PROJECT_EXPORTED``. Refusing only at the end leaves the space
-    holding an artefact this run cannot hand over, and the only way forward is a
+    ``write_export`` refuses to overwrite, but it runs last, and for the
+    bundle "last" is after a POST that already inserted a File row and
+    emitted an export-completed event. Refusing only at the end leaves the
+    space holding an artefact this run cannot hand over, and the only way forward is a
     second build, i.e. a second row.
     """
 
