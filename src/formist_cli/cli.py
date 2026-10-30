@@ -1,0 +1,1333 @@
+"""``fm`` — the Evane operator CLI.
+
+Design rules, all of which are safety properties rather than preferences:
+
+- **Local by default, prod named explicitly.** ``--env`` defaults to ``local``.
+  There is no state file and no "current environment", because a remembered
+  target is one somebody forgets they set.
+- **Hosts are allow-listed** (``formist_cli.targets``). The retired we-carbon stack
+  still answers 200, so an unknown host must be refused rather than tried.
+- **Spaces are addressed by UUID, never by name** — three same-named projects
+  exist in that retired database.
+- **Every ``/admin`` mutation is exposed, and every one is audited — by two
+  different mechanisms, and that is fine.** ``fm update`` posts to
+  ``/projects/{id}/admin/data-changes``, where every op runs through
+  ``services.governance.apply_change`` and lands in the project-scoped
+  ``AuditLog``. The REST of the platform-admin surface (``fm users
+  create/set/add-space/remove-space``, ``fm spaces rename/delete/
+  transfer-ownership/delete-conversation/delete-skill/delete-invitation``) writes
+  to ``PlatformAuditLog`` instead, via ``AuditedAdminRouter``
+  (``services/platform_audit.py``) — a DIFFERENT table, because ``AuditLog.
+  project_id`` is a non-nullable FK and a platform action (create a user, delete a
+  space) often has no project at all. The earlier rule here ("this tool has no
+  write commands beyond ``update``") predated that router and is superseded by
+  D224 (2026-09-06) — owner's ruling 「所有 admin 功能都要用 fm cli 可用」, all
+  admin functionality must be reachable from ``ev``.
+- **A write never inherits its environment.** ``fm use`` remembers a space and, for
+  READS, an environment. A write resolves ``--env`` from the command line only. A
+  space is 36 characters nobody verifies by eye; an environment is one word and
+  decides whether this is production. See ``evtool/prefs.py``.
+
+Stdlib only — the production image builds ``uv sync --frozen --no-dev``, so ``ev``
+must not add a runtime dependency.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import replace
+
+from formist_cli import airtable as airtable_mod
+from formist_cli import alerts as alerts_mod
+from formist_cli import api, context, logs, prefs, privileges, skill_library, skills, space_plan, tokens, users
+from formist_cli import chat as chat_mod
+from formist_cli import chats as chats_mod
+from formist_cli import connectors as connectors_mod
+from formist_cli import diff as diff_mod
+from formist_cli import doctor as doctor_mod
+from formist_cli import export as export_mod
+from formist_cli import files as files_mod
+from formist_cli import importer as importer_mod
+from formist_cli import kb as kb_mod
+from formist_cli import login as login_mod
+from formist_cli import meetings as meetings_mod
+from formist_cli import messages as messages_mod
+from formist_cli import participants as participants_mod
+from formist_cli import projects as projects_mod
+from formist_cli import resolve as resolve_mod
+from formist_cli import settings as settings_mod
+from formist_cli import spaces as spaces_mod
+from formist_cli import update as update_mod
+from formist_cli import uploads as uploads_mod
+from formist_cli import usage_tokens as usage_tokens_mod
+from formist_cli import whatsapp as whatsapp_mod
+from formist_cli.airtable import AirtableError
+from formist_cli.alerts import AlertsError
+from formist_cli.chats import ChatsError
+from formist_cli import cli_support
+from formist_cli.cli_support import PLATFORM_ADMIN_GATE_NOTE, as_dict
+from formist_cli.diff import DiffError
+from formist_cli.export import ExportError
+from formist_cli.files import FilesError
+from formist_cli.importer import ImportRefused
+from formist_cli.kb import KbError
+from formist_cli.meetings import MeetingsError
+from formist_cli.participants import ParticipantsError
+from formist_cli.prefs import PrefsError
+from formist_cli.projects import ProjectsError
+from formist_cli.resolve import ResolutionError
+from formist_cli.spaces import SpacesError
+from formist_cli.targets import (
+    DEFAULT_HOST,
+    HOSTS,
+    TargetError,
+    is_admin_env,
+    require_space_id,
+    resolve,
+)
+from formist_cli.update import UpdateError
+from formist_cli.uploads import UploadError
+from formist_cli.usage_tokens import UsageTokensError
+from formist_cli.whatsapp import WhatsAppError
+
+_HOST_HELP = (
+    f"deployment: {', '.join(HOSTS)}, or an API origin such as "
+    f"https://api.example.com or 127.0.0.1:8160 (default: {DEFAULT_HOST})"
+)
+
+
+def _add_env(parser: argparse.ArgumentParser, *, for_write: bool = False) -> None:
+    """Add ``--host`` to a subcommand.
+
+    The root parser carries ``--host`` too, so both ``fm --host X cmd`` and
+    ``fm cmd --host X`` work. A write never inherits a host remembered by
+    ``fm use``; see :mod:`formist_cli.prefs`.
+    """
+    parser.add_argument(
+        "--host",
+        default=argparse.SUPPRESS,
+        metavar="HOST",
+        help=_HOST_HELP + ("; a write never inherits it from `fm use`" if for_write else ""),
+    )
+
+
+def _add_space(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--space", help="space UUID (never a name; default from `fm use`)"
+    )
+
+
+def _effective(
+    args, *, for_write: bool = False, need_space: bool = True, need_token: bool = False
+):
+    """Resolve the effective target and PRINT its provenance before anything runs.
+
+    The banner goes to stderr on every command, reads included. Printing the target
+    alone is close to useless — the operator already believes they know it. Printing
+    where each half came from, and how old a remembered one is, is what breaks a
+    wrong belief.
+    """
+    # One resolver, imported. This used to be the implementation; evtool/context.py
+    # is now the only one, because the same operation existed here AND inline in
+    # logs.py under a different name, and the two had already drifted.
+    return context.resolve(
+        args, for_write=for_write, need_space=need_space, need_token=need_token
+    )
+
+
+def _token_for(eff):
+    """The stored token for this target, announcing a cross-region borrow.
+
+    A credential silently sourced from another file is exactly the invisible state
+    this tool otherwise refuses, so the borrow is printed.
+    """
+    # Already resolved and already announced by context.resolve; kept as a named
+    # accessor so ten call sites read the same as before.
+    return eff.token
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="fm",
+        description="Command-line client for Formist (and Evane) deployments.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            f"Named hosts: {', '.join(f'{n} ({h.api_base})' for n, h in HOSTS.items())}.\n"
+            "Writes run as a dry run first; pass --apply to commit.\n"
+        ),
+    )
+    parser.add_argument("--host", default=None, metavar="HOST", help=_HOST_HELP)
+    parser.add_argument("--version", action="version", version=f"fm {login_mod.cli_version()}")
+    sub = parser.add_subparsers(
+        dest="command", required=True, parser_class=cli_support.SubcommandParser
+    )
+
+    p = sub.add_parser(
+        "login",
+        help="sign in through the browser and store a CLI credential (0600)",
+        description=(
+            "Signs in through the SAME OAuth 2.1 flow the MCP connector "
+            "uses — one authorization server for both (mcp_app/oauth). `fm` "
+            "registers itself as a public client, opens the authorization page in "
+            "a browser where you sign in with your NORMAL login and approve, and "
+            "exchanges a one-time code (PKCE S256) for a credential that is scoped "
+            "to you, expires, and is revocable on its own from Settings > Security "
+            "> Connected apps, beside your other connected apps. "
+            "It replaces pasting a browser session JWT, which was the whole account "
+            "and could only be killed by signing out everywhere. "
+            "There is no --token flag. For CI / an unattended machine, export "
+            "FORMIST_TOKEN with the 'token' field of the file THIS command writes "
+            "(0600, printed below) — `fm` uses it for that invocation only, never "
+            "writes it to disk, and never refreshes it; run `fm whoami` to confirm "
+            "which source is in use. "
+            "A --host evane or --host evane-ae login runs against the Global region (the "
+            "authorization server is the control plane) and the credential works at "
+            "both of those hosts; --host formist signs in against its own deployment."
+        ),
+    )
+    _add_env(p)
+    p.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="do not open a browser or listen on 127.0.0.1; print the URL and "
+             "prompt for the code the page displays (headless boxes, SSH)",
+    )
+    p.add_argument(
+        "--admin",
+        action="store_true",
+        help="also request the platform-administration scope. Only granted if your "
+             "account already has it; without this flag `fm users`, `fm spaces` and "
+             "`fm update` are refused even for a platform admin",
+    )
+
+    p = sub.add_parser(
+        "logout",
+        help="revoke the stored credential server-side and delete the file",
+    )
+    _add_env(p)
+    p.add_argument("--all", action="store_true", help="remove every environment's token")
+    p.add_argument(
+        "--local-only",
+        action="store_true",
+        help="delete the file without calling the server (offline)",
+    )
+
+    p = sub.add_parser("whoami", help="describe the stored token (never prints it)")
+    _add_env(p)
+    p.add_argument(
+        "--remote",
+        action="store_true",
+        help="also list this account's connected apps as the SERVER sees them "
+             "(MCP connectors and CLI devices together)",
+    )
+
+    p = sub.add_parser("health", help="health checks for a region (public, no auth)")
+    _add_env(p)
+    p.add_argument(
+        "--admin", action="store_true",
+        help="GET /admin/health instead — this region's checks PLUS the other "
+             "region's, in one call (needs a platform-admin session)",
+    )
+
+    p = sub.add_parser("instance", help="build + migration identity (Tier 1 endpoint)")
+    _add_env(p)
+
+    spaces_mod.add_parser(sub)
+
+    p = sub.add_parser(
+        "proposals",
+        help=(
+            "list a space's AI proposals, or unstick the pre-atomic-approve ones"
+        ),
+        epilog=PLATFORM_ADMIN_GATE_NOTE,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p)
+    _add_space(p)
+    # Positional, defaulted, and NOT a second subparser level: `fm proposals` with
+    # no subject has meant "list them" for months and every runbook says so.
+    p.add_argument(
+        "subject",
+        nargs="?",
+        default="list",
+        choices=PROPOSAL_SUBJECTS,
+        help="list (default) | unstick",
+    )
+    p.add_argument("--status", help="list: e.g. PENDING")
+    p.add_argument("--target-kind", dest="target_kind")
+    p.add_argument("--limit", default="50")
+    p.add_argument(
+        "--id",
+        dest="proposal_ids",
+        action="append",
+        help="unstick: repair only this proposal id (repeatable). "
+        "Default is every stranded proposal in the space.",
+    )
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="unstick: commit the write. Without it nothing is written.",
+    )
+
+    p = sub.add_parser("audit-log", help="a space's audit log (admin)")
+    _add_env(p)
+    _add_space(p)
+    p.add_argument("--limit", default="50")
+
+    p = sub.add_parser(
+        "connectors",
+        help="a space's connectors (admin); `grants` for what they may do",
+        description=connectors_mod.COMMAND_DESCRIPTION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p)
+    _add_space(p)
+    # ⚠️ OPTIONAL and default-preserving. `fm connectors` alone must keep printing
+    # the plain list it always printed — a positional that changed the default
+    # behaviour would silently redefine an existing operator command.
+    p.add_argument(
+        "subject", nargs="?", default=None,
+        help=f"one of: {', '.join(connectors_mod.SUBJECTS)} (default: list)",
+    )
+    p.add_argument(
+        "space_id", nargs="?", default=None,
+        help="space UUID (an alternative to --space)",
+    )
+    p.add_argument("--json", action="store_true", help="raw JSON instead of a table")
+
+    p = sub.add_parser(
+        "entity-fields",
+        help="a space's custom-field schemas (the read whose absence forced a write)",
+    )
+    _add_env(p)
+    _add_space(p)
+
+    # Parser AND body live in evtool/logs.py: cli.py gets an import and a dispatch
+    # entry and nothing else. Four lanes edit this file; that shape three-way-merges.
+    logs.add_parser(sub)
+    users.add_parser(sub)
+    space_plan.add_parser(sub)
+    skill_library.add_install_parser(sub)
+    skills.add_parser(sub)
+
+    p = sub.add_parser(
+        "doctor",
+        help="readable health rollup across environments",
+        description=(
+            "Health, migration identity and credential status for every "
+            "environment, in one place. Distinguishes 'could not reach it' from "
+            "'reached it and it is unhealthy' — different facts, different next "
+            "actions — and reports every environment even when one is down."
+        ),
+    )
+    p.add_argument(
+        "--host",
+        default=argparse.SUPPRESS,
+        metavar="HOST",
+        help="check only this deployment (default: every named, live one)",
+    )
+
+    p = sub.add_parser(
+        "use",
+        help="remember a default space (and, for reads, a host)",
+        description=(
+            "Remembers defaults so a space UUID need not be retyped. The space is "
+            "remembered for everything; the host is remembered for READS "
+            "ONLY. A write never inherits it: with one remembered the write is "
+            "REFUSED until you pass --host, and with nothing remembered a write "
+            "targets the default host (formist). A remembered host is one "
+            "somebody forgets they set and the cost of forgetting is a write to "
+            "the wrong database. Every command prints "
+            "the effective target and where each half came from."
+        ),
+    )
+    _add_env(p)
+    _add_space(p)
+    p.add_argument("--show", action="store_true", help="print the current defaults")
+    p.add_argument("--clear", action="store_true", help="forget everything")
+
+    p = sub.add_parser(
+        "get",
+        help="find rows by name, and the ids they resolve to",
+        description=(
+            "The resolver that means a UUID is never transcribed. Prints the id for "
+            "a name so it can be checked, and is the same lookup `fm update` does "
+            "for $name. Listing shows every candidate; resolving requires exactly "
+            "one match and refuses otherwise."
+        ),
+    )
+    _add_env(p)
+    _add_space(p)
+    p.add_argument(
+        "kind",
+        help=f"one of: {resolve_mod.kind_names()}  (case-insensitive; - and _ alike)",
+    )
+    p.add_argument("--name", help="exact name; omit to list the kind")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p = sub.add_parser(
+        "update",
+        help="bulk data change: dry-run always, apply with the plan token",
+        description=(
+            "Applies a batch of data changes transactionally, or reports what would "
+            "happen. A dry run ALWAYS runs first and prints a plan token; --apply "
+            "takes that token and re-runs the dry run to check it still matches "
+            "before committing.\n\n"
+            "Payload ops use the endpoint's own vocabulary ($action, $kind, $id, "
+            "$set, $expect, $ref, $replace_data, $hard) plus one fm-side addition: "
+            "$name, resolved to an id here, seconds before the write, against the "
+            "environment being written. The name is copied into $expect so the "
+            "server re-checks the resolution against the row itself.\n\n"
+            "A $set naming `data` (STAKEHOLDER / CUSTOM's free-form blob) MERGES "
+            "into the row's existing value by default -- {'country': 'AE'} changes "
+            "only `country`. Add \"$replace_data\": true to an op to replace the "
+            "whole blob instead; that is the only way to remove a key.\n\n"
+            "$action \"delete\" is SOFT -- restorable from the space's Trash, "
+            "like the UI. $hard is refused for a kind with a Trash entry (purge "
+            "from there instead) and required for the two that have none "
+            "(FILE_LINK, SESSION_PARTICIPANT).\n\n"
+            + update_mod.NOT_DEPLOYED_NOTE
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p, for_write=True)
+    _add_space(p)
+    p.add_argument("payload", help="path to a JSON file of ops")
+    p.add_argument(
+        "--apply",
+        metavar="PLAN_TOKEN",
+        help="commit, if this token still matches a fresh dry run of this plan",
+    )
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+
+    chats_mod.add_parser(sub)
+
+    chat_mod.add_parser(sub)
+
+
+    export_mod.add_parser(sub)
+    importer_mod.add_parser(sub)
+
+    diff_mod.add_parser(sub)
+
+
+    airtable_mod.add_parser(sub)
+    participants_mod.add_parser(sub)
+
+    usage_tokens_mod.add_parser(sub)
+
+    alerts_mod.add_parser(sub)
+    settings_mod.add_parser(sub)
+
+    messages_mod.add_parser(sub)
+    whatsapp_mod.add_parser(sub)
+
+    uploads_mod.add_parser(sub)
+
+    kb_mod.add_parser(sub)
+    meetings_mod.add_parser(sub)
+    files_mod.add_parser(sub)
+    projects_mod.add_parser(sub)
+    connectors_mod.add_connector_parser(sub)
+
+    return parser
+
+
+# --- commands -----------------------------------------------------------------
+
+
+def cmd_login(args) -> int:
+    """Browser-confirmed OAuth authorization. See evtool/login.py for the flow.
+
+    Deliberately `resolve`, not `_effective`: the credential commands bind to the
+    environment NAMED on the command line, never to a remembered one. `fm login`
+    picks which FILE a token lands in, and inheriting that from `fm use` is how a
+    prod token ends up in the local slot (or the reverse). Same for logout/whoami.
+    """
+    target = resolve(args.host)
+    payload = login_mod.perform_login(
+        target,
+        no_browser=bool(getattr(args, "no_browser", False)),
+        admin=bool(getattr(args, "admin", False)),
+    )
+    login_mod.store_payload(
+        target.name, payload,
+        client_id=str(payload["client_id"]),
+        client_name=str(payload.get("client_name") or ""),
+    )
+    meta = tokens.load_meta(target.name)
+
+    who = _describe_account(target, payload)
+    print(f"Connected as {who} ({target.name})")
+    print(f"  credential stored at {tokens.token_path(target.name)} (0600)")
+    print(f"  scopes: {', '.join(meta.get('scopes') or []) or '(none granted)'}")
+    if privileges.SCOPE_ADMIN not in (meta.get("scopes") or []):
+        # Said out loud rather than discovered at the first 403. The whole point of
+        # the default is that it is narrow; a narrow default nobody was told about
+        # reads as a bug.
+        print(
+            "  platform-admin actions are NOT granted to this credential "
+            "(`fm login --admin` requests them; only a platform admin is granted them)"
+        )
+    print("  revoke it from Settings > Security > Connected apps, or `fm logout`")
+    return 0
+
+
+def _describe_account(target, payload: dict) -> str:
+    """Who the new credential belongs to, asked of the SERVER.
+
+    The OAuth token response says nothing about the user — it is opaque by design —
+    so "Connected as <who>" has to be a question, not a claim read off the token.
+    Falls back to the client name when /auth/me cannot be reached: printing a wrong
+    identity would be worse than printing none.
+    """
+    try:
+        me = api.get(login_mod.auth_target(target), "/auth/me",
+                     token=str(payload["access_token"]))
+    except (api.ApiError, TargetError, OSError):
+        return str(payload.get("client_name") or "this account")
+    if isinstance(me, dict):
+        return str(me.get("email") or me.get("id") or "this account")
+    return "this account"
+
+
+def cmd_logout(args) -> int:
+    """Revoke the grant server-side, THEN delete the file.
+
+    In that order, and both halves matter. Deleting only the file leaves a live
+    credential in the world that nobody can see any more; revoking only on the
+    server leaves a dead file that `ev` will keep presenting. The local delete
+    happens even when the revoke fails (an offline laptop must still be able to
+    forget its credential) — and the failure is PRINTED, because "logged out" while
+    the credential is still live is exactly the kind of quiet wrong answer this
+    codebase keeps finding.
+    """
+    if args.all:
+        removed = tokens.clear_all()
+        print(f"removed: {', '.join(removed)}" if removed else "no stored tokens")
+        if removed:
+            print(
+                "  note: --all deletes the local files only. Revoke the grants "
+                "themselves from Settings > Security > Connected apps."
+            )
+        return 0
+
+    target = resolve(args.host)
+    token = tokens.load(target.name)
+    if not token:
+        print(f"no stored token for {target.name}")
+        return 0
+
+    revoked = False
+    if not getattr(args, "local_only", False):
+        revoked = login_mod.revoke(target, token, _own_grant_id(target, token))
+    tokens.clear(target.name)
+    if revoked:
+        print(f"revoked the {target.name} grant server-side and removed the file")
+        return 0
+    if getattr(args, "local_only", False):
+        print(f"removed the {target.name} token file (--local-only: NOT revoked)")
+        return 0
+    print(
+        f"removed the {target.name} token file, but the server did NOT confirm the "
+        "revocation — the grant may still be live. Revoke it from "
+        "Settings > Security > Connected apps.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _own_grant_id(target, token: str) -> str | None:
+    """The grant id of the credential we are holding, asked of the server.
+
+    An OAuth access token is OPAQUE — there is nothing in it to read a grant id out
+    of, which is the property that makes it revocable in the first place. So `ev
+    logout` asks: `GET /auth/apps` returns this user's grants and the CLI matches
+    the one whose client_id it stored. A stored grant id would be the alternative
+    and it would go stale on the first refresh.
+    """
+    client_id = tokens.load_meta(target.name).get("client_id")
+    if not client_id:
+        return None
+    try:
+        apps = login_mod.list_apps(target, token)
+    except (api.ApiError, TargetError, OSError):
+        return None
+    for app in apps:
+        if app.get("client_id") == client_id and not app.get("revoked"):
+            return str(app.get("grant_id") or "") or None
+    return None
+
+
+def cmd_whoami(args) -> int:
+    target = resolve(args.host)
+    token, origin = tokens.load_for(target.name)
+    if not token:
+        print(f"no stored token for {target.name}. → fm login --host {target.name}")
+        return 1
+
+    if origin == tokens.ENV_TOKEN_ORIGIN:
+        print(f"{target.name}: token source = environment ({tokens.ENV_TOKEN_VAR})")
+        print(
+            "  not written to disk and not auto-refreshed by `fm` — scopes and "
+            "expiry are whatever the issuer granted; the server decides on every "
+            "call"
+        )
+    else:
+        meta = tokens.load_meta(target.name)
+        print(f"{target.name}: {meta.get('client_name') or 'fm'}")
+        print(f"  token source: {tokens.token_path(target.name)}")
+        if meta.get("scopes"):
+            print(f"  scopes: {', '.join(meta['scopes'])}")
+        if meta.get("expires_at"):
+            print(f"  access token expires: {meta['expires_at']} (refreshed automatically)")
+    print("  the token is OPAQUE — `fm` cannot read anything out of it; the server decides")
+
+    if getattr(args, "remote", False):
+        for app in login_mod.list_apps(target, token):
+            state = (
+                "revoked" if app.get("revoked")
+                else "expired" if app.get("expired")
+                else "active"
+            )
+            mark = "*" if app.get("client_id") == meta.get("client_id") else " "
+            kind = "cli" if app.get("is_cli") else "app"
+            admin = "  [ADMIN]" if app.get("grants_admin") else ""
+            print(
+                f"  {mark} [{kind}] {app.get('client_name')}  {state}  "
+                f"last used {app.get('last_used_at') or 'never'}{admin}"
+            )
+    return 0
+
+
+def _print_health_block(label: str, payload: dict) -> bool:
+    """One region's health block. Returns True iff a FATAL check failed."""
+    print(f"{label}: {payload.get('status')}  ({payload.get('checked_at', '')})")
+    for check in payload.get("checks", []):
+        flag = "!" if check.get("status") != "ok" else " "
+        fatal = " [fatal]" if check.get("fatal") else ""
+        print(f"  {flag} {check.get('name'):<22} {check.get('status'):<6}"
+              f" {check.get('detail', '')}{fatal}")
+    bad = [c for c in payload.get("checks", []) if c.get("status") != "ok"]
+    return any(c.get("fatal") for c in bad)
+
+
+def cmd_health(args) -> int:
+    if getattr(args, "admin", False):
+        # /admin/health is a DIFFERENT endpoint from the public /health above: it
+        # is platform-admin-gated and reports THIS region PLUS a best-effort read
+        # of the OTHER region's public /health, in one call.
+        eff = _effective(args, need_space=False, need_token=True)
+        payload = api.admin_get(eff.target, "/admin/health", token=_token_for(eff))
+        if not isinstance(payload, dict):
+            print(payload)
+            return 0
+        regions = payload.get("regions") or {}
+        worst = False
+        for name, data in regions.items():
+            worst = _print_health_block(name, data if isinstance(data, dict) else {}) or worst
+        return 1 if worst else 0
+
+    eff = _effective(args, need_space=False)
+    target = eff.target
+    payload = api.get(target, "/health")
+    if not isinstance(payload, dict):
+        print(payload)
+        return 0
+    return 1 if _print_health_block(target.name, payload) else 0
+
+
+def cmd_instance(args) -> int:
+    eff = _effective(args, need_space=False)
+    target = eff.target
+    payload = api.admin_get(target, "/admin/instance", token=_token_for(eff))
+    if not isinstance(payload, dict):
+        print(payload)
+        return 0
+    worst = 0
+    for name, data in (payload.get("regions") or {}).items():
+        alembic = data.get("alembic") or {}
+        print(f"[{name}] scope={data.get('scope')}")
+        if data.get("scope") == "process":
+            print(f"  db_role={data.get('db_role')}  scheduler={data.get('scheduler')}"
+                  f"  build_marker={data.get('build_marker')}")
+        print(f"  alembic db_head={alembic.get('db_head')}")
+        if "code_heads" in alembic:
+            print(f"  alembic code_heads={alembic.get('code_heads')}")
+            if alembic.get("in_sync") is False:
+                print("  ⚠️ db_head != code_heads — a migration is pending or failed.")
+                worst = 1
+    return worst
+
+
+#: `fm proposals <subject>`. Read by the parser AND by
+#: tests/test_ev_admin_parity.py, which resolves the coverage map's
+#: "fm proposals unstick" against it — a subject that exists in one and not the
+#: other is exactly the drift that map is for.
+PROPOSAL_SUBJECTS = ("list", "unstick")
+
+
+def cmd_proposals(args) -> int:
+    subject = getattr(args, "subject", None) or "list"
+    if subject == "unstick":
+        return _proposals_unstick(args)
+    eff = _effective(args)
+    target, space = eff.target, eff.space
+    params = {"limit": args.limit, "status": args.status, "target_kind": args.target_kind}
+    payload = api.admin_get(
+        target, f"/admin/spaces/{space}/proposals",
+        token=_token_for(eff), params=params,
+    )
+    for item in _items(payload):
+        print(f"{item.get('id')}  {item.get('status'):<10} {item.get('target_kind'):<14}"
+              f" {item.get('created_at', '')}")
+    return 0
+
+
+def _proposals_unstick(args) -> int:
+    """Survey (and with --apply, repair) proposals the OLD approve stranded.
+
+    ⚠️ THE DRY RUN ALWAYS RUNS, INCLUDING UNDER --apply, and it is printed before
+    anything is written. The whole value of this command is that the operator
+    reads WHICH proposals are half-applied before deciding — `fm space-plan set`
+    made the same call for the same reason. A repair whose scope is only visible
+    afterwards is a repair nobody reviewed.
+
+    Half-applied proposals are called out separately from merely-failed ones
+    because only the first needs a decision: its applied items cannot be undone,
+    so approving finishes the job and rejecting leaves those rows changed. The
+    command does not choose between those; a person does.
+    """
+    eff = _effective(args)
+    target, space = eff.target, eff.space
+    path = f"/admin/spaces/{space}/proposals/unstick"
+    body: dict = {"dry_run": True}
+    if getattr(args, "proposal_ids", None):
+        body["proposal_ids"] = list(args.proposal_ids)
+
+    dry = as_dict(
+        api.admin_post(target, path, body, token=_token_for(eff)),
+        what="unstick survey",
+        error=TargetError,
+    )
+    _render_unstick(dry)
+    if not dry.get("total"):
+        return 0
+    if not args.apply:
+        ids = "".join(f" --id {i}" for i in (body.get("proposal_ids") or []))
+        print()
+        print("NOTHING WAS WRITTEN. To apply exactly this:")
+        print(f"  fm proposals unstick --space {space}{ids} --apply")
+        return 0
+
+    applied = as_dict(
+        api.admin_post(target, path, {**body, "dry_run": False}, token=_token_for(eff)),
+        what="unstick result",
+        error=TargetError,
+    )
+    _render_unstick(applied)
+    print()
+    print(
+        f"APPLIED: reopened {applied.get('reopened_targets')} failed item(s) "
+        f"across {applied.get('watermarks_written')} proposal(s). "
+        "Approve or reject them from the space as usual."
+    )
+    return 0
+
+
+def _render_unstick(payload: dict) -> None:
+    rows = payload.get("proposals") or []
+    mode = "DRY RUN" if payload.get("dry_run") else "APPLIED"
+    print(
+        f"{mode}: {payload.get('total', 0)} stranded proposal(s), "
+        f"{payload.get('half_applied', 0)} of them HALF-APPLIED"
+    )
+    for row in rows:
+        flag = "HALF-APPLIED" if row.get("half_applied") else "failed-items"
+        print(
+            f"  {row.get('id')}  {row.get('status'):<9} {flag:<12} "
+            f"applied={row.get('applied')}/{row.get('target_count')} "
+            f"failed={row.get('failed')} reopen={row.get('reopened_targets')}"
+        )
+        for actor in row.get("blocked_actors") or []:
+            print(f"      blocked: {actor} (can neither approve nor reject)")
+        for reason in row.get("failure_reasons") or []:
+            print(f"      why: {reason}")
+
+
+#: Newest first. The route's `ListSpec` default sort is `created_at` ASCENDING
+#: (`routes/governance.py:133-135`), and this command used to accept it, so a space
+#: with more rows than `--limit` showed its OLDEST page and nothing else.
+#:
+#: ⚠️ MEASURED 2026-09-06, and the way it was found is the point. After an owner-
+#: approved write to a real prod space, the operator ran `fm audit-log … --limit 2000`
+#: to confirm the write had been audited and got **zero** rows for that day — the
+#: reading that offers itself is "the write was not audited", which is alarming
+#: and false. The space holds 484 audit rows; this returned the oldest 200
+#: (2026-08-20 … 2026-08-27) because the server caps the limit, and the audit row
+#: was there all along. A read whose answer is a page nobody asked for is worse
+#: than a read that fails: it answers.
+_AUDIT_LOG_SORT = "-created_at"
+
+
+def cmd_audit_log(args) -> int:
+    """A space's audit log, NEWEST FIRST, saying so when it did not show all of it.
+
+    Both halves are load-bearing and neither is decoration:
+
+    * The sort, because "what changed recently" is the only question this command
+      is ever asked, and ascending answers a question nobody has.
+    * The count line, because the server caps `--limit` (`MAX_LIMIT` on the shared
+      `ListSpec` pagination), so asking for 2000 and receiving 200 is NOT an error
+      and prints no warning of its own. `fm users` already learned this exact
+      lesson — see `evtool/users.py::render_list` and the docstring of
+      `tests/test_evtool_users.py`: a listing that shows a page while looking like
+      it showed the set is "a report that is true about what it fetched and false
+      about what exists".
+    """
+    eff = _effective(args)
+    target, space = eff.target, eff.space
+    payload = api.admin_get(
+        target, f"/admin/spaces/{space}/audit-log",
+        token=_token_for(eff),
+        params={"limit": args.limit, "sort": _AUDIT_LOG_SORT},
+    )
+    items = _items(payload)
+    for item in items:
+        print(f"{item.get('created_at', '')}  {item.get('actor_type', ''):<6}"
+              f" {item.get('action', ''):<8} {item.get('target_kind', '')}")
+    total = payload.get("total") if isinstance(payload, dict) else None
+    shown = len(items)
+    if total is None:
+        # The route always sends `total`; if it ever stops, say so rather than
+        # printing a count that looks authoritative.
+        print(f"\n{shown} shown (newest first) · total UNKNOWN "
+              f"(the server sent no `total`)")
+    elif shown < int(total):
+        print(f"\n{shown} of {total} shown, NEWEST FIRST — {int(total) - shown} "
+              f"older rows not listed. Raise --limit to reach further back.")
+    else:
+        print(f"\n{shown} of {total} (newest first)")
+    return 0
+
+
+def cmd_connectors(args) -> int:
+    """A space's connectors, what each one's LAST SYNC RUN actually did — or `grants`
+    for what they may do.
+
+    ⚠️ The default subject is the ORIGINAL listing, unchanged. `fm connectors` has
+    been an operator command for a while; adding a subject that displaced it would
+    break every existing invocation, and the breakage would look like a connector
+    problem rather than a CLI change.
+
+    The second line per connector is the whole point of the command for an operator
+    diagnosing cadence. D193 (2026-09-06) had to be inferred from two `next_sync_at`
+    samples taken five minutes apart, because the run history was not reachable at
+    all: `fm logs --env ae` is served from the Global region only, and the admin
+    connectors endpoint was reporting `sync_run: null` for every connection. The data
+    existed the whole time — `SyncRun` records it, `_sync_run_dict` serialises it —
+    so what was missing was the route passing it through and this command printing it.
+
+    `trigger` is the reading that separates the two clocks the owner's rule is made of
+    ("30 min / 每次获得 webhook 修改信号时同步"): `scheduler` means the 30-minute poll
+    produced this run, `push` means a provider change notification did. `dur` is how
+    long the run held the tick — the tick is strictly serial, so a large number here
+    on one connector is the explanation for every other connector running late.
+    """
+    subject = (getattr(args, "subject", None) or connectors_mod.DEFAULT_SUBJECT).strip().lower()
+    if subject not in connectors_mod.SUBJECTS:
+        raise connectors_mod.subject_error(getattr(args, "subject", None))
+    if getattr(args, "space_id", None) and not getattr(args, "space", None):
+        args.space = args.space_id
+    if subject == "grants":
+        return connectors_mod.run_grants(args, _effective(args))
+    eff = _effective(args)
+    target, space = eff.target, eff.space
+    payload = api.admin_get(
+        target, f"/admin/spaces/{space}/connectors", token=_token_for(eff)
+    )
+    for item in _items(payload):
+        # `type`, not `kind`. The payload has never had a `kind` key
+        # (routes/connectors.py::_connection_dict publishes `type`), so this column
+        # printed a literal "?" for every connector in every space since the command
+        # was written — measured against production 2026-09-06, three connectors, three
+        # question marks. An operator could not tell the SharePoint connector from the
+        # Airtable one in the output of the command whose whole job is telling them
+        # apart. `label` is the registry's human name for the same thing.
+        kind = item.get("type") or item.get("kind") or "?"
+        print(f"{item.get('id')}  {str(kind).lower():<16} {item.get('status', '?')}")
+        print(
+            f"    last_synced={item.get('last_synced_at') or '-'}"
+            f"  next_sync={item.get('next_sync_at') or '-'}"
+            f"  every={item.get('sync_interval_seconds', '?')}s"
+        )
+        run = item.get("sync_run")
+        if not isinstance(run, dict):
+            # Distinguished from a run that failed: this connector has never run at
+            # all, which for a linked connector is itself the finding.
+            print("    last run: (never)")
+            continue
+        dur = run.get("duration_seconds")
+        # A live run has no finished_at, so its duration is elapsed-so-far; saying
+        # which it is costs one character and stops "202s" being read as final.
+        elapsed = "-" if dur is None else (
+            f"{dur}s" if run.get("finished_at") else f"{dur}s so far"
+        )
+        print(
+            f"    last run: {run.get('state', '?'):<10} trigger={run.get('trigger', '?'):<9}"
+            f" dur={elapsed}"
+            f"  items={run.get('items_processed', '?')}/{run.get('items_seen', '?')}"
+            f" failed={run.get('items_failed', '?')}"
+        )
+        if run.get("error"):
+            print(f"      error: {run['error']}")
+    return 0
+
+
+def cmd_entity_fields(args) -> int:
+    """A space's custom-field schemas.
+
+    This is a PROJECT route, not an admin one, and it already exists and is
+    deployed in both prod regions — ``GET /projects/{id}/entity-fields``
+    (``routes/entity_fields.py:212``). It is here because on 2026-08-20 an
+    operator got a 404 from it and, unable to INSPECT the field shape, wrote to
+    ``project.settings`` by hand against prod. The endpoint had landed on main
+    twelve hours earlier and simply was not deployed yet. So no endpoint was
+    missing — a client and a legible 404 were.
+
+    Note the gate is ``require_member``, not platform-admin (``routes/deps.py:74``
+    has no admin bypass), so this needs a session belonging to a member of the
+    space. That is the normal case for the operator and is why no new
+    admin-scoped endpoint was added for it.
+    """
+    eff = _effective(args)
+    target, space = eff.target, eff.space
+    payload = api.get(
+        target,
+        f"/projects/{space}/entity-fields",
+        token=_token_for(eff),
+    )
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, dict) or not items:
+        print("(no custom entity fields configured for this space)")
+        return 0
+    for kind, fields in sorted(items.items()):
+        print(f"{kind}  ({len(fields)} field{'s' if len(fields) != 1 else ''})")
+        for field in fields:
+            if isinstance(field, dict):
+                print(f"    {field.get('name', '?'):<24} {field.get('type', '?')}")
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    """Health across environments, reported honestly.
+
+    Never aborts on the first failure: one region being unreachable is exactly when
+    the state of the others matters most. The exit code is the WORST status seen,
+    not the first.
+    """
+    host = getattr(args, "host", None)
+    envs = [prefs.canonical_env(host)] if host else list(HOSTS)
+
+    reports = []
+    for env in envs:
+        try:
+            target = resolve(env)
+        except TargetError as exc:
+            reports.append(doctor_mod.EnvReport.unreachable(str(env), str(exc)))
+            continue
+
+        try:
+            report = doctor_mod.EnvReport.from_health(
+                env, api.get(target, "/health", timeout=10)
+            )
+        except api.ApiError as exc:
+            # One line, because a rollup with a five-line paragraph in it is not a
+            # rollup. The per-env command still gives the full explanation.
+            reports.append(
+                doctor_mod.EnvReport.unreachable(
+                    str(env), str(exc).splitlines()[0]
+                )
+            )
+            continue
+
+        report = _with_credential(report, target.name)
+        reports.append(_with_migrations(report, target, target.env))
+
+    print(f"fm doctor — {len(reports)} deployment(s)")
+    print(doctor_mod.rollup(reports))
+    worst = doctor_mod.Status.worst([r.status for r in reports])
+    if worst is not doctor_mod.Status.OK:
+        print(f"\nworst: {worst.name}", file=sys.stderr)
+    return 0 if worst is doctor_mod.Status.OK else 1
+
+
+def _with_credential(report, env: str):
+    """Annotate with the stored credential's state — described, never revealed.
+
+    Never decodes the token: an ``fm login`` access token is opaque (``crst_at_…``,
+    no dots — mcp_app/oauth/provider.py::ACCESS_PREFIX), so the only place left to
+    read expiry from is the metadata ``fm login``/refresh wrote beside it
+    (:func:`tokens.load_meta`, :func:`tokens.describe_meta`) — the same source
+    ``fm whoami`` already uses.
+    """
+    try:
+        token, origin = tokens.load_for(env)
+    except tokens.TokenError as exc:
+        return replace(report, credential=f"unusable — {exc}")
+    if not token:
+        return replace(report, credential=f"none stored (fm login --host {env})")
+    if origin == tokens.ENV_TOKEN_ORIGIN:
+        return replace(report, credential=f"environment ({tokens.ENV_TOKEN_VAR})")
+    info = tokens.describe_meta(tokens.load_meta(origin))
+    borrowed = "" if origin == env else f" (using the {origin} token)"
+    return replace(report, credential=f"{info.describe_expiry()}{borrowed}")
+
+
+def _with_migrations(report, target, env: str):
+    """Annotate with alembic identity when /admin/instance is available.
+
+    Absence is not a failure: the endpoint is admin-gated (Global, or Formist as
+    its own single-region deployment — ``formist_cli.targets.is_admin_env``), so a
+    local or unauthenticated run against any other region legitimately has
+    nothing to say here. Reporting "unknown" would be inventing a problem.
+    """
+    if target.is_prod and not is_admin_env(env):
+        return report
+    try:
+        token, _ = tokens.load_for(target.name)
+        payload = api.admin_get(target, "/admin/instance", token=token)
+    except (api.ApiError, tokens.TokenError):
+        return report
+    if not isinstance(payload, dict):
+        return report
+    for name, data in (payload.get("regions") or {}).items():
+        alembic = (data or {}).get("alembic") or {}
+        if alembic.get("in_sync") is False:
+            return replace(
+                report,
+                migrations=(
+                    f"{name}: db_head={alembic.get('db_head')} != "
+                    f"code_heads={alembic.get('code_heads')} — a migration is "
+                    "pending or failed"
+                ),
+            )
+    return replace(report, migrations="in sync")
+
+
+def cmd_use(args) -> int:
+    """Remember a default space, and — for reads only — a default environment.
+
+    Records the space's REGION as reported by the server, so a later write whose
+    --env contradicts it is refused before a socket is opened. That is the cheapest
+    possible catch for the accident this tool exists to prevent, and it costs one
+    comparison.
+    """
+    if args.clear:
+        print("forgot the remembered defaults" if prefs.clear() else "nothing remembered")
+        return 0
+
+    if not args.show and args.space is None and args.host is None:
+        print("nothing to set. → fm use --space <uuid> [--host <host>] | --show | --clear",
+              file=sys.stderr)
+        return 2
+
+    if args.space is not None or args.host is not None:
+        region = prefs._UNSET
+        if args.space is not None:
+            space = require_space_id(args.space)
+            # Read the region back from the SERVER rather than assuming the env
+            # being set is the one that owns the space. The recorded value has to
+            # come from the thing it describes, or it vouches for nothing.
+            region = _lookup_region(space, args.host)
+        prefs.store(
+            space=args.space if args.space is not None else prefs._UNSET,
+            env=args.host if args.host is not None else prefs._UNSET,
+            space_region=region,
+        )
+
+    current = prefs.load()
+    print(f"space  {current.space or '(none)'}")
+    print(f"host   {current.env or '(none)'}   ← reads only; a write always needs --host")
+    if current.space_region:
+        print(f"region {current.space_region}   (recorded from the server)")
+    if current.set_at:
+        print(f"set    {current.age}")
+    return 0
+
+
+def _lookup_region(space: str, env: str | None) -> object:
+    """The region /admin/spaces reports for ``space``, or ``_UNSET`` if unknown.
+
+    Never guessed from the env being set: an unknown region must stay unknown, so
+    that `prefs.effective` treats it as absence of knowledge rather than as
+    evidence. A lookup that fails is not a reason to refuse `fm use` — the operator
+    may legitimately be offline or not logged in.
+    """
+    for candidate in (env or DEFAULT_HOST,):
+        if candidate is None:
+            continue
+        try:
+            target = resolve(prefs.canonical_env(candidate))
+        except (TargetError, PrefsError):
+            continue
+        # Only a PROD instance can make a residency claim. A local dev server
+        # reports every space it holds as its own HOME_REGION (`global`), which is
+        # a fact about the server, not about the row — recording it made every
+        # local write refuse, and told the operator to retry with `--host evane`,
+        # i.e. against production.
+        if not target.is_prod:
+            continue
+        try:
+            token, _ = tokens.load_for(target.name)
+            payload = api.admin_get(target, "/admin/spaces", token=token)
+        except (api.ApiError, tokens.TokenError):
+            continue
+        for item in _items(payload):
+            if str(item.get("id")) == space and item.get("region"):
+                region = str(item["region"])
+                print(f"  server reports this space is resident in {region}",
+                      file=sys.stderr)
+                return region
+    print(
+        "  (no residency region recorded — only a prod instance can state one)",
+        file=sys.stderr,
+    )
+    return prefs._UNSET
+
+
+def cmd_get(args) -> int:
+    """Find rows by name and print the ids they resolve to.
+
+    Listing and resolving are different acts: listing shows every candidate,
+    resolving demands exactly one. `fm get --name X` therefore refuses on ambiguity
+    where a bare `fm get` happily prints both rows.
+    """
+    eff = _effective(args, need_token=True)
+    token = eff.token
+    kind = resolve_mod.require_kind(args.kind)
+
+    if args.name:
+        match = resolve_mod.resolve_one(
+            args.name, kind=kind, target=eff.target, space=eff.space, token=token
+        )
+        if args.json:
+            print(json.dumps(
+                {"id": match.id, "field": match.field, "value": match.value},
+                indent=2, ensure_ascii=False, default=str,
+            ))
+        else:
+            print(f"{match.id}  {match.label}")
+            print(f"  matched on {match.field} = "
+                  f"{json.dumps(match.value, ensure_ascii=False, default=str)}")
+        return 0
+
+    matches = resolve_mod.find(
+        None, kind=kind, target=eff.target, space=eff.space, token=token
+    )
+    if args.json:
+        print(json.dumps(
+            [{"id": m.id, "field": m.field, "value": m.value} for m in matches],
+            indent=2, ensure_ascii=False, default=str,
+        ))
+        return 0
+    for match in matches:
+        print(f"{match.id}  {match.label}")
+    if not matches:
+        print(f"(no {kind} rows in this space)")
+    return 0
+
+
+def cmd_update(args) -> int:
+    """Dry-run a bulk change, then apply it only against the token that dry run gave.
+
+    The dry run is not optional and not skippable. The endpoint executes every op
+    for real and rolls back (`services/bulk_data.py` property 2), so what is printed
+    is what would happen — including the ids the inserts actually produced.
+    """
+    eff = _effective(args, for_write=True, need_token=True)
+    token = eff.token
+
+    payload = update_mod.load_payload(args.payload)
+    plan = update_mod.build_plan(
+        payload, target=eff.target, space=eff.space, token=token
+    )
+
+    if plan.resolutions:
+        print("\nresolved by name:", file=sys.stderr)
+        for resolution in plan.resolutions:
+            print(f"  {resolution.describe()}", file=sys.stderr)
+
+    if args.apply:
+        report = update_mod.apply(
+            plan, eff.target, token=token, supplied_token=args.apply
+        )
+        _print_report(report, applied=True, json_out=args.json)
+        return 0
+
+    report = update_mod.dry_run(plan, eff.target, token=token)
+    _print_report(report, applied=False, json_out=args.json)
+    token_value = update_mod.plan_token(plan, report)
+    print(
+        f"\nDRY RUN — nothing was changed.\n"
+        f"To apply this exact plan:\n"
+        f"  fm update --host {eff.target.name} --space {eff.space} "
+        f"{args.payload} --apply {token_value}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _print_report(report: object, *, applied: bool, json_out: bool) -> None:
+    """Print the SERVER's report.
+
+    Every value here is read out of the response body. Nothing is echoed from the
+    payload that was sent — a confirmation line that prints what it hoped to write
+    would confirm whatever landed, which is the defect this tool was built after
+    (`scratchpad/parity/prod_ren.py:15-24` shipped its report straight from the
+    value it intended to write, with no read-back at all).
+    """
+    if json_out:
+        print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        return
+    if not isinstance(report, dict):
+        print(report)
+        return
+
+    counts = report.get("counts") or {}
+    print(f"mode={report.get('mode')}  committed={report.get('committed')}")
+    print(f"  ops={counts.get('ops')}  ok={counts.get('ok')}  "
+          f"refused={counts.get('refused')}  applied={counts.get('applied')}")
+    for result in report.get("results") or []:
+        if not isinstance(result, dict):
+            continue
+        cascaded = result.get("cascaded")
+        extra = f"  cascade={cascaded}" if cascaded else ""
+        print(f"  [{result.get('index')}] {result.get('action')} "
+              f"{result.get('kind')} {result.get('id')} "
+              f"→ {result.get('outcome')}{extra}")
+    for refusal in report.get("refusals") or []:
+        if isinstance(refusal, dict):
+            print(f"  REFUSED [{refusal.get('index')}] {refusal.get('reason')}: "
+                  f"{refusal.get('message', '')}")
+
+
+def _items(payload: object) -> list[dict]:
+    if isinstance(payload, dict):
+        items = payload.get("items")
+        if isinstance(items, list):
+            return [i for i in items if isinstance(i, dict)]
+    if isinstance(payload, list):
+        return [i for i in payload if isinstance(i, dict)]
+    print(json.dumps(payload, indent=2, default=str))
+    return []
+
+
+_COMMANDS = {
+    "login": cmd_login,
+    "logout": cmd_logout,
+    "whoami": cmd_whoami,
+    "health": cmd_health,
+    "instance": cmd_instance,
+    "spaces": spaces_mod.run,
+    "proposals": cmd_proposals,
+    "audit-log": cmd_audit_log,
+    "connectors": cmd_connectors,
+    "entity-fields": cmd_entity_fields,
+    "doctor": cmd_doctor,
+    "use": cmd_use,
+    "get": cmd_get,
+    "chats": chats_mod.cmd_chats,
+    "chat": chat_mod.cmd_chat,
+    "export": export_mod.cmd_export,
+    "import": importer_mod.cmd_import,
+    "update": cmd_update,
+    "logs": logs.run,
+    "users": users.run,
+    "space-plan": space_plan.run,
+    "skill-library-install": skill_library.run_install,
+    "skills-add": skills.cmd_skills_add,
+    "skills-update": skills.cmd_skills_update,
+    "diff": diff_mod.cmd_diff,
+    "airtable": airtable_mod.cmd_airtable,
+    "participants": participants_mod.cmd_participants,
+    "upload": uploads_mod.cmd_upload,
+    "skill-attach": uploads_mod.cmd_skill_attach,
+    "usage-tokens": usage_tokens_mod.run,
+    "alerts": alerts_mod.run,
+    "settings": settings_mod.run,
+    "kb": kb_mod.run,
+    "meeting": meetings_mod.run,
+    "files": files_mod.cmd_files,
+    "project": projects_mod.run,
+    "connector": connectors_mod.run_connector,
+    "messages": messages_mod.run,
+    "whatsapp": whatsapp_mod.run,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        # THE privilege pre-check, at the one point every command passes through.
+        # It only ever refuses what the server would also refuse — see
+        # evtool/privileges.py on why it is advisory in one direction. `resolve`
+        # here (not `_effective`) for the same reason cmd_login uses it: which
+        # credential file is read must come from the command line, never from a
+        # remembered target.
+        privileges.check(
+            args.command,
+            tokens.local_scopes(resolve(getattr(args, "host", None)).name),
+        )
+        return _COMMANDS[args.command](args)
+    except api.BulkRefused as exc:
+        # The refusal report is the product: it names the offending op by index and
+        # carries a machine-readable reason. Flattening it to a message would throw
+        # away the only part a caller can act on.
+        print(f"error: {exc}", file=sys.stderr)
+        _print_report(exc.payload, applied=False, json_out=False)
+        return 2
+    except (
+        TargetError,
+        PrefsError,
+        DiffError,
+        ResolutionError,
+        ChatsError,
+        AirtableError,
+        ParticipantsError,
+        FilesError,
+        ExportError,
+        ImportRefused,
+        UpdateError,
+        UploadError,
+        api.ApiError,
+        tokens.TokenError,
+        logs.LogsError,
+        users.UsersError,
+        connectors_mod.ConnectorsError,
+        space_plan.SpacePlanError,
+        skill_library.SkillLibraryError,
+        messages_mod.MessagesError,
+        SpacesError,
+        UsageTokensError,
+        AlertsError,
+        WhatsAppError,
+        KbError,
+        MeetingsError,
+        ProjectsError,
+        privileges.PrivilegeError,
+        login_mod.LoginError,
+    ) as exc:
+        # These carry operator-facing prose, so print the message rather than a
+        # traceback — the message IS the product.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
