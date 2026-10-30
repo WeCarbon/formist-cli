@@ -1,14 +1,15 @@
-"""``fm import``: the refusals, the report, and the dry-run/apply comparison.
+"""Tests for ``fm import``: the refusals, the report, and the
+dry-run/apply comparison.
 
-Every test here is aimed at a way this command could report success over a write
-that did not happen, or over one that happened differently. That is the failure
-class the project rules names as this codebase's dominant shape, and an import is where it
-is most expensive: the operator sees a plan, authorizes it, and never looks again.
+Every test here is aimed at a way this command could report success over
+a write that did not happen, or over one that happened differently, and
+an import is where that is most expensive: the operator sees a plan,
+authorizes it, and never looks again.
 
-⚠️ NO TEST HERE ASSERTS ONLY A STATUS OR A "did not raise". GATE.md: a
-status-code assertion is a liveness check, not a correctness check, and this whole
-family of defects preserves the status. Every assertion below names a value that
-only the right answer produces.
+No test here asserts only a status code or a "did not raise": a
+status-code assertion is a liveness check, not a correctness check, and
+this whole family of defects preserves the status. Every assertion below
+names a value that only the right answer produces.
 """
 
 from __future__ import annotations
@@ -36,13 +37,12 @@ def _bundle_bytes(names=("manifest.json",), payload=b"{}") -> bytes:
 
 
 def _report(**over):
-    """A report shaped like ``services/workspace_transfer.py:1149-1160``.
-
-    Read off the server, not invented. ``inserted``/``merged``/``skipped``/
-    ``dropped_rows`` are DICTS; ``dropped_refs``/``missing_blobs``/``conflicts``/
-    ``unresolved_users`` are LISTS. formist_cli/export.py records a renderer written
-    against a guessed shape whose unit test encoded the same guess and passed —
-    the test and the code agreed with each other and not with the server.
+    """A report shaped like the real server response, read off the
+    server rather than invented. ``inserted``/``merged``/``skipped``/
+    ``dropped_rows`` are dicts; ``dropped_refs``/``missing_blobs``/
+    ``conflicts``/``unresolved_users`` are lists: a fixture built from a
+    guessed shape can agree with a renderer written against the same
+    guess and pass while disagreeing with the server.
     """
     base = {
         "dry_run": True,
@@ -133,14 +133,13 @@ def test_multipart_body_contains_the_file_bytes_and_a_boundary_absent_from_them(
     # which is what stops a valid-looking SHORTER upload reaching the server.
     assert boundary not in blob
     assert body.count(b"--" + boundary) == 3  # two parts + the closing delimiter
-    # ⚠️ The CLOSE-DELIMITER's trailing `--`, asserted separately because the
-    # count above CANNOT see it: `--{boundary}\r\n` (a part delimiter) and
-    # `--{boundary}--\r\n` (the terminator) both contain `--{boundary}`, so the
-    # count is 3 either way. Found by mutation, not by reading: dropping the
-    # trailing `--` survived every other assertion here AND a real FastAPI
-    # round-trip, because python-multipart accepts a stream that simply ends.
-    # RFC 7578 requires it, and the next parser in the chain (a proxy, a
-    # different server) is entitled to enforce what this one forgives.
+    # The close-delimiter's trailing `--`, asserted separately because the
+    # count above cannot see it: `--{boundary}\r\n` (a part delimiter) and
+    # `--{boundary}--\r\n` (the terminator) both contain `--{boundary}`, so
+    # the count is 3 either way. A stream that simply ends without it may
+    # still be accepted by a lenient parser, but RFC 7578 requires it, and
+    # a stricter parser downstream is entitled to enforce what this one
+    # forgives.
     assert body.endswith(b"--" + boundary + b"--\r\n")
 
 
@@ -180,10 +179,10 @@ def test_multipart_boundary_is_rechosen_when_it_collides_with_the_payload(monkey
 def test_render_report_cannot_echo_the_request_because_it_takes_only_the_response():
     """Structural, not a string search.
 
-    A test that greps the output for a payload sentinel proves that ONE value did
-    not leak. A signature with no request parameter proves none CAN: GATE.md's
-    "test the wiring, not the name": a private copy under another name cannot
-    follow, because there is nothing to pass it.
+    A test that greps the output for a payload sentinel proves that one
+    value did not leak. A signature with no request parameter proves none
+    can: a private copy under another name cannot follow, because there
+    is nothing to pass it.
     """
     params = list(inspect.signature(importer.render_report).parameters)
     assert params == ["response"], (
@@ -272,8 +271,8 @@ def test_a_grown_missing_blobs_list_is_a_divergence():
 
 
 def test_dry_run_flag_itself_is_not_reported_as_a_divergence():
-    """It differs by construction. Reporting it would make every apply "diverge",
-    and a warning that always fires is one nobody reads (GATE.md: crying wolf)."""
+    """It differs by construction. Reporting it would make every apply
+    "diverge", and a warning that always fires is one nobody reads."""
     diffs = importer.divergences(_report(dry_run=True), _report(dry_run=False))
     assert diffs == []
 
@@ -298,7 +297,7 @@ def test_apply_defaults_to_false_so_the_first_run_is_never_the_write():
 
 
 def test_apply_resolves_for_write_and_a_dry_run_does_not(tmp_path, monkeypatch):
-    """The rule that keeps an import off production: `--apply` ⇒ for_write=True.
+    """The rule that keeps an import off production: `--apply` implies for_write=True.
 
     Asserted by capturing what cmd_import passes to `_effective`, because that
     flag IS the mechanism: formist_cli/prefs.py refuses to supply a remembered `--env`
@@ -394,7 +393,7 @@ def test_a_divergent_apply_returns_nonzero(tmp_path, monkeypatch):
 def test_help_states_that_connector_credentials_do_not_travel(capsys):
     """The operator's question here is "does this configure my connectors?".
 
-    The answer is no: `routes/workspace_transfer.py:165` NULLs connection FKs —
+    The answer is no: the server NULLs connection foreign keys on import,
     and --help is the only place they look before running it.
     """
     from formist_cli.cli import build_parser
@@ -413,10 +412,9 @@ def test_help_states_that_connector_credentials_do_not_travel(capsys):
 
 
 def test_import_never_shadows_the_builtin_ImportError():
-    """`except ImportError` must keep meaning "a module failed to load".
-
-    scripts/mutate.py is documented for exactly this collapse: an unreadable tree
-    and a caught failure reported as the same fact.
+    """`except ImportError` must keep meaning "a module failed to load",
+    never collapsing into a caught application-level refusal that happens
+    to share the name.
     """
     assert importer.ImportRefused is not ImportError
     assert not issubclass(importer.ImportRefused, ImportError)
