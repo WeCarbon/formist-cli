@@ -1,13 +1,15 @@
-"""``fm update``: the payload transform, the `$expect` copy-back, and the plan token.
+"""Tests for ``fm update``: the payload transform, the `$expect`
+copy-back, and the plan token.
 
-This is the command the owner actually asked for: change production data without
-writing code. Everything here is about making that safe enough to be boring.
+This command changes production data without writing code, so everything
+here is about making that safe enough to be boring.
 
-The wire format is EXACTLY what `admin-bulk-data-api` defined: `$action`,
-`$kind`, `$id`, `$set`, `$expect`, `$ref`, `apply` defaulting to false, a 500-op
-bound. This module adds ONE thing on the operator's side of the wire: `$name`,
-resolved client-side seconds before the write, so no UUID is ever transcribed.
-The server never sees a `$name`.
+The wire format mirrors the server's own bulk-write endpoint exactly:
+`$action`, `$kind`, `$id`, `$set`, `$expect`, `$ref`, `apply` defaulting to
+false, a bounded number of ops. This module adds one thing on the
+operator's side of the wire: `$name`, resolved client-side seconds before
+the write, so no UUID is ever transcribed. The server never sees a
+`$name`.
 """
 
 from __future__ import annotations
@@ -57,11 +59,11 @@ STAKEHOLDERS = {
 
 
 class TestNameResolutionReplacesTheTranscribedUuid:
-    """The failure this whole lane exists to remove.
+    """The failure this module exists to remove.
 
-    `$ref` cannot do this: it is a within-batch back-reference to a row the same
-    request just created (`services/bulk_data.py:201-227`), so an `update` or
-    `delete` op has no way to name an EXISTING row except by literal UUID.
+    `$ref` cannot do this: it is a within-batch back-reference to a row
+    the same request just created, so an `update` or `delete` op has no
+    way to name an existing row except by literal UUID.
     """
 
     def test_name_in_id_position_resolves_to_a_uuid(self):
@@ -84,10 +86,10 @@ class TestNameResolutionReplacesTheTranscribedUuid:
         an `expect-mismatch` refusal of the whole batch instead of a confident
         write to the wrong row.
 
-        The value must be the RAW column: `column_snapshot` compares exactly and
-        deliberately does not coalesce shapes (`services/bulk_data.py:260-272`).
-        Prod stores an {en, ar} map here; flattening it to "ADAFSA" would send an
-        `$expect` no prod row can ever match.
+        The value must be the raw column: `column_snapshot` compares
+        exactly and deliberately does not coalesce shapes. Production
+        stores an {en, ar} map here; flattening it to "ADAFSA" would send
+        an `$expect` no production row can ever match.
         """
         payload = {"ops": [
             {"$action": "update", "$kind": "STAKEHOLDER",
@@ -108,8 +110,8 @@ class TestNameResolutionReplacesTheTranscribedUuid:
         assert plan.ops[0]["$expect"]["name"] == "ADNEC"
 
     def test_an_ambiguous_name_refuses_the_WHOLE_batch(self):
-        """Not just the op. The endpoint is all-or-nothing and so is the plan —
-        a partially-resolved batch is a plan nobody reviewed."""
+        """Not just the op. The endpoint is all-or-nothing and so is the
+        plan: a partially-resolved batch is a plan nobody reviewed."""
         rows = {"stakeholders": [
             {"id": UUID_A, "name": "ADAFSA"}, {"id": UUID_B, "name": "ADAFSA"}
         ]}
@@ -134,10 +136,10 @@ class TestNameResolutionReplacesTheTranscribedUuid:
 
 
 class TestNameResolutionInsideSet:
-    """A FOREIGN reference: `parent_id`, `relationship_owner_id`: is the case the
-    brief's rule 1 was actually about: *every organisation id differs between dev
-    and prod*, and a wrong one lands in a jsonb column with no FK where nothing
-    errors.
+    """A foreign reference (`parent_id`, `relationship_owner_id`) is the
+    case where this matters most: every organisation id differs between
+    dev and prod, and a wrong one lands in a jsonb column with no foreign
+    key where nothing errors.
     """
 
     def test_a_name_in_a_set_value_resolves_to_a_uuid(self):
@@ -241,8 +243,8 @@ class TestPayloadShapeGuards:
         assert plan.body["apply"] is False
 
     def test_more_than_MAX_OPS_refuses_locally(self):
-        """Mirrors `services/bulk_data.py` MAX_OPS=500. Refusing here means the
-        operator learns the bound instead of a 422 from pydantic."""
+        """Mirrors the server's own `MAX_OPS` bound. Refusing here means
+        the operator learns the bound instead of a 422 from pydantic."""
         payload = {"ops": [
             {"$action": "delete", "$kind": "TASK", "$id": UUID_A}
         ] * (MAX_OPS + 1)}
@@ -254,10 +256,10 @@ class TestPayloadShapeGuards:
             build_plan({"ops": []}, target=LOCAL, space=SPACE, fetch=_fetcher())
 
     def test_replace_data_is_a_known_key_and_passes_through(self):
-        """`$replace_data` (services/bulk_data.py's escape hatch from the default
-        `data` MERGE to a wholesale replace) must not be refused as an unknown
-        key: this module's `_OP_KEYS` mirrors the endpoint's own vocabulary and
-        has to be kept in step with it by hand."""
+        """`$replace_data` (the server's escape hatch from the default
+        `data` merge to a wholesale replace) must not be refused as an
+        unknown key: this module's `_OP_KEYS` mirrors the endpoint's own
+        vocabulary and has to be kept in step with it by hand."""
         payload = {"ops": [
             {"$action": "update", "$kind": "STAKEHOLDER", "$id": UUID_A,
              "$set": {"data": {"country": "AE"}}, "$expect": {"data": {}},
@@ -334,24 +336,15 @@ class TestPlanToken:
 
 
 class TestPlanTokenIgnoresPerRunIdentifiers:
-    """Found end-to-end against the real endpoint, not by unit test.
+    """A dry run executes every op and rolls back, so the server mints a
+    fresh `audit_id` on every call, and a fresh row `id` for every `add`.
+    Hashing the report verbatim would therefore produce a different token
+    each time the same plan was dry-run, which would make
+    `--apply <token>` impossible to satisfy: the token printed by the dry
+    run would never match the one recomputed at apply time.
 
-    A dry run EXECUTES every op and rolls back (`services/bulk_data.py` property
-    2), so the server mints a fresh `audit_id` on every call: and a fresh row `id`
-    for every `add`. Hashing the report verbatim therefore produced a DIFFERENT
-    token each time the same plan was dry-run:
-
-        run 1 → 646aba0f42c0
-        run 2 → 50c1104c14a3
-
-    which makes `--apply <token>` impossible to satisfy: the token printed by the
-    dry run never matches the one recomputed at apply time. The guard would have
-    been not merely useless but permanently closed: a check that always fails is
-    as broken as one that never does, and this one would have been discovered by
-    the owner, mid-change, on the first real use.
-
-    So the token hashes a PROJECTION of the report: what the run meant, never what
-    the run happened to name.
+    So the token hashes a projection of the report: what the run meant,
+    never what the run happened to name.
     """
 
     def _plan(self):
