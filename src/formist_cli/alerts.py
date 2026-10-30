@@ -1,13 +1,11 @@
-"""``fm alerts`` — platform risk alerts, over ``GET /admin/alerts*``.
+"""``fm alerts`` - platform risk alerts, over ``GET /admin/alerts*``.
 
-Added for D224 (2026-09-06) — owner's ruling 「所有 admin 功能都要用 fm cli 可用」,
-all admin functionality must be reachable from ``ev``. Read-only; the email is the
-PUSH channel (``routes/admin_alerts.py``), this is the PULL one — filterable,
-reviewable a week later, and shows an alert the hourly ceiling suppressed from
-becoming an email at all.
+Read-only; the email is the push channel, this is the pull one: filterable,
+reviewable a week later, and shows an alert the hourly ceiling suppressed
+from becoming an email at all.
 
-⚠️ THESE ARE PLATFORM ALERTS, NOT PROJECT NOTIFICATIONS. ``project_id`` on a row is
-ATTRIBUTION, never scope — most alerts have no project at all.
+These are platform alerts, not project notifications. ``project_id`` on a
+row is attribution, never scope: most alerts have no project at all.
 """
 
 from __future__ import annotations
@@ -71,7 +69,7 @@ def render_alerts(payload: dict) -> str:
     shown = len(alerts)
     if total is not None and shown < int(total):
         lines.append(
-            f"\n{shown} shown of {total} — MORE EXIST. Raise --limit or page with --offset."
+            f"\n{shown} shown of {total}, MORE EXIST. Raise --limit or page with --offset."
         )
     return "\n".join(lines)
 
@@ -102,7 +100,7 @@ def render_conditions(payload: dict) -> str:
 
 _HELP = "platform risk alerts and the conditions that can fire (admin)"
 
-_DESCRIPTION = """Platform-wide risk alerts — the PULL channel alongside the admin
+_DESCRIPTION = """Platform-wide risk alerts, the PULL channel alongside the admin
 email (the PUSH channel). Filterable and reviewable after the fact, unlike email.
 
   fm alerts --host evane                              open alerts (default)
@@ -111,7 +109,7 @@ email (the PUSH channel). Filterable and reviewable after the fact, unlike email
   fm alerts ack-parked <connection-id> --env ae       stop listing its parked sync rows
   fm alerts ack-parked <connection-id> --record recX  just one row (repeatable)
 
-⚠️ project_id on a row is ATTRIBUTION, not scope — most alerts have no project.
+project_id on a row is ATTRIBUTION, not scope: most alerts have no project.
 """
 
 
