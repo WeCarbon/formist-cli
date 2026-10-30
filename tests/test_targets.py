@@ -7,7 +7,6 @@ import pytest
 from formist_cli import cli, prefs, tokens
 from formist_cli.targets import (
     DEFAULT_HOST,
-    HOSTS,
     REGION_AE,
     REGION_CUSTOM,
     REGION_FORMIST,
@@ -48,14 +47,6 @@ class TestNamedHosts:
 
     def test_names_are_case_insensitive(self):
         assert resolve("Evane-AE").name == "evane-ae"
-
-    def test_a_host_with_no_address_fails_clearly(self, monkeypatch):
-        spec = HOSTS["formist-cn"]
-        monkeypatch.setitem(
-            HOSTS, "formist-cn", type(spec)(spec.name, None, spec.env, spec.product, "not live")
-        )
-        with pytest.raises(TargetError, match="no API address"):
-            resolve("formist-cn")
 
 
 class TestCustomHosts:

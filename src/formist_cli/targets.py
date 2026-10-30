@@ -35,10 +35,10 @@ DEFAULT_HOST = "formist"
 
 @dataclass(frozen=True)
 class HostSpec:
-    """One named deployment. ``api_base`` is None while it is not live."""
+    """One named deployment."""
 
     name: str
-    api_base: str | None
+    api_base: str
     env: str
     product: str
     description: str
@@ -131,11 +131,6 @@ def resolve(host: str | None) -> Target:
     spec = HOSTS.get(value.lower())
     if spec is None:
         return _custom(value)
-    if spec.api_base is None:
-        raise TargetError(
-            f"--host {spec.name}: {spec.description}. There is no API address for "
-            "it yet. If you have one, pass it directly: --host https://<api host>."
-        )
     return Target(env=spec.env, api_base=spec.api_base, name=spec.name, product=spec.product)
 
 
