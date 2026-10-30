@@ -1,16 +1,13 @@
-"""``fm chat --message``: one non-interactive turn, streamed compactly, with a
-final exit code and an optional JSON summary.
+"""Tests for ``fm chat --message``: one non-interactive turn, streamed
+compactly, with a final exit code and an optional JSON summary.
 
-Its own file, matching `test_formist_cli_chat.py`'s reasoning (several lanes edit
-``formist_cli/`` at once): that file owns ``consume_turn``/``run_turn``: the state
-machine and the streaming loop: proven end to end there with a fake
-``stream_fn`` driven DIRECTLY into ``run_turn``. This file is the layer on top:
-``cmd_chat``'s DISPATCH to non-interactive mode, never entering the REPL, never
-creating a second chat when one was given, and turning the run's outcome into
-an exit code plus (with ``--json``) the summary object the module's own
-docstring promises: ``{chat_id, tool_calls, failed, final_message}``.
-
-Run: uv run pytest tests/test_formist_cli_chat_message.py -q
+``consume_turn``/``run_turn`` (the state machine and the streaming loop)
+are proven end to end elsewhere, with a fake ``stream_fn`` driven directly
+into ``run_turn``. This file is the layer on top: ``cmd_chat``'s dispatch
+to non-interactive mode, never entering the REPL, never creating a second
+chat when one was given, and turning the run's outcome into an exit code
+plus (with ``--json``) the summary object the module's own docstring
+promises: ``{chat_id, tool_calls, failed, final_message}``.
 """
 
 from __future__ import annotations
@@ -111,8 +108,8 @@ class TestMessageContinuesAnExistingChatWithoutCreatingANewOne:
 
 class TestMessageHoldsTheStreamOpenWithNoMeaningfulTimeout:
     def test_the_non_interactive_read_timeout_reaches_the_stream_call(self, monkeypatch):
-        """A real run can take an hour: services/agent_run.py ties its life to
-        this client staying connected: so --message must NOT reuse the REPL's
+        """A real run can take an hour, and the server ties its life to this
+        client staying connected, so --message must not reuse the REPL's
         short interactive timeout."""
         _patch_context(monkeypatch)
         lines = _frame("on_agent_run_completed", {"status": "COMPLETED"})

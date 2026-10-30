@@ -10,9 +10,8 @@ case). What is new here, and what these tests are built around, is the layer
 on top of both: turning a run's SSE records into terminal output WITHOUT ever
 reporting a dropped or partial stream as a normal, finished turn.
 
-``TestConsumeTurnFraming`` exercises :func:`consume_turn` directly, over lists
-of already-parsed records: the pure state machine, same style as
-``tests/test_formist_cli_logs.py``'s ``TestSSEFrames``/``TestSilenceIsNotAmbiguous``.
+``TestConsumeTurnFraming`` exercises :func:`consume_turn` directly, over
+lists of already-parsed records: the pure state machine.
 
 ``TestRunTurnEndToEnd`` drives :func:`run_turn` over FAKE raw SSE text through
 a fake ``stream_fn``: this is the one that proves the "partial SSE frame must
@@ -77,8 +76,8 @@ class TestConsumeTurnFraming:
         assert state.status == "COMPLETED"
 
     def test_final_message_is_not_reprinted_once_tokens_were_shown(self):
-        """Tokens are best-effort UX; on_chat_message carries the AUTHORITATIVE
-        text (services/agent_run.py). Printing both would duplicate the reply."""
+        """Tokens are best-effort UX; on_chat_message carries the
+        authoritative text. Printing both would duplicate the reply."""
         state = TurnState(chat_id=CHAT)
         records = [
             {"event": "on_agent_token", "data": {"delta": "hi"}},
@@ -107,10 +106,10 @@ class TestConsumeTurnFraming:
         assert (OUT, "the whole answer") in out
 
     def test_a_retry_resets_the_token_flag_and_marks_the_seam(self):
-        """services/agent_events.py: a retry re-announces run_started and means
-        every token so far belongs to an abandoned attempt. This terminal
-        cannot un-print stale text, so it must fall back to the retried run's
-        final message rather than assume the stale tokens already covered it."""
+        """A retry re-announces run_started and means every token so far
+        belongs to an abandoned attempt. This terminal cannot un-print
+        stale text, so it must fall back to the retried run's final
+        message rather than assume the stale tokens already covered it."""
         state = TurnState(chat_id=CHAT)
         records = [
             {"event": "on_agent_token", "data": {"delta": "stale partial"}},
@@ -307,12 +306,12 @@ class TestRunTurnEndToEnd:
 
 
 class TestParseSseIsReusedNotReimplemented:
-    """``consume_turn`` must compose with the SAME frame parser ``fm logs``
+    """``consume_turn`` must compose with the same frame parser ``fm logs``
     uses: a second, subtly different SSE parser next to it is exactly the
-    two-lanes-one-abstraction failure the project rules warns about."""
+    kind of duplicated abstraction that drifts out of sync over time."""
 
     def test_a_multi_line_data_field_still_arrives_as_one_record(self):
-        # parse_sse joins multiple `data:` lines with '\n' before decoding —
+        # parse_sse joins multiple `data:` lines with '\n' before decoding,
         # proven here by round-tripping a run through the real function this
         # module imports, not a copy of it.
         lines = ['event: on_agent_token', 'data: {"delta":', 'data: "ok"}', ""]

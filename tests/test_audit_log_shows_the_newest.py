@@ -1,42 +1,21 @@
-"""``fm audit-log``: the newest rows, and an honest account of how many it saw.
+"""Tests for ``fm audit-log``: the newest rows, and an honest account of
+how many it saw.
 
-WHAT WENT WRONG, AND HOW IT WAS FOUND
---------------------------------------
-2026-09-06. A lane made an owner-approved write to the GFSS 2026 production space
-and then ran ``fm audit-log --host evane --space … --limit 2000`` to confirm the
-write had been audited. It printed **zero** rows for that day.
+The server's default sort for this route is ascending by `created_at`,
+and the server also caps `limit` silently. A command that sends no `sort`
+and asks for more rows than the cap allows would receive the oldest page
+instead of the newest, with no error of its own to flag the mismatch, so
+the request must always ask for a descending sort explicitly.
 
-The reading that offers itself is "the write was not audited": alarming, and
-false. The space holds 484 audit rows. The command returned the OLDEST 200
-(2026-08-20 … 2026-08-27), because:
-
-* the route's ``ListSpec`` default sort is ``created_at`` **ascending**
-  (``routes/governance.py:133-135``), and the command sent no ``sort`` at all; and
-* the server caps ``limit``, so asking for 2000 and receiving 200 is not an error
-  and raises no warning of its own.
-
-The audit row was there the whole time. Two independent silences multiplied: a
-page nobody asked for, presented as the answer.
-
-THE PROPERTY THESE TESTS ASSERT (shape 2), NOT JUST THE ONE VALUE
-------------------------------------------------------------------
-``fm users`` already learned the second half of this lesson: see
-``formist_cli/users.py::render_list`` and the docstring of ``tests/test_formist_cli_users.py``:
-the defect class is **"a report that is true about what it fetched and false about
-what exists"**, and it never surfaces on its own because every number it prints is
-real.
-
-So these tests do not check one string. They range over the three outcomes a
-paginated listing can have: truncated, complete, and ``total`` missing: and
-assert that each one is *distinguishable from the others in the output*. A
-truncation notice that also fires when nothing was truncated is an alarm that
-cries wolf, and an operator who learns to ignore it has lost the notice for the
-case that matters; that direction is tested too.
-
-⚠️ Both assertions fail on the pre-fix command. The sort one fails because the
-params dict was ``{"limit": …}`` with no ``sort`` key; the accounting ones fail
-because the pre-fix command printed rows and nothing else: there was no summary
-line at all, in any branch.
+This follows the same defect class ``fm users`` guards against: a report
+that is true about what it fetched and false about what exists, which
+never surfaces on its own because every number it prints is real. So
+these tests range over the three outcomes a paginated listing can have
+(truncated, complete, and `total` missing) and assert that each one is
+distinguishable from the others in the output. A truncation notice that
+also fires when nothing was truncated is an alarm that cries wolf, and an
+operator who learns to ignore it has lost the notice for the case that
+matters; that direction is tested too.
 """
 
 from __future__ import annotations
@@ -115,11 +94,11 @@ class TestItAsksForTheNewestRows:
 
 
 class TestItNeverOverstatesWhatItSaw:
-    #: ⚠️ ASSERT THAT THE THREE OUTCOMES ARE DISTINGUISHABLE, not that one magic
-    #: substring is present. `"200" in out and "484" in out` is satisfied by a
-    #: line that merely echoes both numbers in the WRONG relationship: which is
-    #: exactly the bug: the pre-fix command was, in effect, claiming 200 was all
-    #: there was.
+    #: Assert that the three outcomes are distinguishable, not merely that
+    #: one magic substring is present: `"200" in out and "484" in out` is
+    #: satisfied by a line that echoes both numbers in the wrong
+    #: relationship, which would still read as claiming 200 was all there
+    #: was.
 
     def test_a_truncated_listing_says_how_many_it_did_not_show(self, run, capsys):
         _, out = run(capsys, {"items": _rows(200), "total": 484})
@@ -139,8 +118,8 @@ class TestItNeverOverstatesWhatItSaw:
     ):
         """If the route ever stops sending `total`, say so.
 
-        Printing a bare count here would look exactly like a complete listing —
-        the same shape of false confidence, one layer down.
+        Printing a bare count here would look exactly like a complete
+        listing, the same shape of false confidence, one layer down.
         """
         _, out = run(capsys, {"items": _rows(5)})
         assert "UNKNOWN" in out
