@@ -1269,20 +1269,33 @@ _COMMANDS = {
 }
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def main(
+    argv: list[str] | None = None,
+    *,
+    parser: argparse.ArgumentParser | None = None,
+    commands: dict | None = None,
+    extra_errors: tuple[type[BaseException], ...] = (),
+    check_privileges=None,
+    prepare=None,
+) -> int:
+    """Run one command. ``parser``/``commands``/``extra_errors`` let another
+    front end (such as a repository's own developer tool) reuse this dispatch."""
+    args = (parser or build_parser()).parse_args(argv)
+    table = _COMMANDS if commands is None else commands
     try:
+        if prepare is not None:
+            prepare(args)
         # THE privilege pre-check, at the one point every command passes through.
         # It only ever refuses what the server would also refuse — see
         # evtool/privileges.py on why it is advisory in one direction. `resolve`
         # here (not `_effective`) for the same reason cmd_login uses it: which
         # credential file is read must come from the command line, never from a
         # remembered target.
-        privileges.check(
+        (check_privileges or privileges.check)(
             args.command,
             tokens.local_scopes(resolve(getattr(args, "host", None)).name),
         )
-        return _COMMANDS[args.command](args)
+        return table[args.command](args)
     except api.BulkRefused as exc:
         # The refusal report is the product: it names the offending op by index and
         # carries a machine-readable reason. Flattening it to a message would throw
@@ -1290,43 +1303,47 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         _print_report(exc.payload, applied=False, json_out=False)
         return 2
-    except (
-        TargetError,
-        PrefsError,
-        DiffError,
-        ResolutionError,
-        ChatsError,
-        AirtableError,
-        ParticipantsError,
-        FilesError,
-        ExportError,
-        ImportRefused,
-        UpdateError,
-        UploadError,
-        api.ApiError,
-        tokens.TokenError,
-        logs.LogsError,
-        users.UsersError,
-        connectors_mod.ConnectorsError,
-        space_plan.SpacePlanError,
-        skill_library.SkillLibraryError,
-        messages_mod.MessagesError,
-        SpacesError,
-        UsageTokensError,
-        AlertsError,
-        WhatsAppError,
-        KbError,
-        MeetingsError,
-        ProjectsError,
-        privileges.PrivilegeError,
-        login_mod.LoginError,
-    ) as exc:
+    except USER_ERRORS + extra_errors as exc:
         # These carry operator-facing prose, so print the message rather than a
         # traceback — the message IS the product.
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         return 130
+
+
+#: Exceptions whose message is written for the user; printed, not a traceback.
+USER_ERRORS = (
+    TargetError,
+    PrefsError,
+    DiffError,
+    ResolutionError,
+    ChatsError,
+    AirtableError,
+    ParticipantsError,
+    FilesError,
+    ExportError,
+    ImportRefused,
+    UpdateError,
+    UploadError,
+    api.ApiError,
+    tokens.TokenError,
+    logs.LogsError,
+    users.UsersError,
+    connectors_mod.ConnectorsError,
+    space_plan.SpacePlanError,
+    skill_library.SkillLibraryError,
+    messages_mod.MessagesError,
+    SpacesError,
+    UsageTokensError,
+    AlertsError,
+    WhatsAppError,
+    KbError,
+    MeetingsError,
+    ProjectsError,
+    privileges.PrivilegeError,
+    login_mod.LoginError,
+)
 
 
 if __name__ == "__main__":
