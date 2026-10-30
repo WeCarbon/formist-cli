@@ -1,22 +1,14 @@
-"""``fm meeting transcript-refresh`` / ``fm meeting join``: meeting-bot client ops.
+"""Tests for ``fm meeting transcript-refresh`` / ``fm meeting join``:
+meeting-bot client ops.
 
-Absorbs two scripts (EV-ABSORB.md §3.1, both "no new endpoint"):
-
-* ``scripts/ingest_transcript.py`` looped every APPOINTMENT task with a bot_id
-  in one hardcoded project and force-refreshed each transcript.
-  ``fm meeting transcript-refresh <task-id>`` does ONE named task through
-  ``GET /projects/{id}/meetings/{task_id}/transcript``: the route ALREADY
-  best-effort re-ingests before answering (routes/meetings_center.py's own
-  docstring), so this is a bare client, not a re-implementation of the ingest
-  logic. ``--all`` restores the "every task with a bot" behaviour by listing
-  meetings first and refreshing each one that has a recording.
-* ``scripts/join_meeting.py`` classified a join URL and dispatched a bot.
-  ``fm meeting join <url>`` does the SAME thing through
-  ``POST /projects/{id}/meetings/join-now``: a WRITE (it can really dispatch a
-  bot into a live meeting), so unlike the script it is dry-run by default and
-  needs ``--apply``.
-
-Run: uv run pytest tests/test_formist_cli_meetings.py -q
+* ``fm meeting transcript-refresh <task-id>`` reads one named task's
+  transcript; the route already best-effort re-ingests before answering,
+  so this is a bare client, not a re-implementation of the ingest logic.
+  ``--all`` refreshes every task that has a recording by listing meetings
+  first.
+* ``fm meeting join <url>`` dispatches a bot into a meeting by url. It is
+  a write that can really dispatch a bot into a live meeting, so it is
+  dry-run by default and needs ``--apply``.
 """
 
 from __future__ import annotations
@@ -192,8 +184,8 @@ def test_join_apply_includes_optional_fields_only_when_passed(driven):
 
 
 def test_join_apply_reports_a_dispatch_error_without_raising(driven, capsys):
-    """The task is saved even when dispatch fails (the script's own docstring) —
-    this must be visible in the report, not swallowed as a success."""
+    """The task is saved even when dispatch fails; this must be visible in
+    the report, not swallowed as a success."""
     stub = RecordingApi(join_response={
         "task": {"id": TASK, "subject": "Ad-hoc"}, "platform": "zoom",
         "bot_id": None, "already_joined": False,
