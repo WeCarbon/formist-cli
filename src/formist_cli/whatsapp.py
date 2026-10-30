@@ -1,60 +1,43 @@
-"""``fm whatsapp`` — platform-admin WhatsApp device management, over
+"""``fm whatsapp`` - platform-admin WhatsApp device management, over
 ``/admin/whatsapp/devices*``.
 
-The routes this talks to are defined by the contract in
-``scratchpad/0916-whatsapp-neonize/REPORT.md`` §3.1 (whatsapp-neonize lane). This
-module is written against that contract from a worktree that does NOT contain the
-routes themselves — they are landing in the parent lane's own worktree — so a
-route this file calls may 404 here until the two branches merge. That is expected
-and does not change what this CLI does: it is a client for a contract, not for a
-running server.
-
-REGION-LOCAL, LIKE ``fm alerts`` / ``fm messages``. A ``whatsapp_device`` row is
-REGIONAL (REPORT.md §2.2: "The platform-admin surface ``/admin/whatsapp/*`` is
-``ADMIN_REGION_LOCAL``: each region's instance manages the devices that live in
-its own database, exactly like ``/admin/alerts``"). So ``--env ae`` reads the AE
+Region-local, like `fm alerts` / `fm messages`. A ``whatsapp_device`` row is
+regional: each region's instance manages the devices that live in its own
+database, exactly like ``/admin/alerts``. So ``--env ae`` reads the AE
 region's own devices; ``--host evane`` reads Global's, which is a different,
-usually-empty set — there is no single "the" list across regions, only per-region
-ones, same caveat ``evtool/messages.py`` carries for OUTLOOK connections.
+usually-empty set. There is no single "the" list across regions, only
+per-region ones.
 
-WRITES. Every mutating subject here (``add``, ``pair``, ``start``,
+Writes. Every mutating subject here (``add``, ``pair``, ``start``,
 ``stop``, ``logout``, ``mark-account-deleted``, ``delete``) takes effect
-immediately — none has a server-side dry run — so ``--env`` never inherits from
+immediately, none has a server-side dry run, so ``--env`` never inherits from
 ``fm use`` on a write, the same rule as every other write in this CLI.
 
-⚠️ NO PIN ATTESTATION ANY MORE (owner, 2026-09-23, D600: 「there is no PIN any
-more; this step can be removed next time」). This file used to have an
-``attest-pin`` subcommand gating ``pair``; it is gone, along with the server
-route it called. ``pair`` works directly now.
-
-``delete`` is IRREVERSIBLE and the server itself refuses it while
-``account_deleted_at`` is unset (409 ``whatsapp-account-not-deleted``, REPORT.md
-§3.1) — but THIS command adds its own gate on top: it fetches the device, prints
-its phone number, and asks the operator to TYPE it back before sending the
-DELETE, unless ``--yes`` is given. A device id is 36 characters nobody reads by
-eye; the phone number is the thing an operator actually recognises, so that is
-what has to be typed — the same reasoning ``fm spaces delete``'s ``--confirm``
-exists for, one step further because there is no dry run to show first.
+``delete`` is irreversible and the server itself refuses it while
+``account_deleted_at`` is unset, but this command adds its own gate on top:
+it fetches the device, prints its phone number, and asks the operator to
+type it back before sending the delete, unless ``--yes`` is given. A device
+id is 36 characters nobody reads by eye; the phone number is the thing an
+operator actually recognises, so that is what has to be typed, the same
+reasoning `fm spaces delete`'s ``--confirm`` exists for, one step further
+because there is no dry run to show first.
 
 ``pair`` POSTs ``{"method": "qr"|"code"}`` to ``.../pair``, then polls
 ``GET .../pairing`` every few seconds until the device reports ``connected`` or
 ``--timeout`` (default 300s) elapses. A QR is rendered as a scannable terminal
-code via the optional third-party ``qrcode`` package, imported lazily and only
-here — ``evtool`` is stdlib-only at module import time (the production image
-builds ``uv sync --frozen --no-dev``) so a missing ``qrcode`` prints the raw QR
-string instead of failing the command; ``--code`` sidesteps the whole question by
-asking the server for a phone code instead.
+code via the optional third-party ``qrcode`` package, imported lazily and
+only here, since `fm` is stdlib-only at module import time, so a missing
+``qrcode`` prints the raw QR string instead of failing the command;
+``--code`` sidesteps the whole question by asking the server for a phone
+code instead.
 
-``fm whatsapp runner start|stop|status`` — the ARMED switch, over
-``/admin/whatsapp/runner*`` (services/whatsapp/runner.py module docstring:
-"ARMED"; owner, 2026-09-17: 「fastapi dev 刷新的时候自动关掉 whatsapp
-client，必须手动 call api 来开」). This is PROCESS-wide, independent of any one
-device's own ``start``/``stop`` above: a dev box sets ``whatsapp.autostart:
-false`` so a reload never reconnects on its own, and this is the manual step
-that (re)connects it. ``status`` (the default with no action given) is a
-read; ``start``/``stop`` are writes, so ``--env`` never inherits from
-``fm use`` for any of the three, the same as every other write in this file
-— simpler than splitting one subject's read half from its write half.
+``fm whatsapp runner start|stop|status`` is the armed switch, over
+``/admin/whatsapp/runner*``. This is process-wide, independent of any one
+device's own ``start``/``stop`` above: a dev box can set autostart off so a
+reload never reconnects on its own, and this is the manual step that
+(re)connects it. ``status`` (the default with no action given) is a read;
+``start``/``stop`` are writes, so ``--env`` never inherits from ``fm use``
+for any of the three, the same as every other write in this file.
 """
 
 from __future__ import annotations
@@ -76,11 +59,11 @@ SUBJECTS = (
 )
 DEFAULT_SUBJECT = "devices"
 
-#: WRITE subjects — resolved with ``for_write=True`` (never inherits ``--env``
-#: from ``fm use``), same convention as every other mutating command in this CLI
-#: (``evtool/users.py::_WRITE_SUBJECTS``, ``evtool/spaces.py::_MUTATING_SUBJECTS``).
-#: ``runner`` covers all three of its own actions (``start``/``stop``/``status``)
-#: even though ``status`` is a read — see the module docstring.
+#: Write subjects, resolved with ``for_write=True`` (never inherits ``--env``
+#: from ``fm use``), same convention as every other mutating command in this
+#: CLI. ``runner`` covers all three of its own actions
+#: (``start``/``stop``/``status``) even though ``status`` is a read, see
+#: the module docstring.
 _WHATSAPP_WRITE_SUBJECTS = frozenset({
     "add", "pair", "start", "stop", "logout",
     "mark-account-deleted", "delete", "runner",
@@ -91,15 +74,16 @@ RUNNER_PATH = "/admin/whatsapp/runner"
 RUNNER_ACTIONS = ("status", "start", "stop")
 DEFAULT_RUNNER_ACTION = "status"
 
-#: Poll cadence for `pair` — REPORT.md §3.1: "poll every 2-3 s; QR rotates ~20 s".
+#: Poll cadence for `pair`: every 2-3 seconds, since the QR rotates roughly
+#: every 20 seconds.
 PAIR_POLL_INTERVAL_SECONDS = 3
 DEFAULT_PAIR_TIMEOUT_SECONDS = 300
 
 _E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
 
-#: DeviceRead's own field order (REPORT.md §3.1), used to render `show`/`add`/
-#: every write that returns a DeviceRead — one table, so a field added to the
-#: contract and forgotten here is a KeyError-shaped gap, not a silently-dropped
+#: The device response's own field order, used to render `show`/`add`/every
+#: write that returns a device: one table, so a field added to the server
+#: response and forgotten here is a visible gap, not a silently-dropped
 #: column (``.get`` returns ``None`` and the row still prints, labelled).
 _DEVICE_FIELDS = (
     "id", "phone_e164", "display_name", "region", "status", "enabled",
@@ -200,7 +184,7 @@ def render_groups(payload: dict) -> str:
     items = payload.get("items") or []
     lines = [f"cached_at={payload.get('cached_at') or '?'}", ""]
     if not items:
-        lines.append("(no groups cached for this device — connect it, or GET again later)")
+        lines.append("(no groups cached for this device, connect it, or GET again later)")
         return "\n".join(lines)
     lines.append(f"{'participants':<12} {'eph':<6} {'announce':<9} {'name':<28} jid")
     lines.append(f"{'-' * 12} {'-' * 6} {'-' * 9} {'-' * 28} {'-' * 8}")
@@ -218,13 +202,11 @@ def render_groups(payload: dict) -> str:
 def _render_qr(qr: str) -> None:
     """Render ``qr`` as a scannable terminal code, or fall back to the raw string.
 
-    ``qrcode`` is a THIRD-PARTY package and ``evtool`` must add no runtime
-    dependency (production builds ``uv sync --frozen --no-dev``) — so it is
-    imported lazily, here, only when a QR actually needs rendering, and only ever
-    inside this try/except. A missing package is not a command failure: the raw
-    string still pairs a device (any WhatsApp client can be pointed at a URL
-    encoding it via a phone's own QR reader pointed at a screenshot), and
-    ``--code`` is the documented way around needing this at all.
+    ``qrcode`` is a third-party package and `fm` must add no runtime
+    dependency, so it is imported lazily, here, only when a QR actually
+    needs rendering, and only ever inside this try/except. A missing
+    package is not a command failure: the raw string still pairs a device,
+    and ``--code`` is the documented way around needing this at all.
     """
     try:
         import qrcode
@@ -239,10 +221,10 @@ def _render_qr(qr: str) -> None:
 
 
 def _show_pairing(state: dict, last_qr: str | None) -> str | None:
-    """Print whatever ``state`` (a PairingState) currently offers; return the QR
-    string just shown so the caller can skip re-rendering an unchanged one — REPORT.md
-    §3.1 notes a QR "rotates ~20s", so an unchanged value between polls is the
-    common case, not the exception."""
+    """Print whatever ``state`` currently offers; return the QR string just
+    shown so the caller can skip re-rendering an unchanged one. The QR
+    rotates roughly every 20 seconds, so an unchanged value between polls
+    is the common case, not the exception."""
     qr = state.get("qr")
     pair_code = state.get("pair_code")
     if qr and qr != last_qr:
@@ -251,7 +233,7 @@ def _show_pairing(state: dict, last_qr: str | None) -> str | None:
     if pair_code:
         print(f"pair code: {pair_code}")
     if not qr and not pair_code:
-        print(f"status={state.get('status')} — waiting for the device to issue a code/QR...")
+        print(f"status={state.get('status')}, waiting for the device to issue a code/QR...")
     return last_qr
 
 
@@ -260,17 +242,17 @@ def _show_pairing(state: dict, last_qr: str | None) -> str | None:
 # ===========================================================================
 _HELP = "platform-admin WhatsApp devices: register, pair, start/stop, retire (admin)"
 
-_DESCRIPTION = """WhatsApp linked-device management — REGION-LOCAL, like `fm alerts`.
+_DESCRIPTION = """WhatsApp linked-device management, region-local, like `fm alerts`.
 
-  ev whatsapp --env ae                                   every device in AE (default subject)
+  fm whatsapp --env ae                                   every device in AE (default subject)
   fm whatsapp add +97150... --name 'Event bot' --env ae
-  ev whatsapp pair <id> --env ae                          QR in the terminal; --code for a phone code
-  ev whatsapp start|stop|logout|mark-account-deleted <id> --env ae
-  ev whatsapp delete <id> --env ae                        types the phone number back, or --yes
-  ev whatsapp groups <id> --env ae
-  ev whatsapp runner start|stop|status --env ae           arm/disarm the runner PROCESS (default: status)
+  fm whatsapp pair <id> --env ae                          QR in the terminal; --code for a phone code
+  fm whatsapp start|stop|logout|mark-account-deleted <id> --env ae
+  fm whatsapp delete <id> --env ae                        types the phone number back, or --yes
+  fm whatsapp groups <id> --env ae
+  fm whatsapp runner start|stop|status --env ae           arm/disarm the runner process (default: status)
 
-⚠️ `delete` is IRREVERSIBLE server-side once `account_deleted_at` is set, and this
+`delete` is irreversible server-side once `account_deleted_at` is set, and this
 command asks you to type the device's phone number back first (skip with --yes).
 """
 
@@ -396,9 +378,9 @@ def run(args) -> int:
 
 
 def _run_runner(ctx, args) -> int:
-    """`fm whatsapp runner [start|stop|status]` — the ARMED switch (module
+    """`fm whatsapp runner [start|stop|status]`, the armed switch (module
     docstring). `record` carries the action here, the same slot `add` uses for
-    a phone number and `show`/`pair`/etc. use for a device id — this file's
+    a phone number and `show`/`pair`/etc. use for a device id: this file's
     existing per-subject overload of that one positional, not a new shape."""
     action = (getattr(args, "record", None) or DEFAULT_RUNNER_ACTION).strip().lower()
     if action not in RUNNER_ACTIONS:
@@ -454,7 +436,7 @@ def _run_delete(ctx, device_id: str, args) -> int:
         ).strip()
         if typed != phone:
             raise WhatsAppError(
-                f"typed {typed!r} does not match {phone!r} — refusing.\n"
+                f"typed {typed!r} does not match {phone!r}, refusing.\n"
                 "-> Re-run and type the exact phone number, or pass --yes to skip this prompt."
             )
 
