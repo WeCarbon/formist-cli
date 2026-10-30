@@ -1,72 +1,49 @@
-"""`fm login` — the CLI as an OAuth client of the Evane authorization server.
+"""`fm login` - the CLI as an OAuth client of the authorization server.
 
-Owner's directive (2026-09-07): `fm` is going onto PyPI, so it must stop taking a
-PASTED BROWSER SESSION JWT — the whole account, 7 days, revocable only by signing
-the human out of every browser. Owner's amendment the same day: *"建议用同一套
-oauth 体系来验证 mcp 和 cli。本质上 mcp 就是没有授权码，直接 authorize 就行"* — do
-not build a second flow; the MCP's authorization server (``mcp_app/oauth``) is THE
-authorization server and the CLI is another registered client of it.
+This file implements no protocol of its own: the authorization server used
+here is the same one an MCP connector uses, and the CLI is just another
+registered client of it. It is a textbook RFC 8252 native-app client:
 
-So this file contains no protocol of its own. It is a textbook RFC 8252 native-app
-client:
+  1. Discover: ``GET {api}/.well-known/oauth-authorization-server``. One
+     request that also produces the only honest error message when a
+     deployment has no authorization server mounted (see
+     :class:`LoginError` on ``MCP_OAUTH_ENABLED``).
+  2. Register: DCR (RFC 7591) as a public client,
+     ``token_endpoint_auth_method = "none"``, because a client distributed
+     on PyPI has no secret it could keep. Registration happens per login
+     because the loopback port is ephemeral and redirect URIs must match
+     exactly.
+  3. Authorize: open ``{authorization_endpoint}`` in a browser. The user
+     signs in with the ordinary product login.
+  4. Receive the code: the browser is redirected to
+     ``http://127.0.0.1:<ephemeral>/callback``; or, with ``--no-browser``,
+     to a page on the API that displays the code for the user to paste.
+  5. Exchange: ``POST {token_endpoint}`` with the PKCE verifier, form-encoded.
 
-  1. **Discover** — ``GET {api}/.well-known/oauth-authorization-server``. Not a
-     hardcoded path list: it is one request that also produces the only honest
-     error message when a deployment has no authorization server at all (see
-     :class:`LoginError` below on ``MCP_OAUTH_ENABLED``).
-  2. **Register** — DCR (RFC 7591) as a PUBLIC client, ``token_endpoint_auth_method
-     = "none"``, because a client distributed on PyPI has no secret it could keep.
-     Registration happens per login because the loopback port is ephemeral and the
-     SDK matches redirect URIs EXACTLY — see mcp_app/oauth/cli_client.py.
-  3. **Authorize** — open ``{authorization_endpoint}`` in a browser. The user signs
-     in with the ordinary product login and approves on the same consent screen an
-     MCP connector uses.
-  4. **Receive the code** — the browser is 302'd to ``http://127.0.0.1:<ephemeral>/
-     callback``; or, with ``--no-browser``, to a page on the API that displays the
-     code for the user to paste.
-  5. **Exchange** — ``POST {token_endpoint}`` with the PKCE verifier, form-encoded.
+Three local defences, none of which a server can provide:
 
-THE THREE LOCAL DEFENCES, which no server can provide:
+* The verifier never leaves this process. Whoever ends up holding the code
+  (a local process watching the loopback port, a human reading a screen)
+  cannot exchange it. This is what makes the paste mode survivable at all.
+* The listener is one-shot, on 127.0.0.1, on an ephemeral port, and is
+  closed before the exchange.
+* ``state`` is checked in both modes: in the loopback mode it stops another
+  local process answering the listener; in the paste mode it stops a code
+  from somebody else's authorization from being pasted into this terminal.
+  The manual page prints ``code:state`` for exactly this.
 
-* **The verifier never leaves this process.** Whoever ends up holding the code — a
-  local process watching the loopback port, a human reading a screen — cannot
-  exchange it. This is what makes the paste mode survivable at all.
-* **The listener is one-shot, on 127.0.0.1, on an EPHEMERAL port.** It exists for a
-  single request and is closed before the exchange.
-* **``state`` is checked here**, in both modes. In the loopback mode it stops
-  another local process answering our listener; in the paste mode it stops a code
-  from somebody else's authorization — the shape a phishing page produces — being
-  pasted into this terminal. The manual page prints ``code:state`` for exactly this.
-
-⚠️ THERE IS STILL NO ``--token`` FLAG. There IS now exactly ONE credential
-environment variable — ``$EVANE_TOKEN`` (evtool/tokens.py) — and getting there took
-deliberate arguing.
-
-The argument against it, kept here because it is still true: every non-interactive
-way to hand `ev` a credential is a way to hand it a credential minted for something
-else — pasted from a chat, copied off a colleague's laptop, lifted out of a CI log
-or a `ps` listing. That is exactly the shape this OAuth flow exists to replace.
-
-The owner heard that argument and chose to allow it anyway, deliberately, as D301
-(二 = C) on 2026-09-09 (DECISIONS.old.md): CI and unattended machines need SOME
-non-interactive path, and the alternative this repo had instead — a human
-hand-carrying the 0600 file (``evtool/tokens.py::store``) into a CI secret store —
-is not meaningfully safer, only less legible about being the same risk.
-
-What keeps the risk bounded, rather than reopening the old hole wholesale:
-
-* the value must be a token `fm login` itself minted — an opaque ``crst_at_…``
-  bearer. A value shaped like the OLD pasted session JWT (three dot-separated
-  segments) is REFUSED with a message, not silently accepted
-  (:func:`formist_cli.tokens.env_token`);
-* it is read fresh from the environment on every invocation and NEVER written to
-  ``~/.config/evane`` — a leaked shell environment leaks one process's credential,
-  not a file that outlives the process;
-* `ev` never refreshes it. A CI token that expires fails loudly and gets
-  re-issued by whoever owns it, rather than `ev` quietly minting a longer-lived one
-  behind the scenes;
-* it carries whatever scopes it was issued with, unchanged — a non-admin one still
-  gets the server's ``fm login --admin`` refusal (evtool/privileges.py).
+There is no ``--token`` flag. The one non-interactive credential path is the
+``$EVANE_TOKEN`` environment variable, for CI and other unattended callers
+that cannot complete a browser flow. Its value must be a token `fm login`
+itself minted, an opaque bearer value; a value shaped like a pasted browser
+session token is refused rather than silently accepted
+(:func:`formist_cli.tokens.env_token`). It is read fresh from the
+environment on every invocation and never written to disk, so a leaked
+shell environment leaks one process's credential rather than a file that
+outlives the process. It is never refreshed by `fm` itself: an expired CI
+token fails loudly and must be re-issued by whoever owns it. It carries
+whatever scopes it was issued with, unchanged, so a non-admin token still
+gets the server's ``fm login --admin`` refusal.
 """
 
 from __future__ import annotations
@@ -118,9 +95,9 @@ class LoginError(Exception):
 def generate_pkce() -> tuple[str, str]:
     """``(verifier, challenge)`` for PKCE S256 (RFC 7636).
 
-    96 random bytes → 128 base64url characters, the maximum the RFC allows: there is
-    no reason to pick anything smaller for a value that lives for one exchange
-    inside one process.
+    96 random bytes produce 128 base64url characters, the maximum the RFC
+    allows: there is no reason to pick anything smaller for a value that
+    lives for one exchange inside one process.
     """
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(96)).rstrip(b"=").decode()
     challenge = (
@@ -132,38 +109,35 @@ def generate_pkce() -> tuple[str, str]:
 
 
 def device_label() -> str:
-    """A human-recognisable name for THIS machine, shown on the consent screen and
-    in Settings › Connected apps. It is there so "revoke the one from the old
-    laptop" is something a person can actually do."""
+    """A human-recognisable name for this machine, shown on the consent screen and
+    in Settings > Connected apps, so "revoke the one from the old laptop" is
+    something a person can actually do."""
     host = ""
     try:
         host = socket.gethostname().split(".")[0]
     except OSError:
         pass
     system = platform.system() or "unknown"
-    return f"{host} · {system}" if host else f"fm on {system}"
+    return f"{host} - {system}" if host else f"fm on {system}"
 
 
-#: Fallback when `ev` is not running from an installed distribution — which is
-#: every run out of a git checkout today, since curist-server deliberately has no
-#: [build-system] (see bin/ev).
+#: Fallback when `fm` is not running from an installed distribution, which is
+#: every run out of a git checkout.
 _UNPACKAGED_VERSION = "dev"
 
 
 def cli_version() -> str:
     """The `fm` build that asked for a credential, recorded on the registered client
-    so an old one can be spotted in Settings › Connected apps and revoked.
+    so an old one can be spotted in Settings > Connected apps and revoked.
 
-    READ FROM THE PACKAGE'S OWN METADATA, not from an environment variable. Owner
-    rule, 2026-09-07: the environment is for secrets, and a version string is not
-    one — but the deeper reason is that a version an operator can SET is a version
-    that can lie, and the only thing this field is for is telling the truth about
-    what is installed. `importlib.metadata` is the one source that cannot disagree
-    with the code actually running.
+    Read from the package's own metadata, not from an environment variable:
+    a version an operator can set is a version that can lie, and the only
+    thing this field is for is telling the truth about what is installed.
+    `importlib.metadata` is the one source that cannot disagree with the
+    code actually running.
 
     Falls back to ``"dev"`` when there is no distribution to ask, which is every run
-    from a git checkout. Stdlib only, so `evtool`'s no-venv guarantee (evtool/
-    targets.py) is unaffected.
+    from a git checkout. Stdlib only, so it carries no extra dependency.
     """
     from importlib.metadata import PackageNotFoundError, version
 
@@ -172,7 +146,7 @@ def cli_version() -> str:
             return version(dist)
         except PackageNotFoundError:
             continue
-        except Exception:  # noqa: BLE001 — a broken metadata dir must not break login
+        except Exception:  # noqa: BLE001 - a broken metadata dir must not break login
             break
     return _UNPACKAGED_VERSION
 
@@ -191,8 +165,9 @@ class _Callback:
     """
 
     def __init__(self, product: str = "") -> None:
-        #: The product the page names ("<product> CLI connected"), from the TARGET
-        #: (:func:`target_product_name`), not from whatever profile this checkout runs as.
+        #: The product the page names ("<product> CLI connected"), from the
+        #: target (:func:`target_product_name`), not from whatever product
+        #: this checkout runs as.
         self.product = product or target_product_name(None)
         self.code: str | None = None
         self.state: str | None = None
@@ -200,7 +175,7 @@ class _Callback:
         outer = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler's spelling
+            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler's spelling
                 parsed = urllib.parse.urlparse(self.path)
                 params = urllib.parse.parse_qs(parsed.query)
                 code = (params.get("code") or [""])[0]
@@ -242,21 +217,20 @@ class _Callback:
 
 # --- where login talks to ---------------------------------------------------------
 def auth_target(target: Target) -> Target:
-    """The target the LOGIN itself is performed against (also used for the token
-    refresh in ``evtool/context.py`` and the ``/auth/me`` lookup in ``evtool/cli.py``).
+    """The target the login itself is performed against (also used for the
+    token refresh and the ``/auth/me`` lookup).
 
-    Evane's AE region has no authorization server of its own: the user tables live in
-    Global, and ``utils/auth_region_gate.py`` serves the auth surface from Global only.
-    So `fm login --env ae` signs in against ``api.evane.ai``; the credential then works
-    at ``ae.api.evane.ai`` unchanged, because the OAuth token is looked up across
-    regions (mcp_app/oauth/region_lookup.py) rather than being bound to the database
-    that issued it.
+    Evane's AE region has no authorization server of its own: the user
+    tables live in Global, which serves the auth surface for it. So
+    `fm login --env ae` signs in against ``api.evane.ai``; the credential
+    then works at ``ae.api.evane.ai`` unchanged, because the OAuth token is
+    looked up across regions rather than being bound to the database that
+    issued it.
 
-    ⚠️ ONLY ``ae`` maps to Global. Every other target — ``global``, ``local``, and a
-    standalone product deployment such as ``formist`` (its own database, its own user
-    tables, its own authorization server at ``api.formist.ai``) — authenticates against
-    ITSELF. Mapping ``formist`` to Global (the pre-2026-09-30 behaviour) sent the owner
-    to Evane's login page, and a Formist token could never be issued or refreshed.
+    Only ``ae`` maps to Global. Every other target, including ``global``,
+    ``local``, and a standalone product deployment such as ``formist``
+    (its own database, its own user tables, its own authorization server
+    at ``api.formist.ai``), authenticates against itself.
     """
     if target.env == REGION_AE:
         return resolve("evane")
@@ -266,12 +240,12 @@ def auth_target(target: Target) -> Target:
 def discover(auth: Target) -> dict:
     """The authorization server's RFC 8414 metadata, or a LoginError that says why.
 
-    ⚠️ The likeliest failure here is not a network one. ``MCP_OAUTH_ENABLED`` gates
-    whether the authorization server is mounted at all (``mcp_app/server.py::
-    build_mcp``): it is set in every deploy path but NOT in ``.env.local``, so a
-    local dev server serves no ``/authorize``, no ``/token`` and no ``/register``.
-    That produces a 404 on discovery, and a bare "404" would send an operator
-    looking for a typo in a URL this file constructed correctly. Say the real thing.
+    The likeliest failure here is not a network one: a deployment can have
+    the authorization server switched off entirely (``MCP_OAUTH_ENABLED``),
+    which serves no ``/authorize``, no ``/token`` and no ``/register`` and
+    produces a 404 on discovery. A bare "404" would send an operator
+    looking for a typo in a URL this file constructed correctly, so this
+    says the real thing instead.
     """
     try:
         payload = api.get(auth, DISCOVERY_PATH)
@@ -279,11 +253,10 @@ def discover(auth: Target) -> dict:
         if getattr(exc, "status", None) == 404:
             raise LoginError(
                 f"{auth.api_base} is not serving an OAuth authorization server.\n"
-                "`fm login` signs in through the same OAuth flow the MCP "
+                "`fm login` signs in through the same OAuth flow an MCP "
                 "connector uses, and that server is mounted only when "
-                "MCP_OAUTH_ENABLED is set (mcp_app/server.py::build_mcp). It is set "
-                "in every deployment; it is NOT in .env.local, so a local dev "
-                "server needs `MCP_OAUTH_ENABLED=1` in its environment.\n"
+                "MCP_OAUTH_ENABLED is set. It is set in every deployment; a "
+                "local dev server needs `MCP_OAUTH_ENABLED=1` in its environment.\n"
                 f"(Checked {auth.api_base}{DISCOVERY_PATH}.)"
             ) from exc
         raise LoginError(f"could not read the authorization server metadata: {exc}") from exc
@@ -294,7 +267,7 @@ def discover(auth: Target) -> dict:
             raise LoginError(
                 f"the authorization server at {auth.api_base} advertises no "
                 f"{key}, so `fm login` cannot complete. Dynamic client registration "
-                "is required (RFC 7591) — see mcp_app/oauth/cli_client.py for why."
+                "is required (RFC 7591)."
             )
     return payload
 
@@ -302,10 +275,11 @@ def discover(auth: Target) -> dict:
 def _path_of(auth: Target, url: str) -> str:
     """An absolute endpoint URL reduced to a path on ``auth``.
 
-    Discovery returns absolute URLs. They must be sent through ``formist_cli.api`` (host
-    allow-list, error translation) rather than opened directly, and the refusal has
-    to happen HERE if the metadata names another host — a discovery document is
-    attacker-influenceable in exactly the way an allow-list exists for.
+    Discovery returns absolute URLs. They must be sent through
+    ``formist_cli.api`` (host allow-list, error translation) rather than
+    opened directly, and the refusal has to happen here if the metadata
+    names another host: a discovery document is attacker-influenceable in
+    exactly the way an allow-list exists for.
     """
     parsed = urllib.parse.urlparse(url)
     if not parsed.netloc:
@@ -321,13 +295,13 @@ def _path_of(auth: Target, url: str) -> str:
 
 # --- the flow ---------------------------------------------------------------------
 def target_product_name(target: Target | None) -> str:
-    """The product a TARGET deployment is — its name as `config/products/<id>.json`
-    spells it ("Formist" for ``--host formist``, "Evane" for ``global``/``ae``). A
-    local/override target (or none) is whatever product this checkout runs as.
+    """The product a target deployment is ("Formist" for ``--host formist``,
+    "Evane" for ``global``/``ae``). A local/override target (or none) is
+    whatever product this checkout runs as.
 
-    The client name a CLI registers is shown on the deployment's own consent screen
-    and Settings > Connected apps, so it must be THAT deployment's product, never the
-    laptop checkout's default (2026-09-30: Formist's Connected apps said "Evane CLI").
+    The client name a CLI registers is shown on the deployment's own
+    consent screen and Settings > Connected apps, so it must be that
+    deployment's product, never the local checkout's default.
     """
     return (getattr(target, "product", None) or "fm") if target is not None else "fm"
 
@@ -338,7 +312,7 @@ def register_client(auth: Target, meta: dict, redirect_uris: list[str], scopes: 
     from formist_cli import privileges
 
     body = {
-        "client_name": f"{target_product_name(auth)} CLI · {device_label()}",
+        "client_name": f"{target_product_name(auth)} CLI - {device_label()}",
         "redirect_uris": redirect_uris,
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
@@ -410,8 +384,8 @@ def _prompt_code(url: str, state: str) -> str:
     print("Open this page and sign in:", file=sys.stderr)
     print(f"  {url}", file=sys.stderr)
     print("", file=sys.stderr)
-    print("The page will show a code of the form  <code>:<state>  —", file=sys.stderr)
-    print(f"its state MUST be  {state}", file=sys.stderr)
+    print("The page will show a code of the form  <code>:<state>", file=sys.stderr)
+    print(f"its state must be  {state}", file=sys.stderr)
     print("If it is not, that page belongs to somebody else's login. Refuse it.", file=sys.stderr)
     print("", file=sys.stderr)
     try:
@@ -421,8 +395,8 @@ def _prompt_code(url: str, state: str) -> str:
 
 
 def _split_pasted(pasted: str) -> tuple[str, str]:
-    """``code:state`` as the manual page prints it. A bare code is accepted (and
-    then the state check simply cannot run — said out loud by the caller)."""
+    """``code:state`` as the manual page prints it. A bare code is accepted,
+    and the state check simply cannot run; the caller says so out loud."""
     if ":" in pasted:
         code, _, state = pasted.rpartition(":")
         return code.strip(), state.strip()
@@ -432,16 +406,13 @@ def _split_pasted(pasted: str) -> tuple[str, str]:
 def perform_login(
     env: str | None, *, no_browser: bool = False, admin: bool = False
 ) -> dict:
-    """Perform the whole flow. Returns ``{**token_response, "client_id": …}``.
+    """Perform the whole flow. Returns ``{**token_response, "client_id": ...}``.
 
-    NOT called ``run``. Eleven ``evtool/*.py`` modules bind a top-level ``run`` and
-    every one of them means "this is a subcommand's entry point" — a row
-    ``tests/cross_module_drift_baseline.py`` already declares. This module is not a
-    subcommand (``cli.py::cmd_login`` is), so a twelfth ``run`` here would be the
-    same NAME for a different THING, joining a row that says the sameness is
-    deliberate. The drift test caught it; the fix is the name, not a declaration.
+    Not called ``run``: every module in this package that binds a top-level
+    ``run`` means "this is a subcommand's entry point", and this module is
+    not one (``cli.py::cmd_login`` is).
 
-    Storing is the CALLER's job (``evtool/cli.py::cmd_login``) so this can be
+    Storing is the caller's job (``cli.py::cmd_login``), so this can be
     exercised end to end without writing to anybody's config directory.
     """
     from formist_cli.privileges import SCOPE_ADMIN, SCOPE_CLI, SCOPE_KB
@@ -461,7 +432,7 @@ def perform_login(
             callback.product = target_product_name(auth)
         except OSError:
             # No loopback socket available (a locked-down box, a sandbox). Not a
-            # failure — it is exactly the case --no-browser exists for.
+            # failure: it is exactly the case --no-browser exists for.
             callback = None
 
     manual_uri = f"{auth.api_base.rstrip('/')}/oauth/cli/code"
@@ -484,7 +455,7 @@ def perform_login(
             opened = False
             try:
                 opened = webbrowser.open(url)
-            except Exception:  # noqa: BLE001 — a headless box raises all sorts
+            except Exception:  # noqa: BLE001 - a headless box raises all sorts
                 opened = False
             if not opened:
                 print("Could not open a browser. Open the URL above yourself.", file=sys.stderr)
@@ -529,16 +500,17 @@ def perform_login(
 
 
 def _check_state(got: str, expected: str) -> None:
-    """Refuse a pasted code whose state is not ours; SAY SO when there is none.
+    """Refuse a pasted code whose state is not ours; say so when there is none.
 
-    A missing state is not treated as a failure — the user may have copied only the
-    first half — but it is not treated as a pass either: the check that would have
-    caught a phished code did not run, and the operator is told, because a security
-    control that silently did not happen is worse than one that is absent.
+    A missing state is not treated as a failure (the user may have copied
+    only the first half), but it is not treated as a pass either: the check
+    that would have caught a phished code did not run, and the operator is
+    told, because a security control that silently did not happen is worse
+    than one that is absent.
     """
     if not got:
         print(
-            "  ⚠️ the pasted value carried no state, so `fm` could not check that "
+            "  the pasted value carried no state, so `fm` could not check that "
             "this code came from the page it opened.",
             file=sys.stderr,
         )
@@ -555,16 +527,16 @@ def store_payload(
 ) -> str:
     """Persist a token response at 0600 and return the access token to use now.
 
-    THE ONE PLACE a token response becomes a file, called by both `fm login` and
-    the transparent refresh in ``evtool/context.py``. Two copies of "which fields go
-    on disk" is how a refresh ends up dropping the ``client_id`` that the NEXT
-    refresh needs — a failure that appears 30 days later as "please log in again"
-    with no explanation.
+    The one place a token response becomes a file, called by both `fm login`
+    and the transparent token refresh. Two copies of "which fields go on
+    disk" is how a refresh ends up dropping the ``client_id`` that the next
+    refresh needs, a failure that appears 30 days later as "please log in
+    again" with no explanation.
 
-    ``expires_in`` is turned into an ABSOLUTE ``expires_at`` here. A duration is
-    only meaningful next to the instant it was measured from, and that instant is
-    now; storing the duration would make every later reader re-derive it from a file
-    mtime, which is not the same thing.
+    ``expires_in`` is turned into an absolute ``expires_at`` here. A
+    duration is only meaningful next to the instant it was measured from,
+    and that instant is now; storing the duration would make every later
+    reader re-derive it from a file mtime, which is not the same thing.
     """
     from datetime import datetime, timedelta, timezone
 
