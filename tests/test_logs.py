@@ -1,39 +1,18 @@
-"""``fm logs`` — the server's own event firehose, and the thing it cannot tell you.
+"""Tests for ``fm logs``: the server's live event stream, not a history log.
 
-WHAT CHANGED, AND WHY THE OLD PREMISE IS GONE
-----------------------------------------------
-``formist_cli/logs.py`` used to read container stdout out of Azure Log Analytics,
-because when it was written ``/admin/events/*`` genuinely 404'd in prod. Measured
-2026-08-27, that is no longer true:
+Key properties covered:
 
-    https://api.evane.ai/admin/events/rates     401   ← deployed, needs auth
-    https://ae.api.evane.ai/admin/events/rates  410   ← the region gate, not absence
-
-401, not 404. ``routes/admin_events.py`` has shipped. The 410 on ``ae`` is
-``utils/auth_region_gate.py`` doing its job — the admin surface is Global-only,
-which ``api.admin_get`` already knows.
-
-THE DISTINCTION THESE TESTS EXIST TO PROTECT
----------------------------------------------
-**A live firehose is not a log.** ``services/dispatcher.py:1`` is an *in-process*
-dispatcher and ``routes/admin_events.py:56`` says the stream generator "touches no
-database and no Redis". Every dispatched event is also written as a JSON line by
-``utils/eventlog.py`` — to a LOGGER, i.e. container stdout, which ``ev`` no longer
-reaches by rule.
-
-So this command shows what happens **from now on** and can never answer "what
-happened at 14:29 yesterday". That is not a limitation to mention in passing; it
-is the single most likely way an operator misreads this tool, and
-:data:`LIVE_ONLY_NOTE` is tested as output rather than left in a docstring where
-nobody meets it at the moment they need it.
-
-THE PARSER GUARD WORTH THE MOST
---------------------------------
-``--json`` consumes an ``EventSourceResponse`` (``routes/admin_events.py:367``)
-whose ``ping`` emits SSE **comment** frames. A comment line starts with ``:`` and
-carries no data. Emitting those as records would put non-events into a stream
-whose entire purpose is being machine-readable — and it would do so only on an
-IDLE connection, i.e. exactly when nobody is watching closely enough to notice.
+* The stream is in-process and never reaches a database; the server also
+  writes each event as a JSON line to its own stdout, which ``fm`` does not
+  have access to. So this command answers "what happens from now on" and
+  cannot answer "what happened earlier"; :data:`LIVE_ONLY_NOTE` carries that
+  caveat as output rather than only in a docstring.
+* In JSON mode, the SSE transport's periodic ping is a comment frame (starts
+  with ``:``, carries no data) and must never be emitted as a record. A
+  comment frame fires on an otherwise idle connection, so dropping this guard
+  would be easy to miss.
+* The admin event stream is Global-region only; a non-Global prod region must
+  be refused locally before a request is sent.
 """
 
 from __future__ import annotations
@@ -78,11 +57,11 @@ class TestSubjects:
 
 
 class TestParamsGoToTheServerVerbatim:
-    """The route owns these filters; the client must not re-derive them.
+    """The server owns these filters; the client must not re-derive them.
 
-    Filtering a STREAM client-side is worse than filtering a list client-side: the
-    lines you dropped were never counted anywhere, so there is no `total` to
-    contradict the impression that you saw everything.
+    Filtering a stream client-side is worse than filtering a list client-side:
+    the lines dropped were never counted anywhere, so there is no `total` to
+    contradict the impression that everything was seen.
     """
 
     def test_filters_are_passed_through(self):
@@ -115,9 +94,9 @@ class TestParamsGoToTheServerVerbatim:
         assert build_params(as_json=False)["format"] == "text"
 
     def test_no_credential_is_ever_put_in_the_query(self):
-        """``routes/admin_events.py:44-49`` deliberately refuses ``?token=`` so the
-        JWT stays out of URLs, access logs, proxy logs and shell history. A client
-        that helpfully added one would undo that decision from the outside."""
+        """The server deliberately refuses a ``?token=`` query parameter so the
+        JWT stays out of URLs, access logs, proxy logs and shell history. A
+        client that helpfully added one would undo that from the outside."""
         params = build_params(
             types="x", exclude="y", project="z", source="api", only_work=True
         )
@@ -126,7 +105,7 @@ class TestParamsGoToTheServerVerbatim:
 
 
 class TestTheLiveOnlyCaveatIsOutput:
-    """Tested as OUTPUT, because a caveat in a docstring is met by nobody."""
+    """Tested as output, because a caveat left only in a docstring is easy to miss."""
 
     def test_it_says_the_stream_cannot_answer_about_the_past(self):
         note = LIVE_ONLY_NOTE.lower()
@@ -144,8 +123,8 @@ class TestSSEFrames:
         assert records == [{"event": "event", "data": {"type": "on_x"}}]
 
     def test_a_ping_comment_is_dropped_not_emitted(self):
-        """The guard worth the most. sse-starlette's keepalive emits comment
-        frames, so this fires on an IDLE connection — when nobody is looking."""
+        """The transport's keepalive emits comment frames, so this fires on an
+        idle connection, when nobody is watching closely."""
         records = list(
             parse_sse([": ping", "", "event: event", 'data: {"type": "on_x"}', ""])
         )
@@ -162,19 +141,15 @@ class TestSSEFrames:
         assert records == [{"event": "event", "data": "not-json"}]
 
     def test_a_frame_without_a_terminating_blank_line_is_still_emitted(self):
-        """A stream ends when the connection does, not on a tidy boundary — the
+        """A stream ends when the connection does, not on a tidy boundary: the
         last frame must not be swallowed because the server was cut off."""
         records = list(parse_sse(["event: event", 'data: {"a": 1}']))
         assert records == [{"event": "event", "data": {"a": 1}}]
 
 
 class TestFollowStopsWhenAsked:
-    """``--for N``. The clock is INJECTED.
-
-    A test that waits N real seconds and asserts on elapsed time is a test about
-    the host — the failure mode this repo has hit four times in one day (uptime,
-    Node major, process warmth, CPU count). Passing the clock in tests the
-    variable instead of measuring the phenomenon.
+    """``--for N``, with the clock injected so the test does not depend on real
+    elapsed time or host timing.
     """
 
     def test_it_yields_everything_when_unbounded(self):
@@ -193,13 +168,11 @@ class TestFollowStopsWhenAsked:
 
 
 class TestAdminIsGlobalOnly:
-    """``/admin`` on a non-Global prod region answers 410, so refuse before sending.
-
-    Formist is the one prod exception (its own single-region deployment, not a
-    region of EVANE's Global/AE split — see ``formist_cli.targets.is_admin_env``), and
-    this is the ONE call site of three (``formist_cli/api.py``, ``formist_cli/cli.py`` are
-    the other two) each sharing that predicate so none of them can drift from the
-    others the way this one once did.
+    """``/admin`` on a non-Global prod region answers 410, so refuse before
+    sending. Formist is the one exception, as its own single-region
+    deployment. This call site shares ``formist_cli.targets.is_admin_env``
+    with ``formist_cli/api.py`` and ``formist_cli/cli.py`` so the three
+    cannot drift apart.
     """
 
     def test_a_prod_region_that_is_not_global_is_refused_locally(self):
@@ -225,18 +198,13 @@ class TestAdminIsGlobalOnly:
 # The requirement this whole command exists for
 # ===========================================================================
 class TestSilenceIsNotAmbiguous:
-    """A stream that has emitted NOTHING must not look like a stream that is not
-    connected.
+    """A stream that has emitted nothing must not look like a stream that is
+    not connected: "nothing is happening" and "I am not listening" would
+    otherwise be indistinguishable to an operator watching a quiet terminal.
 
-    This is the defect class this repo keeps finding, and a log follower is where
-    it is most tempting to get wrong, because silence is the EXPECTED steady state.
-    An operator staring at a quiet terminal has to be able to tell "nothing is
-    happening" from "I am not listening", and those two produce the identical
-    picture — an iterator that is not yielding.
-
-    The distinction is made structurally rather than by wording: a subscription
-    reaches LIVE only by being handed the server's OWN preamble, so there is no
-    path that prints "connected" from what this process merely intended to do.
+    The distinction is structural, not just wording: a subscription is only
+    confirmed as live once it is handed the server's own preamble, so there
+    is no path that reports "connected" based only on local intent.
     """
 
     def test_a_subscription_starts_unconfirmed(self):
@@ -246,8 +214,8 @@ class TestSilenceIsNotAmbiguous:
         assert sub.phase is logs.Phase.OPENING
 
     def test_connected_cannot_be_printed_without_the_servers_own_words(self):
-        """The mutation guard. ``render_live`` must be unable to describe a
-        connection using only what we locally believe about it."""
+        """``render_live`` must be unable to describe a connection using only
+        what the client locally believes about it."""
         sub = logs.Subscription(env="global", api_base="https://api.evane.ai",
                                 path="/admin/events/stream", filters={})
         with pytest.raises(logs.LogsError):
@@ -263,8 +231,8 @@ class TestSilenceIsNotAmbiguous:
         assert sub.confirmed is False
 
     def test_the_live_line_quotes_the_server_not_the_target(self):
-        """GATE.md: a verification line must read every value it prints from the
-        thing it is verifying. The deployment identity comes off the wire."""
+        """A verification line must read every value it prints from the thing
+        it is verifying. The deployment identity comes off the wire."""
         sub = logs.Subscription(env="global", api_base="https://api.evane.ai",
                                 path="/admin/events/stream", filters={})
         sub.confirm("# evane admin event firehose · env=prod region=global "
@@ -292,17 +260,10 @@ class TestSilenceIsNotAmbiguous:
         assert logs.exit_code(sub) != 0
 
     def test_an_unconfirmed_stream_that_merely_RAN_OUT_OF_TIME_is_not_a_success(self):
-        """The case that makes the unconfirmed branch load-bearing — found by a
-        SURVIVING mutation.
-
-        Deleting ``if not sub.confirmed: return 2`` from ``exit_code`` changed
-        nothing across 57 tests, because every unconfirmed case tested also ended
-        in SERVER_CLOSED, and that neighbour returns non-zero on its own. The
-        guard read as dead; it was covered.
-
-        It is load-bearing exactly when the reason is NOT a drop: `fm logs --for 5`
+        """The unconfirmed check in ``exit_code`` is load-bearing specifically
+        when the ending reason is not a connection drop: ``fm logs --for 5``
         against something that accepted the connection and sent nothing at all
-        would otherwise elapse its budget and report SUCCESS.
+        must not elapse its budget and report success.
         """
         for reason in (logs.Ended.DEADLINE, logs.Ended.INTERRUPTED):
             sub = logs.Subscription(env="global", api_base="https://api.evane.ai",
@@ -321,8 +282,8 @@ class TestSilenceIsNotAmbiguous:
         assert logs.exit_code(sub) != 0
 
     def test_the_two_zero_event_endings_do_not_render_alike(self):
-        """The whole requirement, as one assertion: quiet and deaf must differ in
-        the output, not only in a field nobody prints."""
+        """Quiet and deaf must differ in the output, not only in a field
+        nobody prints."""
         quiet = self._confirmed()
         quiet.end(logs.Ended.DEADLINE, elapsed=60.0)
         deaf = logs.Subscription(env="global", api_base="https://api.evane.ai",
@@ -341,14 +302,11 @@ class TestSilenceIsNotAmbiguous:
 
 
 class TestTheHandshakeDoesNotEatTheProofOfLife:
-    """``render_status`` (services/admin_stream.py:1314) begins with ``#`` — the
-    SAME character the two banner lines begin with.
-
-    So a rule of "leading ``#`` lines are the preamble" swallows the keepalive
-    status line, and it does so on an IDLE stream: the one line proving the
-    connection is alive would be consumed by the code whose job is to prove the
-    connection is alive. The preamble is matched on its two literal shapes
-    instead (routes/admin_events.py:377-380).
+    """The server's keepalive status line also begins with ``#``, the same
+    character the two banner lines begin with. A rule of "leading ``#`` lines
+    are the preamble" would therefore swallow the keepalive status line on an
+    idle stream, consuming the one line that proves the connection is alive.
+    The preamble is matched on its two literal shapes instead.
     """
 
     BANNER = [
@@ -369,21 +327,14 @@ class TestTheHandshakeDoesNotEatTheProofOfLife:
         )
 
     def test_a_hash_line_that_is_not_the_mode_line_ends_the_preamble(self):
-        """The case that separates the two rules — found by a SURVIVING mutation.
-
-        Against today's server the banner is always exactly two lines, so
-        "absorb leading ``#`` lines" and "absorb the two literal shapes" behave
-        identically and the first version of this class could not tell them
-        apart: the mutation that swapped one for the other passed 57 tests.
-
-        They differ the moment a ``#`` line arrives that is NOT the mode line —
-        a banner whose shape changed, or a status line that beat it. Under the
-        leading-hash rule that line is swallowed into the handshake and the
-        operator never sees it; under the literal rule the preamble closes on
-        what did arrive and the line reaches them.
-
-        This is the guard tested at its OWN level rather than through the input
-        where its neighbour covers it.
+        """Separates the two matching rules: "absorb leading ``#`` lines" and
+        "absorb the two literal banner shapes" behave identically while the
+        banner is always exactly two lines, but differ the moment a ``#``
+        line arrives that is not the mode line (a changed banner shape, or a
+        status line that arrived early). Under the leading-hash rule that
+        line would be swallowed into the handshake; under the literal rule
+        the preamble closes on what did arrive and the line reaches the
+        operator.
         """
         sub = self._sub()
         out = list(logs.consume(sub, iter([self.BANNER[0], self.STATUS]), as_json=False))
@@ -399,8 +350,8 @@ class TestTheHandshakeDoesNotEatTheProofOfLife:
 
     def test_a_real_event_line_is_counted_and_reaches_stdout(self):
         sub = self._sub()
-        event = ("08-27 09:14:03 scheduler  [connector-sync]  "
-                 "on_sync_finished  p:296346bf e:-  moved=3")
+        event = ("01-02 09:14:03 scheduler  [connector-sync]  "
+                 "on_sync_finished  p:ab12cd34 e:-  moved=3")
         out = list(logs.consume(sub, iter([*self.BANNER, event]), as_json=False))
         assert sub.events == 1
         assert (logs.OUT, event) in out
@@ -435,13 +386,11 @@ class TestTheHandshakeDoesNotEatTheProofOfLife:
 
 
 class TestKeepaliveIsWhatMakesIdleDistinguishableFromDead:
-    """With no keepalive there is NOTHING on the wire when the bus is quiet, so a
-    live idle stream and a dead socket are byte-for-byte identical.
-
-    The two formats differ and the check models that rather than being uniformly
-    strict: sse-starlette pings on its own schedule (``ping=max(keepalive or 30, 1)``,
-    routes/admin_events.py:369), so JSON is never silent. Text has only the status
-    line, which ``keepalive=0`` turns off.
+    """With no keepalive there is nothing on the wire when the stream is
+    quiet, so a live idle stream and a dead socket would be byte-for-byte
+    identical. The two output formats differ: JSON mode pings on its own
+    schedule and is never silent, so ``keepalive=0`` is only disallowed in
+    text mode, where it would turn off the only status line.
     """
 
     def test_text_mode_refuses_keepalive_zero(self):
@@ -457,37 +406,29 @@ class TestKeepaliveIsWhatMakesIdleDistinguishableFromDead:
         logs.require_liveness_signal(30, as_json=True)
 
     def test_the_read_timeout_tolerates_exactly_one_missed_keepalive(self):
-        """Sized off the SERVER's period, not a number picked here."""
+        """Sized off the server's own period, not a number picked here."""
         assert logs.read_timeout_for(30, as_json=False) > 30 * 2
         assert logs.read_timeout_for(5, as_json=False) > 5 * 2
 
     def test_json_keepalive_zero_is_sized_off_sse_starlettes_own_default(self):
-        """``ping=max(keepalive or 30, 1)`` — the fallback is 30, not 0. Sizing the
+        """The transport's own ping fallback is 30, not 0. Sizing the read
         timeout on the requested 0 would abort every idle JSON stream at once."""
         assert logs.read_timeout_for(0, as_json=True) > 30
 
 
 class TestHelpSaysWhatTheStreamCarries:
     """``fm logs`` on a shared screen is how this data leaves the room, so the
-    disclosure is in ``--help`` where it is read before the command runs.
-
-    Measured 2026-08-27 against services/admin_stream.py's redaction: credentials
-    and user CONTENT are handled; IDENTITY and NAMING metadata are not.
+    disclosure belongs in ``--help``, read before the command runs: credentials
+    and message content are redacted, but identity and naming metadata are
+    not.
     """
 
     def test_it_names_the_fields_that_actually_leak(self):
-        """⚠️ THIS TEST HAS NOW BEEN WRITTEN THREE WAYS. Read why before a fourth.
-
-        v1 asserted --help named `join_url` and `author_name` as leaks — true.
-        v2 asserted the opposite, after a fix masked URLs and emails by value.
-        v3 (this one) is back to v1's contract, because the owner ruled the fix must
-        NOT ship: logs are not redacted, because they are analysed from unredacted output.
-
-        The lesson is not "tests churn". It is that a --help describing a redaction
-        that does not exist is worse than no warning at all, because it trains the
-        reader to discount the parts that ARE true. v2 was correct for a tree that
-        never shipped; leaving it would have been a confident, wrong, actionable
-        sentence — the same defect as the _KNOWN_UNDEPLOYED map two commits ago.
+        """``--help`` must describe the redaction that actually exists, not a
+        stricter one: these logs are not redacted, because they are analysed
+        from unredacted output. A help text claiming otherwise is worse than
+        no warning, because it trains the reader to discount the parts that
+        are true.
         """
         carries = logs.STREAM_CARRIES.lower()
         assert "not redacted" in carries
@@ -496,19 +437,18 @@ class TestHelpSaysWhatTheStreamCarries:
         assert "email address" in carries
 
     def test_it_says_a_clip_is_not_a_redaction(self):
-        """The measurement that stops the reader reassuring themselves.
-
-        "Clipped to 80 chars" reads as mitigation. A real Teams join URL measured
-        69 characters, so it prints ENTIRE with its ?p= passcode. Without this
-        number a reader does the arithmetic wrong in the safe direction.
+        """"Clipped to 80 chars" reads as mitigation, but a meeting join URL
+        can be well under that length and print in full, passcode included.
+        The help text must say so with a concrete number, or a reader does
+        the arithmetic wrong in the safe direction.
         """
         carries = logs.STREAM_CARRIES
         assert "69" in carries
         assert "clip is not a redaction" in carries.lower()
 
     def test_it_points_at_the_shelved_fix_instead_of_inviting_a_rediscovery(self):
-        """A known, measured, deliberately-unmerged defect must say so where it is
-        met — or the next operator reports it as new and someone re-derives it."""
+        """A known, deliberately-unmerged fix for this must say so where it is
+        met, or the next operator reports it as new and someone re-derives it."""
         carries = logs.STREAM_CARRIES
         assert "security/event-stream-identity-leak" in carries
         assert "not merged" in carries.lower() or "NOT merged" in carries
@@ -534,7 +474,7 @@ class TestHelpSaysWhatTheStreamCarries:
 
         parser = argparse.ArgumentParser()
         logs.add_parser(parser.add_subparsers(dest="command"))
-        help_text = parser.format_help()  # not the sub-parser's — that is a separate object
+        help_text = parser.format_help()  # not the sub-parser's: that is a separate object
         del help_text
         sub_parser = logs.build_standalone_parser()
         rendered = sub_parser.format_help()
@@ -543,9 +483,9 @@ class TestHelpSaysWhatTheStreamCarries:
         assert "scrollback hygiene" in rendered
 
 
-class TestEvNeverInvokesAz:
-    """Owner rule, no exceptions. Enforced structurally rather than by review,
-    because the previous version of THIS module shelled out to ``az rest``."""
+class TestFmNeverInvokesAz:
+    """``fm`` must never shell out to the ``az`` CLI. Enforced structurally
+    rather than by review."""
 
     def test_no_module_under_formist_cli_mentions_the_az_cli(self):
         import pathlib
@@ -563,14 +503,10 @@ class TestEvNeverInvokesAz:
         assert not offenders, "formist_cli must never invoke the az CLI:\n" + "\n".join(offenders)
 
     def test_formist_cli_does_not_import_the_break_glass_channel(self):
-        """Checked by AST, not by grepping for the word.
-
-        The first version of this test searched the file text and failed on
-        ``logs.py``, which NAMES ``scripts/execchan.py`` in its docstring — the
-        cross-reference GATE.md asks for, so that the next reader knows the module
-        exists and why it is out there. A substring standing in for a structural
-        fact reported a correct cross-reference as a rule violation; the rule is
-        about the import graph, so read the import graph.
+        """Checked by AST rather than by searching file text for the word:
+        the break-glass channel's name is legitimately mentioned in a
+        docstring elsewhere in this package, so a text search would flag that
+        mention as a violation. The rule is about the import graph.
         """
         import ast
         import pathlib
@@ -589,12 +525,12 @@ class TestEvNeverInvokesAz:
 
     @staticmethod
     def _missing_repo_paths(scan_dir: pathlib.Path, repo: pathlib.Path) -> list[str]:
-        """Every ``scripts/…`` path named in prose under `scan_dir` that is absent.
+        """Every ``scripts/...`` path named in prose under `scan_dir` that is
+        absent from `repo`.
 
-        A module-level helper and not an inline loop, because the companion test
-        below has to exercise THIS code. The first version re-implemented the match
-        inline, and gutting the real check left the companion green — the check that
-        cannot fail, inside the test written to prove the check can fail.
+        A module-level helper rather than an inline loop, so the companion
+        test below exercises this exact code instead of a reimplementation
+        of it.
         """
         import re
 
@@ -607,13 +543,8 @@ class TestEvNeverInvokesAz:
         return missing
 
     def test_that_path_check_can_actually_fail(self, tmp_path):
-        """Drives the REAL helper, not a copy of its logic.
-
-        The first version of this test re-implemented the regex and the existence
-        check inline. Gutting the actual guard therefore changed nothing and this
-        stayed green — a mutation proved it (P3 SURVIVED). That is the defect this
-        repo names most often, appearing inside the test whose entire job is to show
-        the guard can fail.
+        """Drives the real helper directly, not a reimplementation of its logic,
+        so a broken helper would actually fail this test.
         """
         (tmp_path / "fake_module.py").write_text(
             '"""It moved to ``scripts/definitely_not_here.py`` for reasons."""\n'
@@ -629,9 +560,10 @@ class TestEvNeverInvokesAz:
         )
 
     def test_that_import_check_can_actually_fail(self):
-        """The guard above passes on a tree where nothing was ever wrong, which is
-        indistinguishable from a guard that cannot fail. So run it against a module
-        that DOES import execchan and require it to object."""
+        """The guard above passes on a tree where nothing was ever wrong,
+        which is indistinguishable from a guard that cannot fail. Run it
+        against a module that does import execchan and require it to
+        object."""
         import ast
 
         tree = ast.parse("from scripts.execchan import run\nimport scripts.execchan\n")

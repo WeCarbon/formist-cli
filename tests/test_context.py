@@ -1,4 +1,4 @@
-"""One resolver for "which env, which space, which token" — and a guard on it.
+"""One resolver for "which env, which space, which token": and a guard on it.
 
 WHY THIS EXISTS
 ----------------
@@ -7,11 +7,11 @@ and announce where each answer came from. That operation existed TWICE before th
 module, under two different names, so neither a grep for a function name nor a
 review of one file would have found the pair:
 
-  * ``cli.py::_effective`` + ``cli.py::_token_for`` — 10 call sites
-  * ``logs.py::run`` — the same sequence inline, written by the same person, later
+  * ``cli.py::_effective`` + ``cli.py::_token_for``: 10 call sites
+  * ``logs.py::run``: the same sequence inline, written by the same person, later
 
 ⚠️ AND THEY HAD ALREADY DRIFTED, which is the whole argument. ``logs.py`` refused
-locally when no token was stored — "no stored session for X → fm login" — and
+locally when no token was stored: "no stored session for X → fm login": and
 ``cli.py`` did not, so nine other commands opened a socket, waited for a 401 and
 translated it. Same situation, two behaviours, and the better one was reachable
 from exactly one command.
@@ -81,7 +81,7 @@ class TestTheResolverIsSingular:
         """Drives the REAL helper over a directory with two callers.
 
         The first version re-implemented the walk inline, so a mutation gutting the
-        guard's assertion left this green — a check that cannot fail, inside the
+        guard's assertion left this green: a check that cannot fail, inside the
         test written to show the check can fail. Third time tonight for that shape.
         """
         (tmp_path / "a.py").write_text("prefs.effective(env_flag=None)\n")
@@ -162,7 +162,7 @@ class TestItResolvesAndRefusesInOnePlace:
         self, monkeypatch, capsys
     ):
         """D301 (option C): $FORMIST_TOKEN wins over the file for THIS call and `ev`
-        must not refresh it — refreshing would call `login.store_payload`, i.e.
+        must not refresh it: refreshing would call `login.store_payload`, i.e.
         WRITE the env-sourced credential to disk, exactly what the design promises
         never to do. Pre-fix, `resolve()` called `_refresh_if_stale`
         unconditionally (RED: the assertion below fires)."""
@@ -183,7 +183,7 @@ class TestItResolvesAndRefusesInOnePlace:
 
 
 class _Eff:
-    """Stand-in for prefs.Effective — only the attributes context.resolve reads."""
+    """Stand-in for prefs.Effective: only the attributes context.resolve reads."""
 
     def __init__(self, target, space, space_source):
         self.target = target
@@ -197,14 +197,14 @@ class _Eff:
 class TestNoCommandPaysARoundTripToLearnItHasNoToken:
     """⚠️ C6 SURVIVED until this class existed, and the reason is worth keeping.
 
-    I *demonstrated* this fix by hand — instrumenting ``urllib.request.urlopen``
-    and watching `fm chats` stop opening a socket — and then did not write it down.
+    I *demonstrated* this fix by hand: instrumenting ``urllib.request.urlopen``
+    and watching `fm chats` stop opening a socket: and then did not write it down.
     A demonstration proves the code worked once; only a test keeps it working. The
     mutation that dropped ``need_token=True`` from ``chats.py`` passed 101 tests.
 
     Measured before the fix: `fm chats --host evane` with no stored token really did
     open ``https://api.evane.ai/projects/…/chats``. The ``/admin`` commands never
-    had this gap — ``api.admin_get`` guards them — which is why the three below are
+    had this gap: ``api.admin_get`` guards them: which is why the three below are
     named individually rather than swept.
     """
 
@@ -214,7 +214,7 @@ class TestNoCommandPaysARoundTripToLearnItHasNoToken:
     #: command exited 2 with no socket whether or not the token guard existed.
     #: A mutation dropping ``need_token`` from export survived because of it.
     #: Both assertions were satisfied by a different mechanism than the one
-    #: under test — the shape GATE.md calls a test that cannot fail.
+    #: under test: the shape GATE.md calls a test that cannot fail.
     COMMANDS = [
         ["chats", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31"],
         ["get", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31",
@@ -239,7 +239,7 @@ class TestNoCommandPaysARoundTripToLearnItHasNoToken:
             raise AssertionError("a socket was opened before the token was checked")
 
         monkeypatch.setattr(urllib.request, "urlopen", _traced)
-        # No stored credential for any env — the situation under test.
+        # No stored credential for any env: the situation under test.
         monkeypatch.setattr(tokens, "load_for", lambda env: (None, None))
         monkeypatch.setattr(cli.context.tokens, "load_for", lambda env: (None, None))
 

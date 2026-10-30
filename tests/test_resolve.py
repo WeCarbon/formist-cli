@@ -2,7 +2,7 @@
 
 Why this module exists at all is a correction to the brief this lane started from.
 The bulk endpoint's ``$ref`` is a WITHIN-BATCH back-reference to a row the same
-request just created (`services/bulk_data.py:201-227` — "Resolution is strictly
+request just created (`services/bulk_data.py:201-227`: "Resolution is strictly
 BACKWARD"), so every ``update`` and ``delete`` op still has to carry a literal
 UUID. The endpoint hands the transcribed-id failure straight back to the operator.
 This module is the thing that stops the operator ever typing one.
@@ -91,7 +91,7 @@ class TestExactlyOneOrRefuse:
 
     def test_case_difference_is_not_an_exact_match_but_is_reported(self):
         """Folding case silently is how the wrong row gets picked. Refuse, but say
-        what was nearly matched — otherwise the operator cannot act on it."""
+        what was nearly matched: otherwise the operator cannot act on it."""
         fetch = _fetcher([{"id": "a1", "name": "adafsa"}])
         with pytest.raises(ResolutionError) as exc:
             resolve_one(
@@ -125,7 +125,7 @@ class TestTruncatedPageCannotProveUniqueness:
 
 class TestI18nShapeSplit:
     """Prod stores `name` as an {en, ar} map; dev stores a plain string. Same
-    column, same code, different shape — `services/bulk_data.py:260-272` says so
+    column, same code, different shape: `services/bulk_data.py:260-272` says so
     and names the 14 rows a coalescing probe would have silently converted.
 
     So: MATCH across both shapes, but carry the RAW value for `$expect`.
@@ -153,7 +153,7 @@ class TestI18nShapeSplit:
         """THE test in this file.
 
         `Match.value` becomes the `$expect` the server re-checks against
-        `column_snapshot`, which is `_jsonify(getattr(entity, field))` — the raw
+        `column_snapshot`, which is `_jsonify(getattr(entity, field))`: the raw
         column. Flattening the map to "ADAFSA" here would send an `$expect` that
         can never match a prod row, turning every prod update into an
         unexplainable `expect-mismatch`. Worse, the reverse (sending a map where a
@@ -191,7 +191,7 @@ class TestKindRegistry:
             )
 
     def test_task_resolves_on_subject_not_name(self):
-        """TASK has no `name` column — TASK_SPEC searches `subject`
+        """TASK has no `name` column: TASK_SPEC searches `subject`
         (routes/entities.py:84)."""
         fetch = _fetcher([{"id": "t1", "subject": "Draft agenda"}])
         match = resolve_one(
@@ -214,7 +214,7 @@ class TestKindRegistry:
 class TestFindIsTheListingForm:
     def test_find_returns_every_candidate_without_refusing(self):
         """`fm get` lists; `resolve_one` decides. Listing must not refuse on
-        ambiguity — showing the operator both rows is the point."""
+        ambiguity: showing the operator both rows is the point."""
         fetch = _fetcher([{"id": "a1", "name": "ADAFSA"}, {"id": "a2", "name": "ADNEC"}])
         matches = find(None, kind="STAKEHOLDER", target=LOCAL, space=SPACE, fetch=fetch)
         assert [m.id for m in matches] == ["a1", "a2"]
@@ -223,7 +223,7 @@ class TestFindIsTheListingForm:
 class TestKindsWithNoNameRefuseWithTheirReason:
     """SESSION_PARTICIPANT and FILE_LINK are join rows. They are writable by the
     bulk endpoint but have no name of their own, so they are present in the
-    registry and REFUSING rather than absent — the same reason
+    registry and REFUSING rather than absent: the same reason
     `services/bulk_data.py` enumerates its closed kinds with reasons. A kind that
     is silently missing reads as an oversight and gets "helpfully" added.
     """
@@ -254,7 +254,7 @@ class TestOneKindNormaliser:
     exactly ONE function turns what was typed into a canonical kind.
 
     It was two. `kind = args.kind.upper().replace("-", "_")` appeared verbatim in
-    `cli.cmd_get` and `diff.cmd_diff` — two commands, two copies, and the ruling
+    `cli.cmd_get` and `diff.cmd_diff`: two commands, two copies, and the ruling
     that made lowercase the normal input is precisely the change that lands in one
     copy and not the other. A third command would have made it three.
     """
@@ -280,7 +280,7 @@ class TestOneKindNormaliser:
 
     def test_the_listed_kinds_are_lowercase_like_the_input(self):
         """A message that LISTS `SAVED_VIEW` after accepting `saved-view` teaches
-        the operator the wrong thing to type next — and the list is the part they
+        the operator the wrong thing to type next: and the list is the part they
         copy from.
 
         Scoped to the first line on purpose. The second line deliberately shows
@@ -294,7 +294,7 @@ class TestOneKindNormaliser:
         listing = str(exc.value).splitlines()[0]
         assert "saved_view" in listing
         assert "SAVED_VIEW" not in listing
-        # every kind in the list, specifically — not `listing.lower() == listing`,
+        # every kind in the list, specifically: not `listing.lower() == listing`,
         # which a second draft tried and which fails on the capital in "Valid".
         # Prose is not a kind.
         offered = listing.split("Valid kinds:")[1]
@@ -309,7 +309,7 @@ class TestOneKindNormaliser:
             assert "kind is required" in str(exc.value) or "unknown kind" in str(exc.value)
 
     def test_no_command_normalises_a_kind_by_itself(self):
-        """The property, structurally — a second copy would not be named the same
+        """The property, structurally: a second copy would not be named the same
         thing, so this looks for the OPERATION."""
         import pathlib
 

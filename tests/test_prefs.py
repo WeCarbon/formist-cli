@@ -6,13 +6,13 @@
     "current environment" [...] A remembered target is a target someone forgets
     they set.
 
-That diagnosis is right. The conclusion — that the only cure is having no memory
-at all — is not. A remembered value is dangerous when it silently supplies the
+That diagnosis is right. The conclusion: that the only cure is having no memory
+at all: is not. A remembered value is dangerous when it silently supplies the
 DANGEROUS HALF of a decision, and the two halves are not equally dangerous:
 
-    a space is a WHAT — 36 characters nobody verifies by eye, and the half the
+    a space is a WHAT: 36 characters nobody verifies by eye, and the half the
       transcribed-id failure lives in;
-    an env is a WHERE — one word, and the half that decides whether this is
+    an env is a WHERE: one word, and the half that decides whether this is
       production.
 
 So ``ev`` remembers the what and requires the where. A write cannot happen unless
@@ -82,7 +82,7 @@ class TestAWriteNeverReadsTheRememberedEnv:
 
     def test_write_with_no_remembered_env_at_all_falls_back_to_the_default_host(self):
         """With nothing remembered there is no belief to contradict, so the
-        documented default stands — and it cannot be prod."""
+        documented default stands: and it cannot be prod."""
         store(space=SPACE)
         eff = effective(env_flag=None, space_flag=None, for_write=True)
         assert eff.target.name == "formist"
@@ -114,7 +114,7 @@ class TestTheRememberedSpaceIsInheritedByBoth:
 
 
 class TestProvenanceIsInTheBanner:
-    """Printing the target alone is close to useless — the operator already
+    """Printing the target alone is close to useless: the operator already
     believes they know it. Printing WHERE EACH HALF CAME FROM and HOW OLD it is
     is what breaks a wrong belief."""
 
@@ -131,7 +131,7 @@ class TestProvenanceIsInTheBanner:
 
     def test_banner_shows_how_old_a_remembered_value_is(self):
         """Assert against the age the prefs themselves report, not against a
-        literal spelling of it — a test that hardcodes "ago" fails on "just now"
+        literal spelling of it: a test that hardcodes "ago" fails on "just now"
         while the property it cares about holds perfectly well."""
         store(space=SPACE, env="evane-ae")
         banner = effective(env_flag="evane-ae", space_flag=None, for_write=True).banner()
@@ -154,7 +154,7 @@ class TestProvenanceIsInTheBanner:
 
 class TestRegionDisagreementRefusesBeforeASocket:
     """`fm use` records the region `/admin/spaces` reported for the space. A write
-    whose `--env` contradicts it is refused locally — no request is made.
+    whose `--env` contradicts it is refused locally: no request is made.
 
     This is the cheapest possible catch for the exact accident this lane exists to
     prevent, and it costs one comparison.
@@ -237,15 +237,15 @@ class TestResidencyRegionIsNotADeploymentTarget:
     """Found end-to-end, not by unit test: `space_region` and `env` are DIFFERENT
     VOCABULARIES that share two of three tokens.
 
-    `space_region` is data residency — `global` or `ae`, a property of the row.
-    `env` is a deployment target — `local`, `ae` or `global`, a property of the
+    `space_region` is data residency: `global` or `ae`, a property of the row.
+    `env` is a deployment target: `local`, `ae` or `global`, a property of the
     host being talked to. A local dev server reports every one of its spaces as
     `region=global` (that is its HOME_REGION), so recording that and then comparing
     it against `env` refused every local write with:
 
         the remembered space lives in 'global', but this command targets 'local'
 
-    and — far worse — the refusal's own remediation line read `→ --host evane`,
+    and: far worse: the refusal's own remediation line read `→ --host evane`,
     which aims a local-dev payload at PRODUCTION. A safety check whose advice
     points at prod is worse than no check.
 
@@ -281,7 +281,7 @@ class TestOneCredentialDirectory:
     The reason this one was deduplicated while other same-named helpers in the
     package were left alone: what drifts here is WHERE THE CREDENTIALS LIVE. Two
     copies means `fm logout` can one day clear a directory `fm login` did not
-    write to, and the symptom of that is a token that survives a logout — a
+    write to, and the symptom of that is a token that survives a logout: a
     security failure that looks like nothing at all.
     """
 
@@ -307,13 +307,13 @@ class TestOneCredentialDirectory:
         """The property, tested by WIRING rather than by name.
 
         The first version of this test asserted `not hasattr(prefs, "_config_dir")`
-        — and a mutation that re-copied the resolver under the name
+       : and a mutation that re-copied the resolver under the name
         `_regrown_config_dir` SURVIVED it. A name check can only catch a copy that
         reuses the old name, and the whole failure mode is two people inventing the
         same thing and calling it different things.
 
         So: move `tokens.config_dir` and require `prefs_path()` to move with it. A
-        private copy in prefs — under any name, however perfectly it agrees today —
+        private copy in prefs: under any name, however perfectly it agrees today —
         cannot follow, because it is not reading this function.
         """
         monkeypatch.setattr(tokens, "config_dir", lambda: Path("/moved/elsewhere"))

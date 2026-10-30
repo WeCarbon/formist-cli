@@ -1,4 +1,4 @@
-"""``fm spaces`` — the CLI front end for ``/admin/spaces*`` (list, read
+"""``fm spaces``: the CLI front end for ``/admin/spaces*`` (list, read
 sub-surfaces, and the six IRREVERSIBLE writes).
 
 WHAT THIS FILE GUARDS. This module had ZERO test coverage before this file
@@ -8,11 +8,11 @@ WHAT THIS FILE GUARDS. This module had ZERO test coverage before this file
   1. The render functions' "never overstate what was fetched" contract
      (``pagination_footer``'s three cases, applied at four call sites) and the
      "no members / no rows" empty-state messages.
-  2. The pre-network REFUSALS on the six write subjects — `delete` without
+  2. The pre-network REFUSALS on the six write subjects: `delete` without
      `--confirm`, `rename` without `--name`, `transfer-ownership` without
      `--new-owner`, a delete-child without a child id, and any write with no
      `space_id` at all. Each is asserted to refuse WITHOUT calling the API at
-     all — a write that "fails safe" by silently not sending the request it
+     all: a write that "fails safe" by silently not sending the request it
      should have refused earlier is the wrong kind of safe.
 
 Run: uv run pytest tests/test_formist_cli_spaces.py -q
@@ -50,7 +50,7 @@ def test_an_unknown_subject_names_every_valid_one():
 
 
 # ===========================================================================
-# render_space_list / render_members — the SHOWN-vs-TOTAL contract
+# render_space_list / render_members: the SHOWN-vs-TOTAL contract
 # ===========================================================================
 def test_render_space_list_reports_region_and_member_count():
     out = spaces.render_space_list(
@@ -79,7 +79,7 @@ def test_render_members_lists_email_and_role():
 
 
 # ===========================================================================
-# the shared _paginated body — conversations / skills / invitations
+# the shared _paginated body: conversations / skills / invitations
 # ===========================================================================
 def test_render_conversations_empty_names_the_noun():
     assert spaces.render_conversations({"items": []}) == "(this space has no conversations)"
@@ -121,7 +121,7 @@ def test_paginated_more_exist_notice_is_consistent_across_all_three_listings():
 
 
 # ===========================================================================
-# render_usage — the two DIFFERENT numbers, both shown, never conflated
+# render_usage: the two DIFFERENT numbers, both shown, never conflated
 # ===========================================================================
 def test_render_usage_shows_invoiced_and_current_cycle_side_by_side():
     out = spaces.render_usage(
@@ -187,7 +187,7 @@ def test_require_space_accepts_a_real_uuid():
 
 
 # ===========================================================================
-# run/_run_write — every write REFUSES before touching the network
+# run/_run_write: every write REFUSES before touching the network
 # ===========================================================================
 def _args(**overrides) -> argparse.Namespace:
     base = {
@@ -200,7 +200,7 @@ def _args(**overrides) -> argparse.Namespace:
 
 
 class _RefusingApi:
-    """Every method blows up — a fixture that PROVES the refusal happened
+    """Every method blows up: a fixture that PROVES the refusal happened
     before any network call, not merely that the test never checked."""
 
     def _boom(self, *a, **k):
@@ -212,7 +212,7 @@ class _RefusingApi:
 @pytest.fixture
 def guarded(monkeypatch):
     """`run`/`_run_write` wired to an API that raises on ANY call, plus a
-    resolved context — isolates the pure pre-network guard logic."""
+    resolved context: isolates the pure pre-network guard logic."""
     monkeypatch.setattr(spaces, "api", _RefusingApi())
     monkeypatch.setattr(
         spaces.context, "resolve",
@@ -232,7 +232,7 @@ def test_rename_without_name_refuses_and_never_calls_the_api(guarded):
 
 
 def test_rename_with_only_whitespace_name_is_treated_as_missing(guarded):
-    """Shape 1 — a specific wrong value: a `--name '   '` must not rename the
+    """Shape 1: a specific wrong value: a `--name '   '` must not rename the
     space to whitespace; it is the same refusal as no name at all."""
     with pytest.raises(spaces.SpacesError, match="--name"):
         guarded(_args(subject="rename", name="   "))
@@ -262,7 +262,7 @@ def test_create_without_name_refuses_and_never_calls_the_api(guarded):
 def test_create_without_country_refuses_and_never_calls_the_api(guarded):
     """Regression test (finding-shape 1): fails on the pre-fix CLI,
     which had no `--country` flag at all and sent `--region` straight through to
-    the server — exactly the `fm spaces create --region ae` (no country) call
+    the server: exactly the `fm spaces create --region ae` (no country) call
     that left a space stuck with NULL country in prod."""
     with pytest.raises(spaces.SpacesError, match="--country"):
         guarded(_args(subject="create", space_id=None, name="New WS", country=None))
@@ -287,7 +287,7 @@ def test_add_member_with_an_unknown_role_refuses_before_resolving_the_email(guar
 
 
 # ===========================================================================
-# run/_run_write — a well-formed write reaches exactly one API call
+# run/_run_write: a well-formed write reaches exactly one API call
 # ===========================================================================
 @pytest.fixture
 def driven(monkeypatch):
@@ -298,7 +298,7 @@ def driven(monkeypatch):
             calls.append((path, rest[0] if rest else kw.get("params")))
             return payload
 
-        # A plain namespace, NOT a class — an instance-dict function attribute is
+        # A plain namespace, NOT a class: an instance-dict function attribute is
         # returned as-is on lookup (no descriptor binding), so `_record` is called
         # with exactly the arguments `spaces.py` passes, with no implicit `self`.
         stub = types.SimpleNamespace(
@@ -358,7 +358,7 @@ def test_a_well_formed_delete_child_reaches_the_right_endpoint(driven, subject):
 
 
 # ===========================================================================
-# run/_run_write — `create` (POST /projects, the caller's OWN token, not /admin)
+# run/_run_write: `create` (POST /projects, the caller's OWN token, not /admin)
 # ===========================================================================
 def test_create_sends_only_the_name_and_country_when_no_region_is_given(driven):
     rc, calls = driven(
@@ -392,7 +392,7 @@ def test_render_created_shows_id_name_region_and_role():
 
 
 # ===========================================================================
-# run/_run_write — `add-member` (email -> user id via GET /admin/users, then
+# run/_run_write: `add-member` (email -> user id via GET /admin/users, then
 # the SAME POST /admin/users/{id}/spaces `fm users add-space` calls)
 # ===========================================================================
 def test_add_member_resolves_the_email_case_insensitively_then_assigns(monkeypatch):
@@ -433,7 +433,7 @@ def test_add_member_resolves_the_email_case_insensitively_then_assigns(monkeypat
 
 def test_add_member_falls_back_to_the_positional_space_id_when_dash_dash_space_is_absent(monkeypatch):
     """`--space` is documented as "an alternative to the positional space-id
-    argument" — this pins that the fallback actually runs, not just that the
+    argument": this pins that the fallback actually runs, not just that the
     flag works when given."""
     posted: list[dict] = []
 
@@ -504,7 +504,7 @@ def test_add_member_refuses_when_the_email_is_not_found_and_never_calls_admin_po
 
 
 # ===========================================================================
-# run — every READ subject dispatches to the right endpoint (§ params.py)
+# run: every READ subject dispatches to the right endpoint (§ params.py)
 # ===========================================================================
 @pytest.fixture
 def driven_read(monkeypatch):

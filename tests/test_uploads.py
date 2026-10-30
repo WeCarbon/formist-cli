@@ -1,21 +1,15 @@
-"""``fm upload`` / ``fm skill-attach`` — the client-side upload + attachment logic.
+"""Tests for ``fm upload`` / ``fm skill-attach``: client-side upload and
+attachment logic.
 
-WHY THESE TESTS ARE SHAPED THIS WAY
-------------------------------------
-`formist_cli/uploads.py` never talks to a real server in this suite (the repo
-convention for `ev` commands — see `test_formist_cli_update.py`, `test_formist_cli_diff.py`
-— is an injected fake transport, not a live socket; the transport layer itself
-is proven separately in `test_formist_cli_api_uploads_transport.py`). So the fakes
-here stand in for `routes/upload_sessions.py` / `routes/files_rest.py` /
-`routes/skills.py`, and the one property that makes that legitimate rather than
-a mock agreeing with itself is: **the fake actually assembles the bytes it was
-sent and the tests assert on the assembled result**, not merely "was called".
-
-That is the direct answer to the failure this codebase has produced before: "a
-test that uploads ZERO BYTES and passes" (the project rules). `TestChunkedUploadSendsExactBytes`
-reconstructs the file from every PUT the client made and diffs it byte-for-byte
-against the source — a client that silently sent the wrong range, dropped a
-chunk, or sent zero bytes fails that assertion, not a "call count" proxy for it.
+``formist_cli/uploads.py`` never talks to a real server in this suite; the
+fakes here stand in for the server's upload-session, file and skill
+endpoints, and the property that makes that a meaningful test rather than a
+mock agreeing with itself is that the fake actually assembles the bytes it
+was sent and the tests assert on the assembled result, not merely "was
+called". `TestChunkedUploadSendsExactBytes` reconstructs the file from every
+PUT the client made and diffs it byte-for-byte against the source, so a
+client that silently sent the wrong range, dropped a chunk, or sent zero
+bytes fails that assertion rather than a "call count" proxy for it.
 """
 
 from __future__ import annotations
@@ -47,26 +41,25 @@ class TestFilenameHelpers:
         """A suite that only ever asserts equality could pass with two functions
         that both always return the same constant. Prove the comparison can
         distinguish two different names, so the parity above is meaningful."""
-        assert not same_filename("Other Template.pptx", "GFSS PMO Meeting Template.pptx")
+        assert not same_filename("Other Template.pptx", "Demo PMO Meeting Template.pptx")
         assert safe_filename("a.pptx") != safe_filename("b.pptx")
 
 
 # ===========================================================================
-# The fake transport. Faithful to the REAL response shapes
-# (routes/upload_sessions.py::session_dict, routes/files_rest.py::file_dict,
-# routes/skills.py::skill_dict) — not because the server is retested here, but
-# because a fake that lies about the shape would validate nothing about how the
-# client parses a real response.
+# The fake transport. Faithful to the real server response shapes, not
+# because the server is retested here, but because a fake that lies about
+# the shape would validate nothing about how the client parses a real
+# response.
 # ===========================================================================
 
 
 class FakeServer:
     """In-memory stand-in for the upload-session + skill-attach HTTP surface.
 
-    Chunk math mirrors `services/upload_sessions.py::expected_chunk_size`
-    deliberately (a fake that accepted any chunk length would never catch a
-    client that sliced the file wrong) — but nothing here re-implements the
-    CLIENT logic under test.
+    Chunk math mirrors the server's own chunk-size calculation deliberately
+    (a fake that accepted any chunk length would never catch a client that
+    sliced the file wrong), but nothing here re-implements the client logic
+    under test.
     """
 
     def __init__(self):
@@ -192,7 +185,7 @@ def _write_file(tmp_path: Path, name: str, content: bytes) -> Path:
 
 
 # ===========================================================================
-# upload_file — the client's byte-slicing and chunk orchestration
+# upload_file: the client's byte-slicing and chunk orchestration
 # ===========================================================================
 
 
@@ -218,7 +211,7 @@ class TestChunkedUploadSendsExactBytes:
 
     def test_more_than_one_chunk_is_actually_sent(self, tmp_path):
         """A CONTROL for the test above: with a 4-byte chunk size and >4 bytes of
-        content, fewer than 2 PUTs would mean the chunk loop never ran — proving
+        content, fewer than 2 PUTs would mean the chunk loop never ran: proving
         the byte-equality assertion is not vacuously true of a single whole-file PUT."""
         path = _write_file(tmp_path, "x.bin", b"0123456789")
         server = FakeServer()
@@ -321,11 +314,11 @@ class TestChunkRetry:
                 put=refusing_put,
                 chunk_retries=3,
             )
-        assert attempts["n"] == 1, "a 4xx is not transient — retrying it wastes time and hides the real cause"
+        assert attempts["n"] == 1, "a 4xx is not transient: retrying it wastes time and hides the real cause"
 
 
 # ===========================================================================
-# find_existing_attachment — mirrors services/skill_attachments.py::_same_file
+# find_existing_attachment
 # ===========================================================================
 
 
@@ -333,10 +326,10 @@ class TestFindExistingAttachment:
     def test_a_matching_registered_file_is_found(self):
         server = FakeServer()
         fid = str(uuid4())
-        server.add_file(fid, name="GFSS_PMO_Meeting_Template.pptx", size=100)
+        server.add_file(fid, name="Demo_PMO_Meeting_Template.pptx", size=100)
         skill = {"id": "s1", "files": [fid]}
         found = find_existing_attachment(
-            LOCAL, SPACE, skill, "GFSS PMO Meeting Template.pptx", token="t", get=server.get
+            LOCAL, SPACE, skill, "Demo PMO Meeting Template.pptx", token="t", get=server.get
         )
         assert found is not None
         assert found["id"] == fid
@@ -347,22 +340,22 @@ class TestFindExistingAttachment:
         server.add_file(fid, name="Something Else.pptx", size=100)
         skill = {"id": "s1", "files": [fid]}
         assert (
-            find_existing_attachment(LOCAL, SPACE, skill, "GFSS PMO Meeting Template.pptx", token="t", get=server.get)
+            find_existing_attachment(LOCAL, SPACE, skill, "Demo PMO Meeting Template.pptx", token="t", get=server.get)
             is None
         )
 
     def test_a_bare_label_entry_is_never_treated_as_an_attachment(self):
-        """See services/skill_attachments.py's module docstring: a non-uuid
-        `files` entry is a typed label whose bytes were never captured — matching
-        it by name would resolve a template to nothing and report success."""
+        """A non-uuid `files` entry is a typed label whose bytes were never
+        captured: matching it by name would resolve a template to nothing
+        and report success."""
         server = FakeServer()
-        skill = {"id": "s1", "files": ["GFSS PMO Meeting Template.pptx"]}  # a LABEL, not a uuid
+        skill = {"id": "s1", "files": ["Demo PMO Meeting Template.pptx"]}  # a LABEL, not a uuid
         assert (
-            find_existing_attachment(LOCAL, SPACE, skill, "GFSS PMO Meeting Template.pptx", token="t", get=server.get)
+            find_existing_attachment(LOCAL, SPACE, skill, "Demo PMO Meeting Template.pptx", token="t", get=server.get)
             is None
         )
         # Stronger than the None check above: a label is skipped WITHOUT ever
-        # being sent as a file id — never merely tolerated after a failed GET.
+        # being sent as a file id: never merely tolerated after a failed GET.
         # A real `GET /projects/{p}/files/{file_id}` types `file_id` as a UUID
         # path param and would 422 on a non-UUID string rather than cleanly
         # 404 the way this fake does, so "catches the failure and continues"
@@ -373,7 +366,7 @@ class TestFindExistingAttachment:
         server = FakeServer()  # file never added -> 404
         skill = {"id": "s1", "files": [str(uuid4())]}
         assert (
-            find_existing_attachment(LOCAL, SPACE, skill, "GFSS PMO Meeting Template.pptx", token="t", get=server.get)
+            find_existing_attachment(LOCAL, SPACE, skill, "Demo PMO Meeting Template.pptx", token="t", get=server.get)
             is None
         )
 
@@ -381,7 +374,7 @@ class TestFindExistingAttachment:
         server = FakeServer()
         skill = {"id": "s1", "files": []}
         assert (
-            find_existing_attachment(LOCAL, SPACE, skill, "GFSS PMO Meeting Template.pptx", token="t", get=server.get)
+            find_existing_attachment(LOCAL, SPACE, skill, "Demo PMO Meeting Template.pptx", token="t", get=server.get)
             is None
         )
 
@@ -389,13 +382,13 @@ class TestFindExistingAttachment:
         server = FakeServer()
         skill = {"id": "s1", "files": None}
         assert (
-            find_existing_attachment(LOCAL, SPACE, skill, "GFSS PMO Meeting Template.pptx", token="t", get=server.get)
+            find_existing_attachment(LOCAL, SPACE, skill, "Demo PMO Meeting Template.pptx", token="t", get=server.get)
             is None
         )
 
 
 # ===========================================================================
-# attach_file_to_skill — must preserve existing entries, never clobber
+# attach_file_to_skill: must preserve existing entries, never clobber
 # ===========================================================================
 
 
@@ -431,7 +424,7 @@ class TestAttachFileToSkillPreservesExistingEntries:
 
 
 # ===========================================================================
-# resolve_skill — by id (no lookup) or by name (via formist_cli.resolve)
+# resolve_skill: by id (no lookup) or by name (via formist_cli.resolve)
 # ===========================================================================
 
 
@@ -465,7 +458,7 @@ class TestResolveSkill:
 
 
 # ===========================================================================
-# CLI-level dry-run / idempotence contract — the production-safety properties
+# CLI-level dry-run / idempotence contract: the production-safety properties
 # ===========================================================================
 
 
@@ -493,7 +486,7 @@ class TestSkillAttachDryRunTouchesNothing:
         server = FakeServer()
         sid = str(uuid4())
         server.add_skill(sid, name="weekly pmo deck")
-        path = _write_file(tmp_path, "GFSS PMO Meeting Template.pptx", b"pretend pptx bytes")
+        path = _write_file(tmp_path, "Demo PMO Meeting Template.pptx", b"pretend pptx bytes")
 
         monkeypatch.setattr(uploads, "_api", lambda: server)
         _patch_effective(monkeypatch, server)
@@ -508,7 +501,7 @@ class TestSkillAttachDryRunTouchesNothing:
         server = FakeServer()
         sid = str(uuid4())
         server.add_skill(sid, name="weekly pmo deck")
-        path = _write_file(tmp_path, "GFSS PMO Meeting Template.pptx", b"pretend pptx bytes")
+        path = _write_file(tmp_path, "Demo PMO Meeting Template.pptx", b"pretend pptx bytes")
 
         monkeypatch.setattr(uploads, "_api", lambda: server)
         _patch_effective(monkeypatch, server)
@@ -525,9 +518,9 @@ class TestSkillAttachIsIdempotent:
         server = FakeServer()
         sid = str(uuid4())
         fid = str(uuid4())
-        server.add_file(fid, name="GFSS_PMO_Meeting_Template.pptx", size=999)
+        server.add_file(fid, name="Demo_PMO_Meeting_Template.pptx", size=999)
         server.add_skill(sid, name="weekly pmo deck", files=[fid])
-        path = _write_file(tmp_path, "GFSS PMO Meeting Template.pptx", b"pretend pptx bytes")
+        path = _write_file(tmp_path, "Demo PMO Meeting Template.pptx", b"pretend pptx bytes")
 
         monkeypatch.setattr(uploads, "_api", lambda: server)
         _patch_effective(monkeypatch, server)
@@ -542,26 +535,24 @@ class TestSkillAttachIsIdempotent:
     def test_a_size_mismatch_on_an_already_attached_file_is_a_loud_warning_not_a_write(
         self, tmp_path, monkeypatch, capsys
     ):
-        """'Already attached' means the NAME resolves — it says nothing about
-        whether the bytes are still right. A live-in-prod tool's continuity
-        depends on this attachment (the agenda Word skill has real generated
-        files today, per the owner's read of prod), so a stale/truncated
-        attachment must be surfaced, not silently reported as fine — while
-        still doing nothing, because idempotence does not become "overwrite
-        it" just because something looks wrong."""
+        """'Already attached' means the name resolves; it says nothing about
+        whether the bytes are still right. A stale or truncated attachment
+        must be surfaced, not silently reported as fine, while still doing
+        nothing, because idempotence does not become "overwrite it" just
+        because something looks wrong."""
         server = FakeServer()
         sid = str(uuid4())
         fid = str(uuid4())
-        server.add_file(fid, name="GFSS_PMO_Meeting_Template.pptx", size=999)
+        server.add_file(fid, name="Demo_PMO_Meeting_Template.pptx", size=999)
         server.add_skill(sid, name="weekly pmo deck", files=[fid])
-        path = _write_file(tmp_path, "GFSS PMO Meeting Template.pptx", b"nineteen bytes here")
+        path = _write_file(tmp_path, "Demo PMO Meeting Template.pptx", b"nineteen bytes here")
 
         monkeypatch.setattr(uploads, "_api", lambda: server)
         _patch_effective(monkeypatch, server)
 
         rc = uploads.cmd_skill_attach(_base_args(skill=sid, file=str(path), apply=True))
 
-        assert rc == 0, "still a no-op — idempotence, not auto-repair"
+        assert rc == 0, "still a no-op: idempotence, not auto-repair"
         assert not any(c[0] in ("POST", "PUT", "PATCH") for c in server.calls)
         err = capsys.readouterr().err
         assert "size mismatch" in err
@@ -569,21 +560,20 @@ class TestSkillAttachIsIdempotent:
 
 
 class TestSkillAttachSizeIsVerifiedIndependentlyAfterApply:
-    """The owner's explicit ask after reading prod: 'read back what you wrote
-    and prove the bytes... assert the size that arrived matches the size you
-    sent, and do it against prod after the apply, not only in a test.'
+    """A successful upload must be verified by reading the bytes back, not
+    only trusted from the completion response.
 
-    These drive that check from OUTSIDE `upload_file` — a fresh GET the
-    completion response never sees — so a bug that makes the completion
-    response lie (and the internal check in `upload_file` agree with the lie)
-    is still caught.
+    These drive that check from outside `upload_file`: a fresh GET the
+    completion response never sees, so a bug that makes the completion
+    response lie (and the internal check in `upload_file` agree with the
+    lie) is still caught.
     """
 
     def test_a_fresh_upload_whose_independent_readback_disagrees_is_refused(self, tmp_path, monkeypatch):
         server = FakeServer()
         sid = str(uuid4())
         server.add_skill(sid, name="weekly pmo deck")
-        path = _write_file(tmp_path, "GFSS PMO Meeting Template.pptx", b"real content, twenty-eight b")
+        path = _write_file(tmp_path, "Demo PMO Meeting Template.pptx", b"real content, twenty-eight b")
 
         real_get = server.get
 
@@ -608,9 +598,9 @@ class TestSkillAttachSizeIsVerifiedIndependentlyAfterApply:
         server = FakeServer()
         sid = str(uuid4())
         fid = str(uuid4())
-        server.add_file(fid, name="GFSS_PMO_Meeting_Template.pptx", size=999)  # server disagrees...
+        server.add_file(fid, name="Demo_PMO_Meeting_Template.pptx", size=999)  # server disagrees...
         server.add_skill(sid, name="weekly pmo deck")
-        path = _write_file(tmp_path, "GFSS PMO Meeting Template.pptx", b"only nineteen bytes")  # ...with this
+        path = _write_file(tmp_path, "Demo PMO Meeting Template.pptx", b"only nineteen bytes")  # ...with this
 
         monkeypatch.setattr(uploads, "_api", lambda: server)
         _patch_effective(monkeypatch, server)
@@ -627,14 +617,14 @@ class TestSkillAttachFileIdRecoveryPath:
         server = FakeServer()
         sid = str(uuid4())
         fid = str(uuid4())
-        server.add_file(fid, name="GFSS_PMO_Meeting_Template.pptx", size=999)
+        server.add_file(fid, name="Demo_PMO_Meeting_Template.pptx", size=999)
         server.add_skill(sid, name="weekly pmo deck")
 
         monkeypatch.setattr(uploads, "_api", lambda: server)
         _patch_effective(monkeypatch, server)
 
         rc = uploads.cmd_skill_attach(
-            _base_args(skill=sid, file="GFSS PMO Meeting Template.pptx", file_id=fid, apply=True)
+            _base_args(skill=sid, file="Demo PMO Meeting Template.pptx", file_id=fid, apply=True)
         )
 
         assert rc == 0
@@ -643,9 +633,9 @@ class TestSkillAttachFileIdRecoveryPath:
 
 
 def _patch_effective(monkeypatch, server: FakeServer):
-    """Stand in for formist_cli.cli._effective / _token_for without touching prefs
-    or stored credentials — the CLI commands import these lazily from
-    formist_cli.cli, so they are patched there, matching how formist_cli.chats etc. do it."""
+    """Stand in for formist_cli.cli._effective / _token_for without touching
+    prefs or stored credentials: the CLI commands import these lazily from
+    formist_cli.cli, so they are patched there."""
     from formist_cli import cli
 
     class _Eff:

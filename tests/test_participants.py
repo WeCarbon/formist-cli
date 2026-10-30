@@ -1,26 +1,20 @@
-"""``fm participants dedupe`` — the CLI client tests.
+"""Tests for ``fm participants dedupe``.
 
-formist_cli/participants.py holds no merge DECISION (that lives on the server, in
-services/participant_dedupe.py) — this file pins what the CLIENT sends, how it
-renders a response, and, above all, the owner rule the whole module exists to
-hold: "dedupe is manual — tools detect and describe, never one-shot delete"
-(the project rules). Concretely that means:
+``formist_cli/participants.py`` holds no merge decision logic (that lives on
+the server); this file pins what the client sends, how it renders a
+response, and that dedupe stays manual: tools detect and describe, never
+one-shot delete. Concretely:
 
-  * a DRY RUN (the default: no --apply) must NEVER issue a write — every
-    write-capable transport in this file screams if POST is reached when it
-    should not be;
-  * `--apply` needs the PLAN'S OWN token, so a stale dry run (the connector
-    that produces duplicates syncs every 30 minutes) refuses rather than
-    merging a set the operator never saw;
-  * `--group`/`--reason` are forwarded to the server EXACTLY as given, never
-    defaulted or coerced client-side — see NO WHOLE-PLAN APPLY in the module
-    docstring: the server is the one place that rule is checked, and
-    duplicating it here would be the drift the project rules warns against.
+  * a dry run (the default, no ``--apply``) must never issue a write, so
+    every write-capable transport stub in this file raises if a POST is
+    reached when it should not be;
+  * ``--apply`` needs the plan's own token, so a stale dry run refuses
+    rather than merging a set the operator never saw;
+  * ``--group``/``--reason`` are forwarded to the server exactly as given,
+    never defaulted or coerced client-side; the server is the one place
+    that rule is checked.
 
-HTTP transport stubbed (``formist_cli/api.py`` is tested elsewhere), the same split
-``tests/test_formist_cli_admin_ops.py`` and ``tests/test_formist_cli_org_recon.py`` use.
-
-Run: uv run pytest tests/test_formist_cli_participants.py -q
+HTTP transport is stubbed; ``formist_cli/api.py`` is tested elsewhere.
 """
 
 from __future__ import annotations
@@ -40,7 +34,7 @@ DEDUPE_PATH = participants.DEDUPE_PATH.format(space=SPACE)
 
 
 # ===========================================================================
-# parse_drops — pure function
+# parse_drops: pure function
 # ===========================================================================
 class TestParseDrops:
     def test_none_and_empty_are_no_drops(self):
@@ -58,7 +52,7 @@ class TestParseDrops:
         assert out == {"g1": ["data.a", "data.b"], "g2": ["data.c"]}
 
     def test_splits_on_the_FIRST_equals_only(self):
-        """A normalised name can itself contain '=' — splitting on every '='
+        """A normalised name can itself contain '=': splitting on every '='
         would silently truncate the key rather than fail loudly. The FIRST
         '=' is the group/path separator, so everything after it (including a
         second '=') stays part of the path."""
@@ -79,10 +73,10 @@ class TestParseDrops:
 
 
 # ===========================================================================
-# fetch_plan — the dry run. Must NEVER write.
+# fetch_plan: the dry run. Must never write.
 # ===========================================================================
 class _NoPost:
-    """A transport whose ``post`` fails the test if it is ever reached —
+    """A transport whose ``post`` fails the test if it is ever reached:
     dependency-injected straight into fetch_plan/submit, no monkeypatching."""
 
     def __call__(self, *a, **kw):
@@ -130,7 +124,7 @@ class TestFetchPlanNeverWrites:
 
 
 # ===========================================================================
-# submit — forwards EXACTLY what it is given, never invents a default
+# submit: forwards exactly what it is given, never invents a default
 # ===========================================================================
 class TestSubmitForwardsVerbatim:
     def test_sends_plan_token_groups_reason_and_omits_drop_when_absent(self):
@@ -162,10 +156,10 @@ class TestSubmitForwardsVerbatim:
         assert captured["body"]["drop_data_keys"] == {"g1": ["data.a"]}
 
     def test_falsy_groups_and_reason_are_forwarded_verbatim_not_coerced(self):
-        """The server (services/dedupe_guard.py) is the ONE place an empty
-        list / blank reason is refused (422). A client that quietly turned an
-        empty list into None (or vice versa) before sending it would be a
-        second, silently-diverging copy of that rule."""
+        """The server is the one place an empty list or blank reason is
+        refused (422). A client that quietly turned an empty list into None
+        (or vice versa) before sending it would be a second, silently
+        diverging copy of that rule."""
         captured = {}
 
         def post(target, path, body, *, token=None, **kw):
@@ -296,7 +290,7 @@ class TestRenderReview:
                          "audit_history": 1, "created_by": {"source": "connector"}},
                         {"id": "p2", "created_at": "2026-02-01", "session_participations": 0,
                          "audit_history": 0,
-                         "created_by": {"source": "proposal", "actor": "eric", "proposal_id": "pr1"}},
+                         "created_by": {"source": "proposal", "actor": "alice", "proposal_id": "pr1"}},
                     ],
                     "fields": [
                         {"field": "org", "values": {"p1": "IFC", "p2": None}, "conflict": False},
@@ -355,7 +349,7 @@ class TestRenderOutcomes:
 
 
 # ===========================================================================
-# cmd_participants — the full CLI flow. The owner-rule tests live here.
+# cmd_participants: the full CLI flow, including the manual-dedupe rules.
 # ===========================================================================
 class RecordingTransport:
     """Stands in for formist_cli.api.{get,post} for the CLI-level tests. A POST
@@ -375,7 +369,7 @@ class RecordingTransport:
     def post(self, target, path, body, *, token=None, **kw):
         self.calls.append(("POST", path, body))
         if self._submit_response is None:
-            raise AssertionError("unexpected POST — this test scripted no submit_response")
+            raise AssertionError("unexpected POST: this test scripted no submit_response")
         return self._submit_response
 
 
@@ -389,9 +383,9 @@ def _args(**overrides) -> argparse.Namespace:
 
 @pytest.fixture
 def drive(monkeypatch):
-    """Installs the fake transport at the formist_cli.api layer AND the
-    formist_cli.cli._effective/_token_for resolver cmd_participants imports lazily
-    — matching how tests/test_formist_cli_uploads.py patches the same two names."""
+    """Installs the fake transport at the formist_cli.api layer, and the
+    formist_cli.cli._effective/_token_for resolvers that cmd_participants
+    imports lazily."""
     from formist_cli import cli
 
     class _Eff:
@@ -463,11 +457,11 @@ class TestApplyForwardsExactlyWhatWasNamed:
         }
 
     def test_an_omitted_group_flag_forwards_None_the_client_never_invents_a_wildcard(self, drive):
-        """`--group` is not repeated on this call. cmd_participants must NOT
-        substitute `[]` or `"*"` for the missing flag — either would look like
-        a locally-invented "merge everything" shape, the one thing owner rule
-        2026-09-09 forbids. Forwarding None and letting the server's 422 own
-        the refusal is the documented contract; see the module docstring."""
+        """`--group` is not repeated on this call. cmd_participants must not
+        substitute `[]` or `"*"` for the missing flag; either would be a
+        locally-invented "merge everything" shape. Forwarding None and
+        letting the server's 422 own the refusal is the documented
+        contract."""
         t = drive(
             plan=_plan_with_groups(),
             submit_response={"groups": [], "outcomes": [], "live_participants": 41, "auto_mergeable": 0},
@@ -547,11 +541,11 @@ class TestReRunHint:
 
 
 # ===========================================================================
-# add_parser — the CLI wiring an operator actually types against
+# add_parser: the CLI wiring an operator actually types against
 # ===========================================================================
 class TestAddParser:
     def _parser(self) -> argparse.ArgumentParser:
-        top = argparse.ArgumentParser(prog="ev")
+        top = argparse.ArgumentParser(prog="fm")
         participants.add_parser(top.add_subparsers(dest="command"))
         return top
 
@@ -563,7 +557,7 @@ class TestAddParser:
 
     def test_group_defaults_to_None_not_an_empty_list(self):
         """The distinction cmd_participants relies on to tell "no --group was
-        given" apart from "an operator explicitly passed none" — argparse's
+        given" apart from "an operator explicitly passed none": argparse's
         `append` action defaults to None, not []."""
         args = self._parser().parse_args(["participants", "dedupe"])
         assert args.group is None

@@ -1,4 +1,4 @@
-"""`fm login` / `fm logout` / `fm whoami` — the client half of the OAuth flow.
+"""`fm login` / `fm logout` / `fm whoami`: the client half of the OAuth flow.
 
 Run: uv run pytest tests/test_formist_cli_login.py -q
 
@@ -9,7 +9,7 @@ laptop:
   * the PKCE verifier is generated here and only its challenge is sent, so a holder
     of the code alone cannot exchange it;
   * the loopback listener is one-shot, on 127.0.0.1, and CLOSED before the exchange;
-  * ``state`` is checked in BOTH modes — against the callback in the loopback flow,
+  * ``state`` is checked in BOTH modes: against the callback in the loopback flow,
     against the pasted value in the manual one;
   * ``fm logout`` revokes SERVER-SIDE and says so when it could not;
   * the discovery step turns "this deployment has no authorization server" into a
@@ -34,14 +34,14 @@ from formist_cli.targets import Target
 
 @pytest.fixture(autouse=True)
 def config_dir(monkeypatch, tmp_path):
-    """Never the operator's ~/.config/evane — GATE §N+136: a bare `fm login` in a
+    """Never the operator's ~/.config/evane: GATE §N+136: a bare `fm login` in a
     lane once overwrote the owner's stored token."""
     monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "ev-config"))
     # And never the owner's :8160 either. `formist_cli.targets` defaults `local` to 8160
     # (the OAuth redirect URIs are registered against it), which is a screen a human
-    # is looking at — LANE-BRIEF. Nothing here opens a socket, but a test whose
+    # is looking at: LANE-BRIEF. Nothing here opens a socket, but a test whose
     # DEFAULT target is somebody's live server is one edit away from doing so.
-    # And never a real operator's $FORMIST_TOKEN either — every test in this file that
+    # And never a real operator's $FORMIST_TOKEN either: every test in this file that
     # wants one sets it explicitly; the rest must see file-only behaviour regardless
     # of what the runner's own shell happens to export.
     monkeypatch.delenv(tokens.ENV_TOKEN_VAR, raising=False)
@@ -49,7 +49,7 @@ def config_dir(monkeypatch, tmp_path):
 
 
 def _jwt(claims: dict) -> str:
-    """A 3-segment dot-separated value — the shape of the OLD pasted session
+    """A 3-segment dot-separated value: the shape of the OLD pasted session
     credential (and what ``$FORMIST_TOKEN`` must refuse). Mirrors
     ``tests/test_formist_cli_api_and_tokens.py``'s helper of the same name."""
     def seg(d):
@@ -119,7 +119,7 @@ def test_a_pasted_code_from_another_login_is_refused():
 
 def test_a_pasted_value_with_no_state_is_allowed_but_SAID(capsys):
     """A security control that silently did not run is worse than one that is
-    absent — so a bare code is accepted (the user may have copied half) and the
+    absent: so a bare code is accepted (the user may have copied half) and the
     operator is told the check could not happen."""
     login._check_state("", "mine")
     assert "could not check" in capsys.readouterr().err
@@ -211,7 +211,7 @@ def test_the_admin_scope_is_only_requested_when_asked_for(monkeypatch):
 def test_there_is_no_flag_and_exactly_one_sanctioned_env_var():
     """A PROPERTY, not an example. `fm login --token …` was the old interface and
     stays gone. D301 (option C, 2026-09-09) sanctioned exactly ONE
-    non-interactive credential path — $FORMIST_TOKEN (formist_cli/tokens.py) — and every
+    non-interactive credential path: $FORMIST_TOKEN (formist_cli/tokens.py): and every
     OTHER name would be the old hole wearing a hat."""
     import pathlib
 
@@ -288,7 +288,7 @@ def test_logout_revokes_server_side_then_deletes(monkeypatch, capsys):
 def test_logout_still_deletes_the_file_when_the_server_says_nothing_and_SAYS_SO(
     monkeypatch, capsys
 ):
-    """An offline laptop must be able to forget its credential — and must not be
+    """An offline laptop must be able to forget its credential: and must not be
     told it was revoked when it was not."""
     _store_a_credential()
     monkeypatch.setattr(login, "list_apps", lambda *a, **k: [])
@@ -315,7 +315,7 @@ def test_logout_local_only_never_calls_the_server(monkeypatch):
 # --- the transparent refresh ---------------------------------------------------------------
 def test_a_stale_access_token_is_refreshed_before_any_request(monkeypatch):
     """The AS issues a 1-hour access token. Without this an `ev` session would demand
-    a browser every hour — which is exactly the pressure that makes people want a
+    a browser every hour: which is exactly the pressure that makes people want a
     static token again."""
     from datetime import datetime, timedelta, timezone
 
@@ -389,7 +389,7 @@ def test_an_admin_command_is_refused_before_any_socket(monkeypatch):
         privileges.check("users", tokens.load_meta("127.0.0.1:8160").get("scopes"))
 
 
-# --- $FORMIST_TOKEN — D301 (option C, 2026-09-09) --------------------------------------
+# --- $FORMIST_TOKEN: D301 (option C, 2026-09-09) --------------------------------------
 class TestWhoamiNamesTheSource:
     def test_file_backed_credential_names_the_file(self, monkeypatch, capsys):
         _store_a_credential()
@@ -464,7 +464,7 @@ class TestEnvTokenPrecedence:
 
 class TestEnvTokenIsNeverStoredOrRefreshed:
     def test_env_token_is_used_as_is_and_never_refreshed(self, monkeypatch, capsys):
-        """The pre-fix resolver refreshed unconditionally — see
+        """The pre-fix resolver refreshed unconditionally: see
         formist_cli/context.py::resolve. A refresh would call `store_payload`, which is
         exactly the write-to-disk this env path promises never to do."""
         from formist_cli import context, prefs
@@ -507,7 +507,7 @@ class TestEnvTokenIsNeverStoredOrRefreshed:
 class TestLocalScopesDeferToTheServerForAnEnvToken:
     def test_a_stale_files_non_admin_scopes_do_not_block_an_env_token(self, monkeypatch):
         """`fm instance` with FORMIST_TOKEN set must not be refused locally on the
-        basis of a DIFFERENT credential's recorded scopes — the local pre-check
+        basis of a DIFFERENT credential's recorded scopes: the local pre-check
         cannot know what the env token was granted, so it must defer to the
         server (which will 403 with the real refusal if it truly lacks admin)."""
         login.store_payload(
@@ -533,7 +533,7 @@ class TestLocalScopesDeferToTheServerForAnEnvToken:
 
 
 class TestEnvTokenRedaction:
-    """The value must never reach stdout/stderr — whoami, doctor, and the login
+    """The value must never reach stdout/stderr: whoami, doctor, and the login
     help text are the surfaces this D301(C) task named; there is no --verbose flag
     and no header-dumping path in formist_cli/api.py to check (confirmed by reading it —
     the credential goes only into the Authorization header, never a printed one)."""
@@ -596,7 +596,7 @@ def test_the_admin_scope_refusal_names_ev_login_dash_dash_admin():
     """This is the exact failure `deploy/release.sh`'s `fm instance` step hits when
     the stored/env credential belongs to a platform admin who did not pass
     `--admin` to `fm login`. D301 (item 4): accept the default, but the message must
-    say `fm login --admin` — verified here rather than assumed, because the
+    say `fm login --admin`: verified here rather than assumed, because the
     client's OWN added text (formist_cli/api.py::_cli_scope_refusal) does not spell out
     the flag; what makes it true is the SERVER's message (routes/admin.py::
     CLI_ADMIN_SCOPE_REQUIRED) being embedded verbatim as the first line."""

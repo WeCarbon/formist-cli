@@ -1,24 +1,15 @@
-"""``fm whatsapp`` — the CLI front end for ``/admin/whatsapp/devices*``.
+"""Tests for ``fm whatsapp``, the CLI front end for ``/admin/whatsapp/devices*``.
 
-WHAT THIS FILE GUARDS. This module (``formist_cli/whatsapp.py``) had ZERO test
-coverage before this file — it is new, written against the contract fixed by
-``scratchpad/0916-whatsapp-neonize/REPORT.md`` §3.1 from a worktree that does not
-contain the routes themselves (the parent lane lands those separately). Four
-shapes of defect this guards against, each named on the test that catches it:
+Covers:
 
-  1. Every subject's argparse wiring actually round-trips (a typo'd ``dest=`` or
-     a missing positional would parse silently wrong, not loudly).
+  1. Every subject's argparse wiring round-trips (a typo'd ``dest=`` or a
+     missing positional would parse silently wrong, not loudly).
   2. ``pair``'s poll loop: it must call ``POST .../pair`` exactly once, then
-     ``GET .../pairing`` on a fixed cadence until ``status == "connected"``, and
-     it must give up loudly on ``--timeout`` rather than spin forever.
+     ``GET .../pairing`` on a fixed cadence until ``status == "connected"``,
+     and give up loudly on ``--timeout`` rather than spin forever.
   3. ``delete``'s typed-confirmation gate: a mismatched or unset typed value
      must never reach ``admin_delete``, and ``--yes`` must skip the prompt
      without ever calling ``input()``.
-
-``attest-pin`` (and the secret-NAME-vs-VALUE guard it used) is GONE — owner
-D600, 2026-09-23: "there is no PIN any more".
-
-Run: uv run pytest tests/test_formist_cli_whatsapp.py -q
 """
 
 from __future__ import annotations
@@ -47,7 +38,7 @@ def test_default_subject_is_devices():
 
 
 def test_an_unknown_subject_names_every_valid_one():
-    """Would fail if the error message stopped listing a real subject — an
+    """Would fail if the error message stopped listing a real subject: an
     operator typo would then get an unhelpful refusal."""
     with pytest.raises(whatsapp.WhatsAppError) as exc:
         whatsapp.canonical_subject("frobnicate")
@@ -62,13 +53,13 @@ def test_subject_is_case_and_whitespace_insensitive():
 
 
 # ===========================================================================
-# parser round trips — every subject parses the shape the DO list promises
+# parser round trips: every subject parses the shape the DO list promises
 # ===========================================================================
 @pytest.mark.parametrize(
     "argv, subject, record",
     [
         (["devices", "--host", "evane-ae"], "devices", None),
-        (["add", PHONE, "--name", "GFSS bot", "--host", "evane-ae"], "add", PHONE),
+        (["add", PHONE, "--name", "Demo bot", "--host", "evane-ae"], "add", PHONE),
         (["show", DEVICE_ID, "--host", "evane-ae"], "show", DEVICE_ID),
         (["pair", DEVICE_ID, "--host", "evane-ae"], "pair", DEVICE_ID),
         (["pair", DEVICE_ID, "--code", "--timeout", "60", "--host", "evane-ae"], "pair", DEVICE_ID),
@@ -85,7 +76,7 @@ def test_subject_is_case_and_whitespace_insensitive():
     ],
 )
 def test_parser_round_trips_every_subject(argv, subject, record):
-    """Would fail if a subject's positional/flag wiring silently changed shape —
+    """Would fail if a subject's positional/flag wiring silently changed shape,
     e.g. `record` renamed without `run()`'s `getattr(args, "record", ...)`
     updated to match, which would parse fine and then KeyError/None at dispatch."""
     args = whatsapp.build_standalone_parser().parse_args(argv)
@@ -106,7 +97,7 @@ def test_json_flag_parses():
 
 
 # ===========================================================================
-# add — E.164 validation
+# add: E.164 validation
 # ===========================================================================
 def test_add_refuses_a_number_with_no_plus():
     with pytest.raises(whatsapp.WhatsAppError, match="E.164"):
@@ -118,7 +109,7 @@ def test_add_accepts_a_well_formed_e164_number():
 
 
 # ===========================================================================
-# run — pre-network guards (a bad call must never reach the API)
+# run: pre-network guards (a bad call must never reach the API)
 # ===========================================================================
 def _args(**overrides) -> argparse.Namespace:
     base = {
@@ -129,7 +120,7 @@ def _args(**overrides) -> argparse.Namespace:
 
 
 class _RefusingApi:
-    """Every method raises — proves a refusal happened before any network call,
+    """Every method raises: proves a refusal happened before any network call,
     not merely that the test never bothered to check."""
 
     def _boom(self, *a, **k):
@@ -164,7 +155,7 @@ def test_add_with_a_malformed_phone_refuses_before_the_api(guarded):
 
 
 # ===========================================================================
-# run — a well-formed read/write reaches exactly the endpoint it should
+# run: a well-formed read/write reaches exactly the endpoint it should
 # ===========================================================================
 @pytest.fixture
 def driven(monkeypatch):
@@ -197,10 +188,10 @@ def test_devices_hits_the_plain_devices_endpoint(driven):
 
 def test_add_sends_exactly_phone_and_name(driven):
     rc, calls = driven(
-        {"id": DEVICE_ID, "phone_e164": PHONE}, subject="add", record=PHONE, display_name="GFSS bot",
+        {"id": DEVICE_ID, "phone_e164": PHONE}, subject="add", record=PHONE, display_name="Demo bot",
     )
     assert rc == 0
-    assert calls[0] == (whatsapp.DEVICES_PATH, {"phone_e164": PHONE, "display_name": "GFSS bot"})
+    assert calls[0] == (whatsapp.DEVICES_PATH, {"phone_e164": PHONE, "display_name": "Demo bot"})
 
 
 def test_add_omits_display_name_when_not_given(driven):
@@ -231,14 +222,14 @@ def test_groups_reaches_the_groups_endpoint(driven):
 
 def test_a_non_dict_payload_is_a_refusal(driven):
     """Shape: a server contract change (list/None instead of an object) must
-    raise, not render an empty table as if nothing existed — cli_support.as_dict's
-    contract, exercised through this module's own error type."""
+    raise, not render an empty table as if nothing existed, exercised through
+    this module's own error type."""
     with pytest.raises(whatsapp.WhatsAppError):
         driven(["not", "a", "dict"], subject="devices")
 
 
 # ===========================================================================
-# runner — the ARMED switch (services/whatsapp/runner.py module docstring)
+# runner: the armed switch
 # ===========================================================================
 def test_runner_with_no_action_defaults_to_status_and_hits_the_get_endpoint(driven):
     rc, calls = driven({"armed": True, "autostart": True, "sessions": []}, subject="runner", record=None)
@@ -276,7 +267,7 @@ def test_runner_with_an_unknown_action_refuses_before_the_api(guarded):
 
 
 # ===========================================================================
-# pair — POST once, then GET .../pairing on a fixed cadence until connected
+# pair: POST once, then GET .../pairing on a fixed cadence until connected
 # ===========================================================================
 def test_pair_polls_and_stops_the_moment_status_is_connected(monkeypatch, capsys):
     """The real defect this catches: a loop that keeps polling after `connected`
@@ -335,7 +326,7 @@ def test_pair_gives_up_loudly_once_the_timeout_elapses(monkeypatch):
     )
     # First call sizes the deadline (now=0, timeout=5 -> deadline=5); the loop's
     # very next clock read (100) is already past it, so the refusal fires before
-    # any sleep/poll — deterministic, no real waiting.
+    # any sleep/poll: deterministic, no real waiting.
     ticks = iter([0, 100])
     monkeypatch.setattr(whatsapp.time, "monotonic", lambda: next(ticks))
     monkeypatch.setattr(whatsapp.time, "sleep", lambda s: (_ for _ in ()).throw(
@@ -347,7 +338,7 @@ def test_pair_gives_up_loudly_once_the_timeout_elapses(monkeypatch):
 
 
 # ===========================================================================
-# delete — typed phone-number confirmation
+# delete: typed phone-number confirmation
 # ===========================================================================
 def _delete_stub(monkeypatch, *, device_payload, delete_payload):
     calls = {"get": 0, "delete": 0}
@@ -369,9 +360,9 @@ def _delete_stub(monkeypatch, *, device_payload, delete_payload):
 
 
 def test_delete_with_a_mismatched_typed_value_never_calls_delete(monkeypatch):
-    """Owner rule (task DO #2): delete asks for a typed confirmation of the
-    phone number. A defect here (comparing the wrong field, or not comparing at
-    all) would let a mistyped/blank confirmation through to a PERMANENT delete."""
+    """delete asks for a typed confirmation of the phone number. A defect here
+    (comparing the wrong field, or not comparing at all) would let a
+    mistyped or blank confirmation through to a permanent delete."""
     calls = _delete_stub(
         monkeypatch, device_payload={"id": DEVICE_ID, "phone_e164": PHONE}, delete_payload={"ok": True},
     )
@@ -396,7 +387,7 @@ def test_delete_with_the_correct_typed_number_proceeds(monkeypatch):
 
 
 def test_delete_with_yes_never_calls_input(monkeypatch):
-    """Would fail if --yes still prompted — a scripted/automated delete would
+    """Would fail if --yes still prompted: a scripted/automated delete would
     hang waiting on stdin instead of skipping the gate as documented."""
     calls = _delete_stub(
         monkeypatch, device_payload={"id": DEVICE_ID, "phone_e164": PHONE}, delete_payload={"ok": True},
@@ -433,7 +424,7 @@ def test_without_json_flag_prints_the_rendered_report_not_raw_json(driven, capsy
 
 
 # ===========================================================================
-# render_* — the "never print nothing when the answer is empty" contract
+# render_*: the "never print nothing when the answer is empty" contract
 # ===========================================================================
 def test_render_devices_empty_says_so_rather_than_printing_nothing():
     assert "no WhatsApp devices" in whatsapp.render_devices([])
@@ -442,14 +433,14 @@ def test_render_devices_empty_says_so_rather_than_printing_nothing():
 def test_render_devices_shows_phone_status_and_id():
     out = whatsapp.render_devices(
         [{"phone_e164": PHONE, "status": "connected", "enabled": True,
-          "region": "ae", "display_name": "GFSS bot", "id": DEVICE_ID}]
+          "region": "ae", "display_name": "Demo bot", "id": DEVICE_ID}]
     )
     assert PHONE in out and "connected" in out and DEVICE_ID in out
 
 
 def test_render_device_counts_registration_recordings_rather_than_dumping_them():
     """Would fail if the raw list (with blob keys/urls) were printed inline
-    instead of a count — this is a HUMAN report, not the JSON payload."""
+    instead of a count: this is a HUMAN report, not the JSON payload."""
     out = whatsapp.render_device(
         {"id": DEVICE_ID, "registration_recordings": [{"recorded_at": "t", "blob_key": "k"}]}
     )
@@ -487,7 +478,7 @@ def test_render_runner_shows_each_live_session():
 
 
 def test_render_runner_start_result_shows_the_started_count_with_no_sessions_key():
-    """`POST .../runner/start` returns `{armed, started}` only — no `sessions`
-    key — so the renderer must not KeyError on it."""
+    """`POST .../runner/start` returns `{armed, started}` only: no `sessions`
+    key: so the renderer must not KeyError on it."""
     out = whatsapp.render_runner({"armed": True, "started": 3})
     assert "started=3" in out
