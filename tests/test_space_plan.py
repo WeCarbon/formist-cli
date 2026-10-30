@@ -1,23 +1,20 @@
-"""``fm space-plan``: the client half of the plan surface.
+"""Tests for ``fm space-plan``: the client half of the plan surface.
 
-WHAT THESE TESTS GUARD
-----------------------
-Not the HTTP transport (``formist_cli/api.py`` is tested elsewhere) and not the routing
-(``tests/test_admin_space_plan.py`` owns that, against two real databases). What
-this file pins is what the COMMAND is allowed to send and to say:
+Not the HTTP transport (``formist_cli/api.py`` is tested elsewhere) and
+not the routing, which is covered against real databases elsewhere. What
+this file pins is what the command is allowed to send and to say:
 
-* it never sends ``apply: true`` unless ``--apply`` was given: the dry-run default
-  again, one layer up, where an operator's muscle memory reaches it;
-* it re-runs the dry run before an apply, and refuses when the revision has moved,
-  so a stale revision cannot commit a plan nobody read;
-* no request it can build names a database. The region is the SERVER's answer, and
-  the command has no flag that could contradict it.
+* it never sends ``apply: true`` unless ``--apply`` was given: the
+  dry-run default again, one layer up, where an operator's muscle memory
+  reaches it;
+* it re-runs the dry run before an apply, and refuses when the revision
+  has moved, so a stale revision cannot commit a plan nobody read;
+* no request it can build names a database. The region is the server's
+  answer, and the command has no flag that could contradict it.
 
-That last one is a PROPERTY over every flag combination, not a case. It is asserted
-by driving the command with a recording stand-in for ``formist_cli.api`` and inspecting
-everything that was sent.
-
-Run: uv run pytest tests/test_formist_cli_space_plan.py -q
+That last one is a property over every flag combination, not a case. It
+is asserted by driving the command with a recording stand-in for
+``formist_cli.api`` and inspecting everything that was sent.
 """
 
 from __future__ import annotations
@@ -36,25 +33,25 @@ SPACE = "452093ea-7b91-491e-88b6-3285edd48a31"
 
 _TARGET = {
     "space_id": SPACE,
-    "space_name": "GFSS 2026",
+    "space_name": "Acme Summit",
     "region": "ae",
     "api_base": "https://ae.api.evane.ai",
     "database": {
         "region": "ae",
-        "host": "evane-pg-ae.postgres.database.azure.com",
+        "host": "db-ae.postgres.database.azure.com",
         "port": 5432,
         "database": "evane",
         "shared_with_global": False,
     },
     "project_id": SPACE,
-    "project_name": "GFSS 2026",
+    "project_name": "Acme Summit",
     "project_region": "ae",
 }
 
 _EFFECTS = {
     "was_gated": False,
     "will_be_gated": True,
-    "billing_gate": "FAIL-OPEN -> FAIL-CLOSED. This space has no plan row today…",
+    "billing_gate": "FAIL-OPEN -> FAIL-CLOSED. This space has no plan row today...",
     "usage_gate_enabled_on_this_deployment": True,
     "catch_all_multiplier": 1.0,
     "catch_all_note": "every model resolves to a multiplier here",
@@ -288,7 +285,7 @@ def test_the_parser_offers_no_way_to_name_a_database():
     offending = [option for option in options if _DATABASE_NAMING.search(option)]
     assert not offending, (
         f"{offending} would let an operator name the database. The target is "
-        "derived from the Global space registry by routes/admin.py::_plan_target."
+        "derived from the Global space registry server-side."
     )
 
 
@@ -307,7 +304,7 @@ def test_show_prints_the_resolved_database(driven, capsys):
     stub = RecordingApi()
     assert driven(stub, subject="show") == 0
     out = capsys.readouterr().out
-    assert "evane-pg-ae.postgres.database.azure.com" in out
+    assert "db-ae.postgres.database.azure.com" in out
     assert "UNGATED" in out
 
 
@@ -353,7 +350,7 @@ def test_the_help_says_the_write_is_a_dry_run_and_env_is_not_the_database():
 
 
 # ---------------------------------------------------------------------------
-# plan tiers (services/plan_tiers.py)
+# plan tiers
 # ---------------------------------------------------------------------------
 def test_tier_and_use_tier_limits_send_the_tier_and_null_the_overrides(driven, capsys):
     """Moving an admin-granted row onto a tier: the row's own name and limits are
