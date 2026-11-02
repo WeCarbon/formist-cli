@@ -80,7 +80,14 @@ def resolve(
             file=sys.stderr,
         )
     else:
-        token = _refresh_if_stale(eff.target.name, token)
+        # Refresh against ORIGIN, not ``eff.target.name``: when borrowing
+        # (origin != eff.target.name), the refresh token and its metadata
+        # live in origin's file, not in a file for eff.target.name, which
+        # may not even exist on disk. Refreshing against the wrong file
+        # reads an empty `load_meta`, finds no `expires_at`, and silently
+        # returns the stale token unchanged, which is exactly the bug a
+        # borrowed, expired token used to hit (401, never refreshed).
+        token = _refresh_if_stale(origin or eff.target.name, token)
         if origin and origin != eff.target.name:
             # Borrowing a credential from another region's file is said
             # out loud rather than left as invisible state.

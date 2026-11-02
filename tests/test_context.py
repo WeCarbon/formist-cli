@@ -128,6 +128,69 @@ class TestItResolvesAndRefusesInOnePlace:
         context.resolve(_Args(host="ae"))
         assert "using the global token" in capsys.readouterr().err
 
+    def test_a_borrowed_token_is_refreshed_against_its_ORIGIN_not_the_borrowing_host(
+        self, monkeypatch
+    ):
+        """Regression: a borrowed, expired token was never refreshed.
+
+        ``_refresh_if_stale`` reads its metadata (``expires_at``, the
+        refresh token, ``client_id``) from ORIGIN's file; evane-ae has none
+        of its own. Refreshing against ``eff.target.name`` instead of
+        ``origin`` reads an empty file, finds no ``expires_at``, and
+        silently returns the stale token unchanged, so a borrowed, expired
+        token stayed 401 forever and only a direct ``--host evane`` call
+        ever refreshed anything.
+        """
+        monkeypatch.setattr(
+            prefs, "effective", lambda **k: _Eff(resolve_target("evane-ae"), "sp", "flag")
+        )
+        monkeypatch.setattr(tokens, "load_for", lambda env: ("stale-tok", "evane"))
+        calls: list[str] = []
+        monkeypatch.setattr(
+            context, "_refresh_if_stale",
+            lambda env, token: calls.append(env) or "fresh-tok",
+        )
+        ctx = context.resolve(_Args(host="ae"))
+        assert calls == ["evane"], f"refreshed against {calls}, not the token's real origin"
+        assert ctx.token == "fresh-tok"
+
+    def test_a_borrowed_expired_tokens_failed_refresh_names_the_ORIGIN_host(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        """An expired evane-ae request borrowing evane's token, with nothing
+        left to refresh it, must point at `fm login --host evane` (where the
+        credential actually lives), never `--host evane-ae` (which has never
+        stored one of its own).
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from formist_cli import login
+
+        monkeypatch.setenv(tokens.CONFIG_DIR_VAR, str(tmp_path / "fm-config"))
+        monkeypatch.delenv(tokens.ENV_TOKEN_VAR, raising=False)
+        # A credential for "evane" with no refresh_token at all: the "nothing
+        # to refresh it with" branch, not a network failure.
+        login.store_payload(
+            "evane",
+            {"access_token": "crst_at_old", "scope": "evane:kb", "expires_in": 3600},
+            client_id="cid-1",
+        )
+        path = tokens.token_path("evane")
+        import json as json_mod
+
+        data = json_mod.loads(path.read_text())
+        data["expires_at"] = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        path.write_text(json_mod.dumps(data))
+
+        monkeypatch.setattr(
+            prefs, "effective", lambda **k: _Eff(resolve_target("evane-ae"), "sp", "flag")
+        )
+        ctx = context.resolve(_Args(host="ae"))
+        err = capsys.readouterr().err
+        assert "fm login --host evane" in err
+        assert "fm login --host evane-ae" not in err
+        assert ctx.token == "crst_at_old"  # unrefreshed, but the real stale one, not lost
+
     def test_the_banner_is_printed_to_STDERR_so_stdout_stays_pipeable(
         self, monkeypatch, capsys
     ):
