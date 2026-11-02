@@ -227,6 +227,125 @@ class TestAddSkillFromSource:
         assert not seen["dir"].exists(), "the tempdir must be cleaned up after use"
 
 
+class _FakeSkillStore:
+    """A tiny in-memory stand-in for the server's File rows + one Skill's
+    ``files`` list: just enough to run ``update_skill_from_source`` more
+    than once against the SAME skill and watch whether attachments
+    accumulate, which a fixed canned response (``_fake_patch``/
+    ``_fake_attachment_pair``) cannot do across calls.
+    """
+
+    def __init__(self, skill: dict):
+        self.skill = dict(skill)
+        self.files: dict[str, dict] = {}  # file_id -> {"name": ..., "data": ...}
+
+    def patch_import(self, target, path, body, *, token=None, **kw):
+        """Simulates PATCH .../skills/{id}/import: changes markdown-derived
+        fields, leaves ``files`` exactly as the skill currently holds it."""
+        return {**self.skill, "name": "Probe Skill"}
+
+    def upload_file(self, target, space, path, *, token=None, **kw):
+        data = Path(path).read_bytes()
+        file_id = str(uuid4())
+        self.files[file_id] = {"name": path.name, "data": data}
+        return {"item": {"id": file_id, "name": path.name, "size": len(data)}}
+
+    def attach_file_to_skill(self, target, space, item, file_id, *, token=None, **kw):
+        current = list(item.get("files") or [])
+        if file_id not in current:
+            current.append(file_id)
+        item = {**item, "files": current}
+        self.skill = item
+        return item
+
+    def find_existing_attachment(self, target, space, item, filename, *, token=None, **kw):
+        for fid in item.get("files") or []:
+            f = self.files.get(fid)
+            if f and f["name"] == filename:
+                return {"id": fid, "name": f["name"], "size": len(f["data"])}
+        return None
+
+    def download_file_bytes(self, target, space, file_id, *, token=None, **kw):
+        return self.files[file_id]["data"]
+
+    def replace_file_in_skill(self, target, space, item, old_file_id, new_file_id, *, token=None, **kw):
+        current = [new_file_id if f == old_file_id else f for f in (item.get("files") or [])]
+        if old_file_id not in (item.get("files") or []):
+            current.append(new_file_id)
+        item = {**item, "files": current}
+        self.skill = item
+        return item
+
+    def _update(self, source):
+        from formist_cli.skills import update_skill_from_source
+
+        return update_skill_from_source(
+            LOCAL,
+            SPACE,
+            self.skill,
+            source,
+            token="t",
+            patch=self.patch_import,
+            upload_file=self.upload_file,
+            attach_file_to_skill=self.attach_file_to_skill,
+            find_existing_attachment=self.find_existing_attachment,
+            download_file_bytes=self.download_file_bytes,
+            replace_file_in_skill=self.replace_file_in_skill,
+        )
+
+
+class TestUpdateSkillAttachmentsAreDeduped:
+    """The bug: re-running `fm skills-update` on an unchanged SOURCE used to
+    re-attach the same template file every time (`_attach_all` uploaded and
+    appended unconditionally). These pin the fix at the level
+    `update_skill_from_source` actually runs at, not just `find_existing_attachment`
+    in isolation.
+    """
+
+    def test_running_it_twice_with_identical_content_leaves_the_count_unchanged(
+        self, tmp_path
+    ):
+        d = _write_dir(tmp_path, extra_files={"template.pptx": b"same bytes every run"})
+        store = _FakeSkillStore({"id": str(uuid4()), "name": "Old Name", "files": []})
+
+        first = store._update(str(d))
+        assert len(first["files"]) == 1
+        second = store._update(str(d))
+        assert len(second["files"]) == 1, "a second run with unchanged content must not grow the list"
+        assert second["files"] == first["files"], "the same File row must still be the one attached"
+
+    def test_changed_content_replaces_the_same_slot_rather_than_appending(self, tmp_path):
+        store = _FakeSkillStore({"id": str(uuid4()), "name": "Old Name", "files": []})
+        d1 = _write_dir(tmp_path, extra_files={"template.pptx": b"version one"})
+        first = store._update(str(d1))
+        assert len(first["files"]) == 1
+        old_file_id = first["files"][0]
+
+        d2 = tmp_path / "v2"
+        d2.mkdir()
+        (d2 / "SKILL.md").write_text(MARKDOWN, encoding="utf-8")
+        (d2 / "template.pptx").write_bytes(b"version two, different bytes")
+
+        second = store._update(str(d2))
+        assert len(second["files"]) == 1, "a changed attachment must replace, never append, its old slot"
+        assert second["files"][0] != old_file_id, "the stale File id must be gone, a fresh one in its place"
+
+    def test_a_genuinely_new_name_is_still_appended(self, tmp_path):
+        store = _FakeSkillStore({"id": str(uuid4()), "name": "Old Name", "files": []})
+        d1 = _write_dir(tmp_path, extra_files={"a.pptx": b"first attachment"})
+        first = store._update(str(d1))
+        assert len(first["files"]) == 1
+
+        d2 = tmp_path / "v2"
+        d2.mkdir()
+        (d2 / "SKILL.md").write_text(MARKDOWN, encoding="utf-8")
+        (d2 / "a.pptx").write_bytes(b"first attachment")  # unchanged, deduped
+        (d2 / "b.docx").write_bytes(b"a second, different attachment")
+
+        second = store._update(str(d2))
+        assert len(second["files"]) == 2, "a new name is additive; the existing one is still deduped"
+
+
 class TestUpdateSkillFromSource:
     def test_patches_the_resolved_skills_own_id_never_re_resolving(self, tmp_path):
         d = _write_dir(tmp_path)

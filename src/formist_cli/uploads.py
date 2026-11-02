@@ -28,6 +28,7 @@ Stdlib only: this module must not add a runtime dependency.
 
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import re
 import sys
@@ -447,6 +448,64 @@ def attach_file_to_skill(
     item = result.get("item") if isinstance(result, dict) else None
     if not isinstance(item, dict):
         raise UploadError(f"attaching to the skill returned an unexpected shape: {result!r}")
+    return item
+
+
+def download_file_bytes(
+    target: Target,
+    space: str,
+    file_id: str,
+    *,
+    token: str | None,
+    download: Caller | None = None,
+) -> bytes:
+    """The raw bytes of an already-uploaded File, through the same per-file
+    download route the product's own file preview uses (see ``fm files
+    download``). Used to decide whether a same-named skill attachment
+    already holds this exact content, never to render or save anything.
+    """
+    download = download or _api().download
+    data, _disposition = download(target, f"/projects/{space}/files/{file_id}/download", token=token)
+    return data
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def replace_file_in_skill(
+    target: Target,
+    space: str,
+    skill: dict,
+    old_file_id: str,
+    new_file_id: str,
+    *,
+    token: str | None,
+    patch: Caller | None = None,
+) -> dict:
+    """Swap ``old_file_id`` for ``new_file_id`` IN PLACE within ``skill["files"]``,
+    preserving position and every other entry.
+
+    The sibling of :func:`attach_file_to_skill`, for when a same-named
+    attachment already exists and its content changed: the stale copy must
+    be replaced, never left in the list alongside a second, newer upload of
+    the same template under the same name.
+
+    If ``old_file_id`` is not actually present (stale caller state), this
+    appends ``new_file_id`` rather than silently dropping the just-uploaded
+    file; the same "this is additive, not idempotent-by-accident" shape
+    :func:`attach_file_to_skill` already has.
+    """
+    patch = patch or _api().patch
+    current = [str(f) for f in (skill.get("files") or [])]
+    updated = [new_file_id if f == old_file_id else f for f in current]
+    if old_file_id not in current:
+        updated.append(new_file_id)
+    body = {"files": updated}
+    result = patch(target, f"/projects/{space}/skills/{skill['id']}", body, token=token)
+    item = result.get("item") if isinstance(result, dict) else None
+    if not isinstance(item, dict):
+        raise UploadError(f"replacing the skill's attachment returned an unexpected shape: {result!r}")
     return item
 
 

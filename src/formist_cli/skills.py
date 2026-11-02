@@ -14,10 +14,13 @@ stdlib only).
 existing one (resolved by id or exact name, the same resolver ``fm get SKILL``
 uses) and never creates a second. Deliberately no bulk "seed every space" verb.
 
-Attachments (any file in SOURCE besides ``SKILL.md``) are registered the same
-way ``fm skill-attach`` already does: this module calls that mechanism
-directly (``formist_cli.uploads.upload_file`` + ``attach_file_to_skill``) rather
-than re-implementing it.
+Attachments (any file in SOURCE besides ``SKILL.md``) are registered through
+the same primitives ``fm skill-attach`` already uses
+(``formist_cli.uploads.upload_file`` / ``attach_file_to_skill`` /
+``find_existing_attachment``) rather than a second copy of them, PLUS a
+name-then-content dedupe (see ``_attach_all``) that is the whole reason
+``skills-update`` can be re-run on the same SOURCE without its attachment
+count growing by one every time.
 
 Dry run by default, same contract as every other write command here
 (``fm upload``, ``fm skill-attach``); ``--apply`` performs the write.
@@ -103,20 +106,51 @@ def _attach_all(
     token: str | None,
     upload_file=None,
     attach_file_to_skill=None,
+    find_existing_attachment=None,
+    download_file_bytes=None,
+    replace_file_in_skill=None,
 ) -> dict:
     """Upload + register every attachment on the just-created/updated skill,
     reusing ``fm skill-attach``'s own functions rather than a second copy.
 
-    ``upload_file``/``attach_file_to_skill`` are injectable (default: the real
-    ``formist_cli.uploads`` functions), the same dependency-injection shape those
-    two functions themselves already accept, so a test can pass a fake
-    transport all the way through without patching module globals.
+    DEDUPES BY NAME, the same match rule ``fm skill-attach`` uses
+    (:func:`formist_cli.uploads.find_existing_attachment`): a same-named
+    attachment already on ``item`` is never re-attached under a second
+    entry. A no-op for ``fm skills-add`` (a brand-new skill starts with no
+    attachments, so nothing here ever matches); it is what stops ``fm
+    skills-update`` re-attaching its template file on every run.
+
+    A name match is then settled by CONTENT, not just the name: identical
+    bytes (sha256, after an equal-size fast path) are left alone; changed
+    bytes are uploaded and swapped into the SAME slot
+    (:func:`formist_cli.uploads.replace_file_in_skill`), never appended
+    as a second attachment under the name a human already recognises.
+
+    Every injectable here defaults to the real ``formist_cli.uploads``
+    function, the same dependency-injection shape those functions
+    themselves already accept, so a test can pass a fake transport all the
+    way through without patching module globals.
     """
     from formist_cli import uploads as uploads_mod
 
     upload_file = upload_file or uploads_mod.upload_file
     attach_file_to_skill = attach_file_to_skill or uploads_mod.attach_file_to_skill
+    find_existing_attachment = find_existing_attachment or uploads_mod.find_existing_attachment
+    download_file_bytes = download_file_bytes or uploads_mod.download_file_bytes
+    replace_file_in_skill = replace_file_in_skill or uploads_mod.replace_file_in_skill
+
     for att in attachments:
+        existing = find_existing_attachment(target, space, item, att.name, token=token)
+        if existing is not None:
+            local_bytes = att.read_bytes()
+            if existing.get("size") == len(local_bytes):
+                remote_bytes = download_file_bytes(target, space, existing["id"], token=token)
+                if uploads_mod.sha256_hex(remote_bytes) == uploads_mod.sha256_hex(local_bytes):
+                    continue  # identical content already attached: nothing to do
+            uploaded = upload_file(target, space, att, token=token)
+            file_id = uploaded["item"]["id"]
+            item = replace_file_in_skill(target, space, item, existing["id"], file_id, token=token)
+            continue
         uploaded = upload_file(target, space, att, token=token)
         file_id = uploaded["item"]["id"]
         item = attach_file_to_skill(target, space, item, file_id, token=token)
@@ -132,6 +166,9 @@ def add_skill_from_source(
     post=None,
     upload_file=None,
     attach_file_to_skill=None,
+    find_existing_attachment=None,
+    download_file_bytes=None,
+    replace_file_in_skill=None,
 ) -> dict:
     """The testable core of ``fm skills-add``: read SOURCE, POST it, attach
     whatever else SOURCE held. ``post`` is injectable (default:
@@ -151,6 +188,9 @@ def add_skill_from_source(
             token=token,
             upload_file=upload_file,
             attach_file_to_skill=attach_file_to_skill,
+            find_existing_attachment=find_existing_attachment,
+            download_file_bytes=download_file_bytes,
+            replace_file_in_skill=replace_file_in_skill,
         )
     finally:
         if tmp is not None:
@@ -167,12 +207,21 @@ def update_skill_from_source(
     patch=None,
     upload_file=None,
     attach_file_to_skill=None,
+    find_existing_attachment=None,
+    download_file_bytes=None,
+    replace_file_in_skill=None,
 ) -> dict:
     """The testable core of ``fm skills-update``: read SOURCE, PATCH the
     already-resolved ``skill`` dict (see ``formist_cli.uploads.resolve_skill``),
     attach whatever else SOURCE held. Never resolves ``skill`` itself: same
     split ``formist_cli.uploads.attach_file_to_skill`` uses, so a caller controls
-    exactly when the resolve-by-name network round trip happens."""
+    exactly when the resolve-by-name network round trip happens.
+
+    Attachments are DEDUPED BY NAME then settled by content (see
+    :func:`_attach_all`): a re-run with an unchanged template file leaves
+    ``skill["files"]`` exactly as it was, rather than growing by one every
+    time.
+    """
     patch = patch or api.patch
     markdown, attachments, tmp = resolve_source(source)
     try:
@@ -190,6 +239,9 @@ def update_skill_from_source(
             item,
             attachments,
             token=token,
+            find_existing_attachment=find_existing_attachment,
+            download_file_bytes=download_file_bytes,
+            replace_file_in_skill=replace_file_in_skill,
             upload_file=upload_file,
             attach_file_to_skill=attach_file_to_skill,
         )
@@ -232,9 +284,13 @@ def add_parser(sub) -> None:
             "in place (PATCH .../skills/{id}/import), never creates a second "
             "row. --skill is a skill id (UUID) or its exact name (resolved the "
             "same way `fm get SKILL --name ...` does; refuses on more than one "
-            "match). Attachments under SOURCE are uploaded and registered "
-            "additively (existing ones are never removed), same as "
-            "`fm skill-attach`.\n\n"
+            "match). Attachments under SOURCE are DEDUPED BY NAME, the same "
+            "match rule `fm skill-attach` uses: a same-named attachment that "
+            "already holds this exact content is left alone (a re-run is a "
+            "no-op), one whose content changed is uploaded and swapped into "
+            "the same slot, and a name with no existing match is uploaded "
+            "and added. Existing attachments under OTHER names are never "
+            "removed.\n\n"
             "SOURCE is a local directory holding SKILL.md, or a .zip of one.\n\n"
             "DRY RUN by default: prints what would change and touches nothing. "
             "--apply performs the write."
