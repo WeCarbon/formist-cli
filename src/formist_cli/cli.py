@@ -81,6 +81,7 @@ from formist_cli.participants import ParticipantsError
 from formist_cli.prefs import PrefsError
 from formist_cli.projects import ProjectsError
 from formist_cli.resolve import ResolutionError
+from formist_cli.settings import SettingsError
 from formist_cli.spaces import SpacesError
 from formist_cli.targets import (
     DEFAULT_HOST,
@@ -1644,6 +1645,7 @@ USER_ERRORS = (
     SpacesError,
     UsageTokensError,
     AlertsError,
+    SettingsError,
     WhatsAppError,
     KbError,
     MeetingsError,

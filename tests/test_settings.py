@@ -30,6 +30,19 @@ def test_fm_settings_is_now_a_redirect_to_fmdev():
     assert parsed.command == "settings"
 
 
+def test_settings_error_is_caught_by_the_shared_dispatch():
+    """``SettingsError`` was never in ``USER_ERRORS`` (found while wiring
+    `settings` into curist-server's `fmdev`, which calls `settings.run`
+    directly through this same shared `cli.main`/`USER_ERRORS` machinery):
+    a typo like `fm settings set scheduler.disabled=maybe` would have
+    raised past every `except` clause and printed a bare traceback instead
+    of the clean "error: ..." line every other refusal gets. Asserted
+    structurally (whether the tuple names the class), since `settings`
+    itself no longer runs through `fm`'s own dispatch to exercise this
+    end-to-end; `fmdev`'s own tests exercise it live."""
+    assert SettingsError in cli.USER_ERRORS
+
+
 @pytest.mark.parametrize("subject", ["show", "set", "clear"])
 def test_every_documented_subject_is_accepted(subject):
     assert canonical_subject(subject) == subject
