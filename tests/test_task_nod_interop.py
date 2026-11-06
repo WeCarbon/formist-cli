@@ -20,7 +20,7 @@ import subprocess
 
 import pytest
 
-from formist_cli import cli, task_parse
+from formist_cli import task_parse, tasks
 
 NOD = shutil.which("nod")
 pytestmark = pytest.mark.skipif(NOD is None, reason="the real `nod` CLI is not on PATH")
@@ -35,7 +35,10 @@ def _nod(*args, cwd=None, env=None):
 
 
 def _fm(capsys, *args):
-    code = cli.main(["task", *args])
+    # Standalone, not `cli.main`: `fm task` isn't wired into the shared
+    # cli.py yet (fm-slim owns it mid-restructure) — see test_task_cli.py's
+    # module docstring.
+    code = tasks.main(list(args))
     out = capsys.readouterr()
     assert code == 0, f"fm task {args} failed: {out.err}"
     return out.out

@@ -487,6 +487,43 @@ def run(args) -> int:
     return handler(args)
 
 
+def _task_user_errors() -> tuple[type[BaseException], ...]:
+    """Exceptions this subcommand's own CLI layer should print as operator
+    prose rather than a traceback. `cli.py`'s own ``main`` will fold these
+    into its own ``USER_ERRORS`` tuple when `fm task` is wired in there
+    (coordination note, 2026-11-06: fm-slim owns cli.py/privileges.py right
+    now — see :func:`main` below for the standalone entry point used until
+    then, and by this module's own tests). Imported lazily to avoid a
+    load-time dependency from this module onto the Store/questions/attach/
+    title modules just to build an error tuple."""
+    from formist_cli.task_attach import AttachError
+    from formist_cli.task_questions import QuestionsError
+    from formist_cli.task_store import StoreError
+    from formist_cli.task_title import TitleTooLong
+
+    return (TasksError, StoreError, QuestionsError, AttachError, TitleTooLong)
+
+
+def main(argv: list[str]) -> int:
+    """Standalone ``fm task <verb> ...`` entry point — ``argv`` WITHOUT the
+    leading ``"task"`` token (``build_standalone_parser()`` already is the
+    ``task`` subparser, same convention ``cli_support.build_standalone_parser``
+    uses for every other module's own standalone parser).
+
+    Used by this module's own test suite today, and will be what `cli.py`
+    calls once `fm task` is wired in there for real (coordination note
+    above) — so the error handling here is deliberately the same shape as
+    `cli.main`'s: print the message, return 2, never a traceback.
+    """
+    parser = build_standalone_parser()
+    args = parser.parse_args(argv)
+    try:
+        return run(args)
+    except _task_user_errors() as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
 def _cmd_init(args) -> int:
     layout = task_paths.init_layout(args.dir)
     print(f"created {layout.root}")
