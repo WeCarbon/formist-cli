@@ -278,6 +278,12 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     _add_common(p, write=True)
     _add_by(p)
 
+    p = verbs.add_parser("move", help="reparent a node with its whole subtree")
+    p.add_argument("ref")
+    p.add_argument("--parent")
+    p.add_argument("--root", action="store_true")
+    _add_common(p, write=True)
+
     p = verbs.add_parser("supersede", help="old node is superseded by the new one")
     p.add_argument("old_ref")
     p.add_argument("--by", dest="new_ref", required=True)
@@ -407,7 +413,23 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
 
     p = verbs.add_parser("monitor", help="one line per event (for an agent's Monitor tool)")
     p.add_argument("--since")
+    p.add_argument("--mine", action="store_true", help="only this agent's own nodes (name before ·)")
+    p.add_argument("--author", help="only one agent's own nodes, by name")
+    p.add_argument("--idle-exit", type=float, default=7200,
+                    help="go offline after this many seconds with no event, 0 = never (default 7200)")
     p.add_argument("--once", action="store_true", help="print one pass and exit (fm's own test/CI hook)")
+    _add_common(p)
+
+    p = verbs.add_parser("wait", help="block until there's something on the queue, then exit")
+    p.add_argument("refs", nargs="*")
+    p.add_argument("--mine", action="store_true")
+    p.add_argument("--author")
+    p.add_argument("--timeout", type=float, help="seconds; exit code 2 on timeout (default: forever)")
+    _add_common(p)
+
+    p = verbs.add_parser("watch", help="stream changes, never exits (for a human's pane)")
+    p.add_argument("--mine", action="store_true")
+    p.add_argument("--author")
     _add_common(p)
 
     return parser
@@ -664,6 +686,14 @@ def _cmd_retitle(args) -> int:
     _mode, target = resolve_mode(args)
     node = _resolve_local(target, args.ref)
     result = target.retitle(node.id, args.title, _by(args), _role(args))
+    _print_node(result, args.json)
+    return 0
+
+
+def _cmd_move(args) -> int:
+    _mode, target = resolve_mode(args)
+    node = _resolve_local(target, args.ref)
+    result = target.move(node.id, parent=args.parent, root=args.root)
     _print_node(result, args.json)
     return 0
 
@@ -927,31 +957,122 @@ def _cmd_changes(args) -> int:
     return 0
 
 
+def _monitor_author(args) -> str | None:
+    if getattr(args, "author", None):
+        return args.author
+    if getattr(args, "mine", False):
+        from formist_cli.task_identity import agent_name_of
+
+        author = agent_name_of(task_identity.current_author())
+        if not author:
+            raise TasksError("--mine needs a name: pass --author, or set NODDIT_AUTHOR.")
+        return author
+    return None
+
+
 def _cmd_monitor(args) -> int:
     import time as _time
+
+    from formist_cli import task_monitor
 
     mode, target = resolve_mode(args)
     if mode != "local":
         raise TasksError("`fm task monitor` is local-mode only for now")
-    since = args.since or _now_iso()
-    events = target.changes(since)
-    for e in events:
-        print(f"DECS-UPDATED {e['ref']} {e.get('kind')} at {e['at']}")
-    if not events:
-        print("DECS-DONE 自己的节点都收尾了：到此为止，不用重挂。")
-    if args.once:
-        return 0
-    # Real (non-test) usage: a simple polling loop. Kept minimal — the
-    # reference implementation's check-in/stale/daydream sweeps are not
-    # ported in this pass (gap, tracked under C1052).
-    last = _now_iso()
+    author = _monitor_author(args)
+    explicit_since = bool(args.since)
+    since = args.since or task_monitor.load_cursor(target.layout, author) or _now_iso()
+    idle_exit = args.idle_exit if args.idle_exit else None
+
+    last_event_at = _time.monotonic()
+    done = False
     try:
         while True:
+            lines, since = task_monitor.run_pass(target, author, since)
+            if not explicit_since:
+                task_monitor.save_cursor(target.layout, author, since)
+            for line in lines:
+                print(line)
+                if line.startswith("DECS-DONE"):
+                    done = True
+            if lines:
+                last_event_at = _time.monotonic()
+            if args.once or done:
+                return 0
+            if idle_exit and _time.monotonic() - last_event_at >= idle_exit:
+                print(f"DECS-IDLE no new events for {int(idle_exit)}s, monitor going offline.")
+                return 0
             _time.sleep(1)
-            events = target.changes(last)
-            for e in events:
-                print(f"DECS-UPDATED {e['ref']} {e.get('kind')} at {e['at']}")
-            last = _now_iso()
+    except KeyboardInterrupt:
+        return 0
+
+
+def _cmd_wait(args) -> int:
+    import time as _time
+
+    mode, target = resolve_mode(args)
+    if mode != "local":
+        raise TasksError("`fm task wait` is local-mode only for now")
+    author = _monitor_author(args)
+    want_ids = {target.resolve(r).id for r in args.refs} if args.refs else None
+    start = _time.monotonic()
+    since = _now_iso()
+
+    def snapshot():
+        from formist_cli.task_queue import read_queue
+
+        ids = read_queue(target.layout)
+        if want_ids is not None:
+            ids = [i for i in ids if i in want_ids]
+        if author:
+            from formist_cli import task_monitor
+
+            ids = [i for i in ids if task_monitor.same_agent(target.get(i).author, author)]
+        return ids
+
+    while True:
+        ids = snapshot()
+        if ids:
+            from formist_cli.task_ref import format_ref
+
+            refs = [format_ref(i, target.letter()) for i in ids]
+            if args.json:
+                print(json.dumps({"updates": True, "count_at_wake": len(ids), "ids_at_wake": refs,
+                                   "next": "fm task queue --json", "since": since}))
+            else:
+                print(f"there are updates: {' '.join(refs)}")
+                print('fm task read <ref> --ack "<what you\'ll do>"  (or: fm task queue)')
+                print(f"--since {since}")
+            return 0
+        if args.timeout is not None and _time.monotonic() - start >= args.timeout:
+            if args.json:
+                print(json.dumps({"updates": False, "timed_out": True, "since": since}))
+            else:
+                print("timed out waiting for an update.", file=sys.stderr)
+            return 2
+        try:
+            _time.sleep(1)
+        except KeyboardInterrupt:
+            return 130
+
+
+def _cmd_watch(args) -> int:
+    import time as _time
+
+    from formist_cli import task_monitor
+
+    mode, target = resolve_mode(args)
+    if mode != "local":
+        raise TasksError("`fm task watch` is local-mode only for now")
+    author = _monitor_author(args)
+    since = _now_iso()
+    # Poll-based (no fs.watch equivalent — stdlib-only, C1138 research spec
+    # §8): reacts within ~1s, not nod's ~100ms common case. Never exits.
+    try:
+        while True:
+            lines, since = task_monitor.run_pass(target, author, since)
+            for line in lines:
+                print(line)
+            _time.sleep(1)
     except KeyboardInterrupt:
         return 0
 
@@ -972,11 +1093,13 @@ _VERBS = {
     "init": _cmd_init, "config": _cmd_config, "whoami": _cmd_whoami,
     "add": _cmd_add, "get": _cmd_get, "show": _cmd_show, "tree": _cmd_tree, "search": _cmd_search,
     "start": _cmd_start, "done": _cmd_done, "close": _cmd_close, "archive": _cmd_archive,
-    "defer": _cmd_defer, "undefer": _cmd_undefer, "retitle": _cmd_retitle, "supersede": _cmd_supersede,
+    "defer": _cmd_defer, "undefer": _cmd_undefer, "retitle": _cmd_retitle, "move": _cmd_move,
+    "supersede": _cmd_supersede,
     "assign": _cmd_assign, "flag": _cmd_flag, "after": _cmd_after, "order": _cmd_order,
     "ask": _cmd_ask, "push": _cmd_push,
     "read": _cmd_read, "queue": _cmd_queue, "note": _cmd_note, "edit": _cmd_edit,
     "progress": _cmd_progress, "steps": _cmd_steps, "step": _cmd_step, "beat": _cmd_beat,
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,
     "briefs": _cmd_briefs, "changes": _cmd_changes, "monitor": _cmd_monitor,
+    "wait": _cmd_wait, "watch": _cmd_watch,
 }

@@ -467,6 +467,80 @@ class LocalStore:
 
         return self.mutate(id_, change)
 
+    def move(self, id_: int, *, parent: str | None = None, root: bool = False) -> Node:
+        """``nod move`` — reparent a node with its whole subtree. The id
+        never changes, so every ref keeps resolving; the file and its
+        child-node folder (if any) move together, and relative attachment
+        links in the body (and approval records' targets) are rewritten to
+        match the new directory depth."""
+        if bool(parent) == bool(root):
+            raise StoreError("move needs exactly one of --parent <ref> or --root")
+
+        def change(fresh: Node):
+            old_file = fresh.file
+            old_dir = os.path.dirname(old_file)
+
+            new_parent_id: int | None
+            if root:
+                new_parent_id = None
+                target_dir = self.layout.archived_dir if fresh.archived else self.layout.active_dir
+            else:
+                parent_node = self.resolve(parent)
+                if parent_node.id == fresh.id:
+                    raise StoreError("a node cannot be its own parent")
+                if self._is_descendant(parent_node.id, fresh.id):
+                    raise StoreError(
+                        f"{format_ref(parent_node.id, parent_node.letter)} is already under "
+                        f"{format_ref(fresh.id, fresh.letter)} — that move would create a cycle"
+                    )
+                new_parent_id = parent_node.id
+                target_dir = child_dir_of(parent_node.file)
+
+            if os.path.abspath(target_dir) == os.path.abspath(old_dir) and new_parent_id == fresh.parent:
+                return None, None  # already there
+
+            os.makedirs(target_dir, exist_ok=True)
+            new_file = os.path.join(target_dir, os.path.basename(old_file))
+            old_child_dir = child_dir_of(old_file)
+            if os.path.isdir(old_child_dir):
+                os.rename(old_child_dir, child_dir_of(new_file))
+            if os.path.isfile(old_file):
+                os.remove(old_file)  # write() below creates new_file fresh
+
+            fresh.body = task_serialize.relink_body(fresh.body, old_dir, target_dir)
+            for ap in fresh.approvals:
+                ap.target = task_serialize.relink_target(ap.target, old_dir, target_dir)
+            fresh.file = new_file
+            fresh.parent = new_parent_id
+            # Re-derive, don't carry over: a reparent can cross from an
+            # active-rooted subtree into an archived one (or the reverse),
+            # and nested nodes don't rename on their own — see `write`'s
+            # "only a root node's file/folder actually moves" comment.
+            fresh.archived = self._dir_is_archived(target_dir)
+            return fresh, None
+
+        return self.mutate(id_, change)
+
+    def _dir_is_archived(self, path: str) -> bool:
+        archived = os.path.realpath(self.layout.archived_dir)
+        real = os.path.realpath(path)
+        return real == archived or real.startswith(archived + os.sep)
+
+    def _is_descendant(self, candidate_id: int, ancestor_id: int) -> bool:
+        """Whether ``candidate_id`` sits anywhere under ``ancestor_id`` in
+        the tree — the cycle check `move` needs before reparenting."""
+        nodes = {n.id: n for n in self.all_nodes()}
+        seen: set[int] = set()
+        cur = nodes.get(candidate_id)
+        while cur is not None and cur.parent is not None:
+            if cur.parent in seen:
+                break  # a pre-existing cycle elsewhere; don't loop forever
+            seen.add(cur.parent)
+            if cur.parent == ancestor_id:
+                return True
+            cur = nodes.get(cur.parent)
+        return False
+
     def supersede(self, old_id: int, new_id: int, author: str) -> tuple[Node, Node]:
         if old_id == new_id:
             raise StoreError("a node cannot supersede itself")
@@ -636,6 +710,127 @@ class LocalStore:
             return fresh, None
 
         return self.mutate(id_, change)
+
+    # -- the three "clock" sweeps (C1138 research spec §5.33 / §5) ---------
+    #
+    # Each one fires a passive event with no human action behind it: a
+    # deferral's day came, a reminder's time came, a wait's check-back day
+    # came. All three are signed author=DEFERRAL_CLOCK — literally the
+    # string "nod", not this process's own identity — because the
+    # "already fired" guard each one reads back is `author === 'nod'`
+    # (store.ts's own constant). Signing as "fm" instead would mean a real
+    # `nod monitor` on the same files never recognizes fm's firing as done
+    # and fires it again (and the reverse); byte-compatibility with `nod`
+    # requires sharing its clock-author constant, not inventing a second one.
+
+    DEFERRAL_CLOCK_AUTHOR = "nod"
+
+    def return_due_deferrals(self) -> list[Node]:
+        """``returnDueDeferrals``: a passive ``--until`` deferral whose day
+        has come lifts on its own, on any non-terminal node."""
+        from formist_cli.task_status import deferral_over
+
+        fired: list[Node] = []
+        now = time.time()
+        for n in self.all_nodes():
+            if is_terminal(n.state) or not deferral_over(n.deferred_at, n.deferred_until, now):
+                continue
+
+            def change(fresh: Node):
+                if not deferral_over(fresh.deferred_at, fresh.deferred_until, time.time()):
+                    return None, None
+                day = fresh.deferred_until
+                fresh.deferred_at = None
+                fresh.deferred_by = None
+                fresh.deferred_until = None
+                heading = task_serialize.note_heading(
+                    NOTE_KIND["undeferred"], "agent", self.DEFERRAL_CLOCK_AUTHOR, now_stamp(ms=True),
+                )
+                fresh.body = task_serialize.append_section(fresh.body, heading, f"延迟到 {day}，到期了，可以接着做了。")
+                return fresh, None
+
+            fired.append(self.mutate(n.id, change))
+        return fired
+
+    def fire_due_reminders(self) -> list[Node]:
+        """``fireDueReminders``: a ``remind_at`` that has passed. Guard:
+        the last note signed by the clock of kind 已提醒 must be OLDER than
+        the current ``remind_at`` — moving the reminder later re-fires it;
+        moving it earlier or leaving it put keeps it fired."""
+        fired: list[Node] = []
+        now = time.time()
+        for n in self.all_nodes():
+            if is_terminal(n.state) or not n.remind_at:
+                continue
+            remind_t = _parse_epoch(n.remind_at)
+            if remind_t is None or remind_t > now:
+                continue
+            last_reminded = next(
+                (note for note in reversed(n.notes)
+                 if note.author == self.DEFERRAL_CLOCK_AUTHOR and note.kind == NOTE_KIND["reminded"]),
+                None,
+            )
+            if last_reminded and (_parse_epoch(last_reminded.at) or 0) >= remind_t:
+                continue
+
+            def change(fresh: Node, remind_t=remind_t):
+                last = next(
+                    (note for note in reversed(fresh.notes)
+                     if note.author == self.DEFERRAL_CLOCK_AUTHOR and note.kind == NOTE_KIND["reminded"]),
+                    None,
+                )
+                if last and (_parse_epoch(last.at) or 0) >= remind_t:
+                    return None, None
+                heading = task_serialize.note_heading(
+                    NOTE_KIND["reminded"], "agent", self.DEFERRAL_CLOCK_AUTHOR, now_stamp(ms=True),
+                )
+                fresh.body = task_serialize.append_section(fresh.body, heading, f"到点了，告诉负责人：{fresh.title}")
+                return fresh, None
+
+            fired.append(self.mutate(n.id, change))
+        return fired
+
+    def remind_due_waits(self) -> list[Node]:
+        """``remindDueWaits``: an active wait (``nod hold``) whose check-back
+        day has come. Guard: the last clock-signed 补充 note must come
+        BEFORE the most recent 等待 note — a fresh ``hold()`` call resets
+        this by writing a new 等待 note."""
+        from formist_cli.task_status import is_wait_due
+
+        fired: list[Node] = []
+        for n in self.all_nodes():
+            if n.state != "waiting" or not is_wait_due(n):
+                continue
+            last_wait = max((i for i, note in enumerate(n.notes) if note.kind == NOTE_KIND["waiting"]), default=-1)
+            last_clock = max(
+                (i for i, note in enumerate(n.notes)
+                 if note.author == self.DEFERRAL_CLOCK_AUTHOR and note.kind == NOTE_KIND["addendum"]),
+                default=-1,
+            )
+            if last_clock > last_wait:
+                continue
+
+            def change(fresh: Node):
+                if fresh.state != "waiting" or not is_wait_due(fresh):
+                    return None, None
+                lw = max((i for i, note in enumerate(fresh.notes) if note.kind == NOTE_KIND["waiting"]), default=-1)
+                lc = max(
+                    (i for i, note in enumerate(fresh.notes)
+                     if note.author == self.DEFERRAL_CLOCK_AUTHOR and note.kind == NOTE_KIND["addendum"]),
+                    default=-1,
+                )
+                if lc > lw:
+                    return None, None
+                heading = task_serialize.note_heading(
+                    NOTE_KIND["addendum"], "agent", self.DEFERRAL_CLOCK_AUTHOR, now_stamp(ms=True),
+                )
+                fresh.body = task_serialize.append_section(
+                    fresh.body, heading, f"到了回来看的日子：问问 {fresh.waiting_on}。",
+                )
+                return fresh, None
+
+            fired.append(self.mutate(n.id, change))
+        return fired
 
     def hold(self, id_: int, on: str | None, author: str, role: str | None = None,
               until: str | None = None) -> Node:

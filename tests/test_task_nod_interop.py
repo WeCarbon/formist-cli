@@ -109,6 +109,28 @@ def test_fm_mutation_is_byte_identical_to_what_nod_would_have_written(interop_en
     assert _strip_timestamps(fm_text) == _strip_timestamps(nod_text)
 
 
+def test_move_relink_matches_nod(interop_env, capsys):
+    tmp_path, env = interop_env
+    _nod("add", "Root one", "--dir", str(tmp_path), "--task", "--json", env=env)
+    _nod("add", "Child", "--dir", str(tmp_path), "--task", "--parent", "1", "--json", env=env)
+    sample = tmp_path / "sample.txt"
+    sample.write_text("hi")
+    _nod("attach", "2", str(sample), "--dir", str(tmp_path), "--json", env=env)
+
+    _fm(capsys, "move", "X2", "--root", "--dir", str(tmp_path))
+    text = (tmp_path / "decisions" / "active" / "2-child.md").read_text()
+    assert "](../attachments/2/sample.txt)" in text
+
+
+def test_order_matches_nod(interop_env, capsys):
+    tmp_path, env = interop_env
+    _nod("add", "A", "--dir", str(tmp_path), "--task", "--json", env=env)
+    _nod("add", "B", "--dir", str(tmp_path), "--task", "--json", env=env)
+    _fm(capsys, "order", "X2", "X1", "--dir", str(tmp_path))
+    nod_json = json.loads(_nod("get", "1", "--dir", str(tmp_path), "--json", env=env))
+    assert nod_json["order"] == -1
+
+
 def test_round_trip_every_fixture_through_both_tools(interop_env):
     """Belt and suspenders: every fixture file this repo ships round-trips
     through a real `nod get --json` the same way it round-trips through

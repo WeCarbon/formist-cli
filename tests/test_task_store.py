@@ -212,6 +212,53 @@ def test_retitle_checks_width_and_records_old_title(store):
     assert "Short title" in retitled.body
 
 
+def test_move_reparents_with_subtree_and_relinks_attachments(store, tmp_path):
+    root1 = store.create("Root one", "agent · a", task=True)
+    root2 = store.create("Root two", "agent · a", task=True)
+    child = store.create("Child", "agent · a", task=True, parent=str(root1.id))
+    grandchild = store.create("Grandchild", "agent · a", task=True, parent=str(child.id))
+
+    sample = tmp_path / "sample.txt"
+    sample.write_text("hi")
+    attached = store.attach(child.id, [str(sample)], "agent · a")
+    assert attached.attachments[0].target == "../../attachments/3/sample.txt"
+
+    moved = store.move(child.id, parent=str(root2.id))
+    assert moved.parent == root2.id
+    assert "2-root-two" in moved.file
+    # Same depth (both roots are direct children of active/), so the
+    # relative attachment path is unchanged.
+    assert moved.attachments[0].target == "../../attachments/3/sample.txt"
+
+    all_nodes = {n.id: n for n in store.all_nodes()}
+    assert all_nodes[grandchild.id].parent == child.id
+    assert "2-root-two" in all_nodes[grandchild.id].file
+
+    rooted = store.move(child.id, root=True)
+    assert rooted.parent is None
+    # Shallower now: one less directory level, so the link gains a `../`.
+    assert rooted.attachments[0].target == "../attachments/3/sample.txt"
+
+
+def test_move_refuses_a_cycle(store):
+    root = store.create("Root", "agent · a", task=True)
+    child = store.create("Child", "agent · a", task=True, parent=str(root.id))
+    grandchild = store.create("Grandchild", "agent · a", task=True, parent=str(child.id))
+    with pytest.raises(task_store.StoreError):
+        store.move(root.id, parent=str(grandchild.id))
+    with pytest.raises(task_store.StoreError):
+        store.move(root.id, parent=str(root.id))
+
+
+def test_move_needs_exactly_one_target(store):
+    root = store.create("Root", "agent · a", task=True)
+    child = store.create("Child", "agent · a", task=True)
+    with pytest.raises(task_store.StoreError):
+        store.move(child.id, parent=str(root.id), root=True)
+    with pytest.raises(task_store.StoreError):
+        store.move(child.id)
+
+
 def test_supersede_links_both_sides(store):
     old = store.create("Old approach", "agent · author", task=True)
     new = store.create("New approach", "agent · author", task=True)
