@@ -36,9 +36,9 @@ def _nod(*args, cwd=None, env=None):
 
 
 def _fm(capsys, *args):
-    # Standalone, not `cli.main`: `fm task` isn't wired into the shared
-    # cli.py yet (fm-slim owns it mid-restructure) — see test_task_cli.py's
-    # module docstring.
+    # Standalone, not `cli.main`: identical dispatch (see test_task_cli.py's
+    # module docstring and test_task_through_the_real_cli_main), just
+    # without building the whole-of-`fm` parser for every interop call.
     code = tasks.main(list(args))
     out = capsys.readouterr()
     assert code == 0, f"fm task {args} failed: {out.err}"

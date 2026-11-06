@@ -65,6 +65,7 @@ from formist_cli import participants as participants_mod
 from formist_cli import projects as projects_mod
 from formist_cli import resolve as resolve_mod
 from formist_cli import spaces as spaces_mod
+from formist_cli import tasks as tasks_mod
 from formist_cli import update as update_mod
 from formist_cli import uploads as uploads_mod
 from formist_cli.airtable import AirtableError
@@ -495,6 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
     files_mod.add_parser(sub)
     projects_mod.add_parser(sub)
     connectors_mod.add_connector_parser(sub)
+    tasks_mod.add_parser(sub)
 
     # Moved to curist-server's `fmdev` (evdev renamed), C1105/C1114: these ten
     # had no non-admin meaning in `fm` at all (no caller's-own-data reading,
@@ -1550,6 +1552,7 @@ _COMMANDS = {
     "project": _deprecated_alias("project", "spaces set-logo", projects_mod.run),
     "connector": cmd_connector,
     "messages": messages_mod.run,
+    "task": tasks_mod.run,
     # Moved to curist-server's `fmdev` (C1105/C1114); one-release redirect
     # stubs, not the real commands -- see `_MOVED_TO_FMDEV`'s own comment.
     "instance": cmd_moved_to_fmdev,
@@ -1674,6 +1677,7 @@ USER_ERRORS = (
     skills.SkillGroupError,
     privileges.PrivilegeError,
     login_mod.LoginError,
+    *tasks_mod._task_user_errors(),
 )
 
 

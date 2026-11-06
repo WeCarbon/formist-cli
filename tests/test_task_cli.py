@@ -2,12 +2,14 @@
 (``tasks.main``), covering argument parsing, mode resolution, and dispatch
 — the layer ``test_task_store.py`` doesn't exercise.
 
-Deliberately NOT going through ``cli.main``: `fm task` isn't wired into
-the shared ``cli.py``/``privileges.py`` yet — lane fm-review owns those
-files while restructuring them on ``feat/fm-slim`` (coordination note,
-2026-11-06). ``tasks.main`` is the same dispatch `cli.py` will call once
-it's wired in; these tests exercise exactly that shape without touching
-the files fm-review is mid-restructure on.
+Goes through ``tasks.main`` rather than ``cli.main`` for most tests here:
+it's the exact same dispatch (``cli.main`` calls ``tasks.run`` directly
+and shares ``tasks._task_user_errors()`` in its own ``USER_ERRORS``,
+wired in once `fm task` was rebased onto ``feat/fm-slim``), just without
+building the whole-of-`fm` parser for every test. See
+``test_task_through_the_real_cli_main`` below for the one test that
+drives the real ``cli.main(["task", ...])`` path end to end, proving the
+wiring itself (not just the dispatch it reuses) actually works.
 """
 
 from __future__ import annotations
@@ -23,6 +25,41 @@ def _run(capsys, *argv):
     code = tasks.main(list(argv))
     out = capsys.readouterr()
     return code, out.out, out.err
+
+
+def test_task_through_the_real_cli_main(tmp_path, monkeypatch, capsys):
+    """`fm task` as `fm` itself invokes it: ``cli.main(["task", ...])``,
+    not the standalone ``tasks.main`` every other test in this file uses.
+    Proves the actual wiring (the ``tasks_mod.add_parser(sub)``/
+    ``"task": tasks_mod.run``/``privileges.TABLE["task"]`` entries added
+    to ``cli.py``/``privileges.py``), not just the dispatch it shares."""
+    from formist_cli import cli
+
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    code = cli.main(["task", "init", str(tmp_path)])
+    capsys.readouterr()  # drain "created <path>", not part of what the next call prints
+    assert code == 0
+    assert (tmp_path / "decisions" / "active").is_dir()
+
+    code = cli.main(["task", "add", "A plain task", "--task", "--dir", str(tmp_path), "--json"])
+    out = capsys.readouterr().out
+    assert code == 0
+    created = json.loads(out)
+    assert created["title"] == "A plain task"
+
+    code = cli.main(["task", "start", created["ref"], "--dir", str(tmp_path), "--json"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert json.loads(out)["status"] == "in_progress"
+
+    # A bad command still reaches cli.main's own USER_ERRORS loop (the
+    # thing *_task_user_errors()* is folded into), not an unhandled
+    # traceback: `fm task` is a real citizen of the shared error handling,
+    # not a parallel path that merely looks the same.
+    code = cli.main(["task", "get", "X999", "--dir", str(tmp_path)])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "does not exist" in err
 
 
 def test_init_creates_decisions_dir(tmp_path, capsys):

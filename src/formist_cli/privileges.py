@@ -323,6 +323,24 @@ TABLE: dict[str, Privilege] = {
         "`skill-library-install` folded into, one subject each; all four "
         "were already LEVEL_USER, so grouping them changes no gate",
     ),
+    "task": Privilege(
+        LEVEL_MIXED,
+        (
+            "none at all in local mode (reads/writes a decisions/ directory on disk)",
+            ("GET/POST/PATCH/PUT /projects/{space}/nodes... (cloud mode; member "
+             "reads, editor writes, same as every other project-scoped surface)"),
+            "GET /projects/{space}/nodes/events (`monitor`; SSE, member)",
+            ("POST/GET /projects/{space}/agent-sessions (`monitor`'s session "
+             "registration; member)"),
+        ),
+        "MIXED along a different axis from `fm spaces`/`fm connector`: not "
+        "which SUBCOMMAND runs, but which MODE (contract §6.3) — local mode "
+        "never opens a socket at all, cloud mode is ordinary LEVEL_USER "
+        "project membership/editor-role, decided server-side exactly like "
+        "`fm chat`/`fm export`. Never platform-admin either way, so this "
+        "entry's level is MIXED only for the audit, not for --admin gating "
+        "(requires_admin only ever looks for LEVEL_ADMIN)",
+    ),
 }
 
 

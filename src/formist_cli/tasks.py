@@ -521,13 +521,16 @@ def run(args) -> int:
 
 def _task_user_errors() -> tuple[type[BaseException], ...]:
     """Exceptions this subcommand's own CLI layer should print as operator
-    prose rather than a traceback. `cli.py`'s own ``main`` will fold these
-    into its own ``USER_ERRORS`` tuple when `fm task` is wired in there
-    (coordination note, 2026-11-06: fm-slim owns cli.py/privileges.py right
-    now — see :func:`main` below for the standalone entry point used until
-    then, and by this module's own tests). Imported lazily to avoid a
-    load-time dependency from this module onto the Store/questions/attach/
-    title modules just to build an error tuple."""
+    prose rather than a traceback. ``cli.py``'s own ``USER_ERRORS`` folds
+    these in (``*tasks_mod._task_user_errors()``, C1141's rebase onto
+    ``feat/fm-slim``) so `fm task` gets the same "print the message,
+    return 2, never a traceback" handling as every other `fm` subcommand.
+    :func:`main` below (the standalone entry point, kept for this
+    module's own tests and for any other front end) applies the same
+    tuple itself, so the behavior is identical either way it's called.
+    Imported lazily to avoid a load-time dependency from this module onto
+    the Store/questions/attach/title modules just to build an error
+    tuple."""
     from formist_cli.api import ApiError
     from formist_cli.prefs import PrefsError
     from formist_cli.targets import TargetError
@@ -550,10 +553,12 @@ def main(argv: list[str]) -> int:
     ``task`` subparser, same convention ``cli_support.build_standalone_parser``
     uses for every other module's own standalone parser).
 
-    Used by this module's own test suite today, and will be what `cli.py`
-    calls once `fm task` is wired in there for real (coordination note
-    above) — so the error handling here is deliberately the same shape as
-    `cli.main`'s: print the message, return 2, never a traceback.
+    Used by this module's own test suite, and by anything else that wants
+    `fm task` without the rest of `fm` (``cli.main`` itself dispatches
+    through :func:`run` directly instead, sharing its own ``USER_ERRORS``
+    loop — see :func:`_task_user_errors`) — so the error handling here is
+    deliberately the same shape as `cli.main`'s: print the message,
+    return 2, never a traceback.
     """
     parser = build_standalone_parser()
     args = parser.parse_args(argv)
