@@ -480,6 +480,20 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--since", required=True)
     _add_common(p)
 
+    p = verbs.add_parser(
+        "tell", help="the owner's own words, straight to the space's main agent (contract §4's `tell` row)",
+    )
+    p.add_argument("text", nargs="?", help='the owner\'s words (omit with --read/--finish/--list)')
+    p.add_argument("--attach", action="append", default=[], help="a path to copy in beside the message; repeatable")
+    p.add_argument("--under", help="the node the owner was looking at when they said this — a hint, not where to file it")
+    p.add_argument("--important", action="store_true")
+    p.add_argument("--read", metavar="ID", help="print one message; does not change its status")
+    p.add_argument("--finish", metavar="ID", help="record which refs this message became")
+    p.add_argument("--refs", help="comma-separated refs, with --finish")
+    p.add_argument("--list", action="store_true", help="unfinished messages (--all for finished ones too)")
+    p.add_argument("--all", action="store_true")
+    _add_common(p, write=True)
+
     p = verbs.add_parser("monitor", help="one line per event (for an agent's Monitor tool)")
     p.add_argument("--since")
     p.add_argument("--mine", action="store_true", help="only this agent's own nodes (name before ·)")
@@ -487,6 +501,12 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--idle-exit", type=float, default=7200,
                     help="go offline after this many seconds with no event, 0 = never (default 7200)")
     p.add_argument("--once", action="store_true", help="print one pass and exit (fm's own test/CI hook)")
+    p.add_argument(
+        "--here", action="store_true",
+        help="watch whatever this context already is (local decisions/ found upward from "
+             "cwd, else fm use's remembered cloud space), never idle out, exit quietly (code "
+             "0) if neither applies — what the Claude Code plugin's monitors.json runs",
+    )
     _add_common(p)
 
     p = verbs.add_parser("wait", help="block until there's something on the queue, then exit")
@@ -1193,6 +1213,51 @@ def _cmd_changes(args) -> int:
     return 0
 
 
+def _cmd_tell(args) -> int:
+    """`nod tell`'s shape (contract §4's `tell` row): the owner's own
+    words into the space's main agent, no ref allocated anywhere until
+    whoever reads it decides where each piece belongs. Cloud-only (see
+    `task_cloud.CloudStore.tell*`'s docstring) — `fm` has no multi-project
+    main-session registry the way `nod`'s does, so there is nowhere local
+    for this to land."""
+    _mode, target = resolve_mode(args)
+    if args.read:
+        result = target.tell_read(args.read)
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"{result.get('author', '?')}: {result.get('text', '')}")
+        return 0
+    if args.finish:
+        if not args.refs:
+            raise TasksError("--finish needs --refs <ref1,ref2,...>")
+        result = target.tell_finish(args.finish, [r.strip() for r in args.refs.split(",") if r.strip()])
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(f"recorded: {args.refs}")
+        return 0
+    if args.list:
+        items = target.tell_list(include_finished=args.all)
+        if args.json:
+            print(json.dumps(items, indent=2, ensure_ascii=False))
+            return 0
+        for item in items:
+            print(f"{item.get('id')}  {item.get('author', '?')}: {item.get('text', '')}")
+        return 0
+    if not args.text:
+        raise TasksError("`fm task tell` needs the owner's words, or --read/--finish/--list")
+    result = target.tell(
+        args.text, author=_author(args), attach=args.attach or None, under=args.under,
+        important=args.important,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"sent: {result.get('id', '?')}")
+    return 0
+
+
 def _monitor_author(args) -> str | None:
     if getattr(args, "author", None):
         return args.author
@@ -1206,12 +1271,38 @@ def _monitor_author(args) -> str | None:
     return None
 
 
+def _resolve_here(args) -> tuple[str, object] | None:
+    """``--here``'s own resolution, not :func:`resolve_mode`'s: a local
+    project found upward from the cwd wins (the most specific signal
+    "here" can mean), THEN a remembered cloud default, and ``None`` —
+    not a refusal — when neither applies. Exactly `nod`'s own
+    ``--here``: "只盯当前目录所在的项目；不在 nod 项目里就直接退出"
+    (exit quietly, the plugin's auto-started monitor must never error
+    out of a directory that simply isn't a project)."""
+    layout = task_paths.find_layout(getattr(args, "dir", None))
+    if layout:
+        return "local", task_store.LocalStore(layout)
+    remembered = _use_remembered_host_with_credential()
+    if remembered:
+        from formist_cli import task_cloud
+
+        return "cloud", task_cloud.cloud_store(args)
+    return None
+
+
 def _cmd_monitor(args) -> int:
     import time as _time
 
     from formist_cli import task_monitor
 
-    mode, target = resolve_mode(args)
+    if getattr(args, "here", False):
+        resolved = _resolve_here(args)
+        if resolved is None:
+            return 0  # quietly: not a project, not a remembered cloud space either
+        mode, target = resolved
+        args.idle_exit = 0
+    else:
+        mode, target = resolve_mode(args)
     if mode != "local":
         return _cloud_monitor(args, target)
     author = _monitor_author(args)
@@ -1338,15 +1429,13 @@ def _cloud_monitor(args, target) -> int:
     loop does; ``DECS-DONE`` (nothing of this agent's left open) remains
     the one automatic stop condition, same as local."""
     author = _monitor_author(args)
+    client_session = getattr(args, "session", None) or task_identity.current_session() or "fm-task-monitor"
     try:
-        target.register_session(
-            getattr(args, "session", None) or task_identity.current_session() or "fm-task-monitor",
-            author=author, current=None,
-        )
+        target.register_session(client_session, author=author, current=None)
     except Exception as exc:  # noqa: BLE001 - a session-registration failure must not block monitoring
         print(f"(could not register this session: {exc})", file=sys.stderr)
     try:
-        for line in target.watch_events(mine=author):
+        for line in target.watch_events(mine=author, client_session=client_session, author=author):
             print(line)
             if line.startswith("DECS-DONE") or getattr(args, "once", False):
                 return 0
@@ -1389,5 +1478,5 @@ _VERBS = {
     "progress": _cmd_progress, "steps": _cmd_steps, "step": _cmd_step, "beat": _cmd_beat,
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,
     "briefs": _cmd_briefs, "check": _cmd_check, "changes": _cmd_changes, "monitor": _cmd_monitor,
-    "wait": _cmd_wait, "watch": _cmd_watch,
+    "wait": _cmd_wait, "watch": _cmd_watch, "tell": _cmd_tell,
 }

@@ -1312,6 +1312,35 @@ class LocalStore:
         events.sort(key=lambda e: e["at"])
         return events
 
+    # -- tell: cloud-only (gap) -----------------------------------------------
+
+    def _no_tell(self) -> None:
+        """``nod tell`` delivers into `nod`'s own multi-project main-session
+        store (``$NODDIT_HOME/main``, ``core/main-session.ts``) — `fm` has
+        no such registry: it operates on one ``--dir`` at a time and has
+        no concept of "the main agent across every project". Formist's
+        own equivalent (contract §4's ``tell`` row, one main agent PER
+        SPACE) only exists in cloud mode, so local mode refuses rather
+        than inventing a local store this project was never going to
+        have (C1053/C1139)."""
+        raise StoreError(
+            "`fm task tell` is cloud-mode only: local mode has no multi-project "
+            "main-session registry for it to deliver into. Use --host/fm use."
+        )
+
+    def tell(self, text: str, *, author: str | None = None, attach=None, under: str | None = None,
+              important: bool = False) -> dict:
+        self._no_tell()
+
+    def tell_read(self, id_: str) -> dict:
+        self._no_tell()
+
+    def tell_finish(self, id_: str, refs: list[str]) -> dict:
+        self._no_tell()
+
+    def tell_list(self, include_finished: bool = False) -> list[dict]:
+        self._no_tell()
+
 
 def _owners_turn_after(node: Node, human: bool, relayed: bool) -> str:
     if not human:

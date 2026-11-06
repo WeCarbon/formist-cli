@@ -409,3 +409,91 @@ def test_monitor_through_cloud_mode_streams_sse_lines_and_registers_a_session(cl
     assert err == ""  # the session registration did not fail
     assert any(c[0] == "POST" and c[1].endswith("/agent-sessions") for c in calls)
     assert any(c[0] == "STREAM" and c[1].endswith("/nodes/events") for c in calls)
+
+
+# ===========================================================================
+# `fm task monitor --here` (C1053/C1139): what the Claude Code plugin's
+# monitors.json auto-starts — porting `nod monitor --here`'s own contract:
+# local project here wins, else a remembered cloud default, else quit
+# quietly (never an error for "this just isn't a project").
+# ===========================================================================
+def test_monitor_here_exits_quietly_with_no_project_and_no_remembered_cloud(tmp_path, monkeypatch, capsys):
+    from formist_cli import prefs
+
+    monkeypatch.setattr(prefs, "load", lambda: prefs.Prefs(space=None, env=None, space_region=None, set_at=None))
+    code, out, err = _run(capsys, "monitor", "--here", "--dir", str(tmp_path))
+    assert code == 0
+    assert out == "" and err == ""
+
+
+def test_monitor_here_picks_the_local_project_and_reports_a_note_added_after(tmp_path, monkeypatch, capsys):
+    """``--here`` must resolve to THIS local project (not quietly skip it,
+    not reach for a cloud fallback): a note added after the monitor's own
+    fresh cursor is caught on the next pass, same as a plain `fm task
+    monitor` would — proving it is really watching, not just exiting 0
+    for an unrelated reason."""
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    created = _run(capsys, "add", "A plain task", "--task", "--dir", str(tmp_path), "--json")
+    ref = json.loads(created[1])["ref"]
+    # First pass establishes this author's cursor at "now" (nothing to
+    # report about work added before the monitor ever ran — expected, see
+    # task_monitor's own "since" semantics, not a bug).
+    code, _out, _err = _run(capsys, "monitor", "--here", "--once", "--dir", str(tmp_path))
+    assert code == 0
+
+    _run(capsys, "note", ref, "a human update", "--human", "--dir", str(tmp_path))
+    code, out, _err = _run(capsys, "monitor", "--here", "--once", "--dir", str(tmp_path))
+    assert code == 0
+    assert ref in out
+
+
+def test_monitor_here_falls_back_to_a_remembered_cloud_space(tmp_path, cloud, monkeypatch, capsys):
+    """No local decisions/ here, but `fm use` remembers a cloud space with
+    a credential — contract §6.3's own fallback order, reused for
+    ``--here``."""
+    from formist_cli import prefs, tokens
+
+    # `_use_remembered_host_with_credential` (the --here detection, same
+    # function `resolve_mode` uses) reads prefs/tokens directly, a layer
+    # below where the `cloud` fixture patches context.resolve — both need
+    # a remembered space + credential here, or this falls through to
+    # "nothing here", the thing being tested against.
+    monkeypatch.setattr(
+        prefs, "load", lambda: prefs.Prefs(space=SPACE, env="formist", space_region=None, set_at=None),
+    )
+    monkeypatch.setattr(tokens, "load_for", lambda env: ("t", None))
+
+    calls, _responses, stream_lines = cloud
+    stream_lines.append("event: line\ndata: DECS-DONE nothing of yours is open\n\n")
+    code, out, _err = _run(capsys, "monitor", "--here", "--dir", str(tmp_path))
+    assert code == 0
+    assert "DECS-DONE nothing of yours is open" in out
+    assert any(c[0] == "STREAM" for c in calls)
+
+
+# ===========================================================================
+# `fm task tell` (C1053/C1139): cloud-only, and not landed server-side yet
+# either way — both refusals must name why, not just say no.
+# ===========================================================================
+def test_tell_in_local_mode_refuses_with_the_no_registry_reason(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    code, _out, err = _run(capsys, "tell", "please check the budget", "--dir", str(tmp_path))
+    assert code == 2
+    assert "no multi-project main-session registry" in err
+
+
+def test_tell_in_cloud_mode_refuses_naming_the_missing_route(cloud, capsys):
+    code, _out, err = _run(capsys, "tell", "please check the budget",
+                            "--author", "owner", "--host", "formist", "--space", SPACE)
+    assert code == 2
+    assert "POST /tell" in err
+
+
+def test_tell_needs_text_or_a_subcommand_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    code, _out, err = _run(capsys, "tell", "--dir", str(tmp_path))
+    assert code == 2
+    assert "needs the owner's words" in err

@@ -440,6 +440,38 @@ def test_watch_events_yields_monitor_lines_from_sse(store):
     assert api_stub.calls[0][2] == {"mine": "agent · x"}
 
 
+def test_watch_events_reheartbeats_the_session_periodically(store, monkeypatch):
+    """A long-lived monitor only registering once at start would have its
+    agent_session row read as gone after SESSION_LIVE_SECONDS (180s) even
+    while still actively listening (found while wiring the C1053/C1139
+    plugin's auto-start monitor) — it must re-POST /agent-sessions on its
+    own, not rely on the caller to notice."""
+    cs, api_stub = store
+    monkeypatch.setattr(task_cloud.CloudStore, "SESSION_HEARTBEAT_EVERY", 0)
+    api_stub._responses = [[
+        "event: line\ndata: DECS-UPDATED X5: x\n\n",
+        "event: heartbeat\ndata: \n\n",
+        "event: line\ndata: DECS-DONE nothing of yours is open\n\n",
+    ]]
+    lines = list(cs.watch_events(mine="agent · x", client_session="sess-1", author="agent · x"))
+    assert lines == ["DECS-UPDATED X5: x", "DECS-DONE nothing of yours is open"]
+    reheartbeats = [c for c in api_stub.calls if c[0] == "POST" and c[1].endswith("/agent-sessions")]
+    # 3 SSE frames, threshold always due (0) -> one re-heartbeat check per frame.
+    assert len(reheartbeats) >= 1
+    assert all(c[2]["client_session"] == "sess-1" for c in reheartbeats)
+
+
+def test_watch_events_without_a_client_session_never_reheartbeats(store, monkeypatch):
+    """No ``client_session`` (the plain unit test above it, and anyone
+    calling ``watch_events`` without opting in) means no re-registration
+    at all — the original behavior, unchanged."""
+    cs, api_stub = store
+    monkeypatch.setattr(task_cloud.CloudStore, "SESSION_HEARTBEAT_EVERY", 0)
+    api_stub._responses = [["event: line\ndata: DECS-DONE nothing of yours is open\n\n"]]
+    list(cs.watch_events(mine="agent · x"))
+    assert not any(c[0] == "POST" and c[1].endswith("/agent-sessions") for c in api_stub.calls)
+
+
 # ===========================================================================
 # cloud_store(): the context.resolve wiring, and why for_write=False
 # ===========================================================================

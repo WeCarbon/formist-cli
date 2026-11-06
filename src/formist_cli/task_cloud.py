@@ -417,6 +417,26 @@ class CloudStore:
     def changes(self, since):
         raise CloudNotAvailable("changes")
 
+    # -- tell: not landed yet (contract §4 names the shape, not the route) ---
+    _TELL_REASON = (
+        "contract §4 names the shape (POST /tell, GET /tell?unread=, "
+        "POST /tell/{id}/finish) but no route exists yet — this is the "
+        "C1053/C1139 ask for C1130's server side"
+    )
+
+    def tell(self, text: str, *, author: str | None = None, attach=None, under: str | None = None,
+              important: bool = False) -> dict:
+        raise CloudNotAvailable("tell", reason=self._TELL_REASON)
+
+    def tell_read(self, id_: str) -> dict:
+        raise CloudNotAvailable("tell --read", reason=self._TELL_REASON)
+
+    def tell_finish(self, id_: str, refs: list[str]) -> dict:
+        raise CloudNotAvailable("tell --finish", reason=self._TELL_REASON)
+
+    def tell_list(self, include_finished: bool = False) -> list[dict]:
+        raise CloudNotAvailable("tell --list", reason=self._TELL_REASON)
+
     # -- live agent sessions (contract §7) ------------------------------------
     def register_session(self, client_session: str, *, client: str = "claude-code", label: str | None = None,
                           author: str | None = None, cwd_hash: str | None = None, current: str | None = None,
@@ -438,18 +458,43 @@ class CloudStore:
     #: well inside a human's patience.
     EVENTS_READ_TIMEOUT = 60.0
 
-    def watch_events(self, mine: str | None = None):
+    #: Half of the server's SESSION_LIVE_SECONDS (180s) — a comfortable
+    #: margin so one slow re-POST never lets the row read as gone. The
+    #: 15s SSE heartbeat keeps this loop ticking often enough to check.
+    SESSION_HEARTBEAT_EVERY = 90.0
+
+    def watch_events(self, mine: str | None = None, *, client_session: str | None = None,
+                      author: str | None = None):
         """``GET /nodes/events`` (SSE): yields one noddit monitor line per
         event, exactly as the server rendered it — ``fm task monitor``
         prints these verbatim, the same contract local mode's own
         ``task_monitor.run_pass`` output follows (contract §6.2: same
-        names, same shape)."""
+        names, same shape).
+
+        Also re-heartbeats the agent session (``register_session``) every
+        :data:`SESSION_HEARTBEAT_EVERY`, checked on every SSE frame
+        including the server's own ~15s heartbeat ping — a long-lived
+        monitor that only registered once at start would have its
+        ``agent_session`` row read as gone after
+        ``SESSION_LIVE_SECONDS`` (180s) even while still actively
+        listening, since the SSE connection itself is a different thing
+        from that row's ``last_seen_at``. Best-effort: a re-heartbeat
+        failure is swallowed, never breaks the stream it is riding on."""
+        import time as _time
+
         params = {"mine": mine} if mine else None
+        last_heartbeat = _time.monotonic()
         with api.stream(
             self.ctx.target, self._base() + "/events", token=self.ctx.token, params=params,
             read_timeout=self.EVENTS_READ_TIMEOUT,
         ) as lines:
             for event in parse_sse(lines):
+                if client_session and _time.monotonic() - last_heartbeat >= self.SESSION_HEARTBEAT_EVERY:
+                    last_heartbeat = _time.monotonic()
+                    try:
+                        self.register_session(client_session, author=author)
+                    except Exception:  # noqa: BLE001 - a heartbeat miss must not drop the stream
+                        pass
                 if event["event"] != "line":
                     continue
                 data = event["data"]
