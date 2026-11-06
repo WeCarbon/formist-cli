@@ -223,3 +223,152 @@ def test_resolve_mode_ignores_a_stray_token_without_fm_use(tmp_path, monkeypatch
     args = argparse.Namespace(local=False, host=None, dir=str(tmp_path))
     mode, target = tasks.resolve_mode(args)
     assert mode == "local"
+
+
+# ===========================================================================
+# cloud mode through the CLI (C1141): `resolve_mode` really does hand the
+# `_cmd_*` handlers a `CloudStore`, and the handlers really do drive it —
+# the end-to-end half of what test_task_cloud.py checks at the unit level.
+# ===========================================================================
+SPACE = "22222222-2222-2222-2222-222222222222"
+
+
+@pytest.fixture
+def cloud(monkeypatch):
+    """Every `fm task <verb> --host test --space <uuid>` call in a test
+    resolves to a fixed cloud context and a recording fake `api`, the
+    same convention ``test_task_cloud.py``'s own ``store`` fixture uses —
+    bypassing real prefs/token files entirely, the way ``test_spaces.py``'s
+    ``driven`` fixture does for the same reason (hermetic, no real-disk
+    read)."""
+    import contextlib
+
+    from formist_cli import context, task_cloud
+    from formist_cli.targets import resolve as resolve_target
+
+    calls: list[tuple] = []
+    responses: list = []
+    stream_lines: list = []
+
+    def _next():
+        return responses.pop(0) if responses else _node_json()
+
+    class _Api:
+        def get(self, target, path, *, token, params=None, **_kw):
+            calls.append(("GET", path, params))
+            return _next()
+
+        def post(self, target, path, body, *, token, **_kw):
+            calls.append(("POST", path, body))
+            return _next()
+
+        def patch(self, target, path, body, *, token, **_kw):
+            calls.append(("PATCH", path, body))
+            return _next()
+
+        def put(self, target, path, body, *, token, **_kw):
+            calls.append(("PUT", path, body))
+            return _next()
+
+        @contextlib.contextmanager
+        def stream(self, target, path, *, token, params=None, read_timeout):
+            calls.append(("STREAM", path, params))
+            lines = [line for frame in stream_lines for line in frame.split("\n")]
+            yield iter(lines)
+
+    monkeypatch.setattr(task_cloud, "api", _Api())
+    monkeypatch.setattr(
+        context, "resolve",
+        lambda args, **kw: context.Context(target=resolve_target("formist"), space=SPACE, token="t", space_source="test"),
+    )
+    return calls, responses, stream_lines
+
+
+def _node_json(**over):
+    base = {
+        "id": 5, "task_id": "t-5", "ref": "X5", "project": "space", "project_name": "space",
+        "title": "A node", "author": "agent · x", "status": "not_started", "status_key": "todo",
+        "status_label": "To do", "close_reason": None, "waiting_on": None, "waiting_until": None,
+        "deferred_at": None, "deferred_by": None, "deferred_until": None, "assignee": None,
+        "assignees": [], "human_task": False, "created": "2026-11-06T10:00:00+08:00",
+        "updated_at": "2026-11-06T10:00:00+08:00", "after": [], "progress": None,
+        "progress_msg": None, "est": None, "est_minutes": None, "est_who": None, "every": None,
+        "when": None, "stale_after": None, "checkin": None, "steps": None, "owner_agent": None,
+        "intake": False, "brief": None, "claimed_by": None, "claimed_at": None, "original": None,
+        "parent": None, "parent_ref": None, "children": [], "default": None, "order": None,
+        "kind": "task", "urgency": "normal", "due": None, "remind_at": None, "milestone": False,
+        "important": False, "at_risk": False, "if_no_answer": None, "reversible": None,
+        "session": None, "claimed_session_id": None, "supersedes": [], "superseded_by": None,
+        "options": [], "answer": None, "questions": [], "answers": None, "answer_notes": None,
+        "partial_answer": None, "previous_rounds": [], "notes": [], "queued": False,
+        "archived_at": None, "reopened_at": None, "reopened_after_archive": False, "tags": [],
+        "attachments": [], "body_attachments": [], "approvals": [], "run": None, "body": "",
+        "archived": False, "extra": {},
+    }
+    base.update(over)
+    return base
+
+
+def test_add_through_cli_reaches_cloud_mode(cloud, capsys):
+    calls, _responses, _stream_lines = cloud
+    code, out, _err = _run(
+        capsys, "add", "Ship it", "--task", "--author", "agent · x",
+        "--host", "formist", "--space", SPACE, "--json",
+    )
+    assert code == 0
+    assert json.loads(out)["ref"] == "X5"
+    assert calls[0][0] == "POST" and calls[0][1].endswith(f"/projects/{SPACE}/nodes")
+    assert calls[0][2]["kind"] == "task"
+
+
+def test_start_through_cli_resolves_then_posts_the_verb(cloud, capsys):
+    calls, responses, _stream_lines = cloud
+    responses.extend([_node_json(id=5, ref="X5"), _node_json(id=5, ref="X5", status="in_progress")])
+    code, out, _err = _run(
+        capsys, "start", "X5", "--host", "formist", "--space", SPACE, "--json",
+    )
+    assert code == 0
+    assert json.loads(out)["status"] == "in_progress"
+    assert calls[0] == ("GET", f"/projects/{SPACE}/nodes/X5", None)
+    assert calls[1][1].endswith("/5/start")  # the resolved numeric id, not the ref string
+
+
+def test_defer_through_cli_without_owner_said_refuses_before_the_write(cloud, capsys):
+    """The agent-consent rule (``task_cloud.CloudStore.defer``) must stop a
+    cloud-mode defer the same way it stops a local one: the ref still
+    resolves (a GET), but the write (POST .../defer) never goes out."""
+    calls, responses, _stream_lines = cloud
+    responses.append(_node_json(id=5, ref="X5"))
+    code, _out, err = _run(
+        capsys, "defer", "X5", "--until", "2026-12-01", "--author", "agent · x",
+        "--host", "formist", "--space", SPACE,
+    )
+    assert code == 2
+    assert "owner's word" in err
+    assert not any(c[0] == "POST" for c in calls)
+
+
+def test_show_through_cloud_mode_refuses_with_the_vocabulary_reason(cloud, capsys):
+    code, _out, err = _run(capsys, "show", "--host", "formist", "--space", SPACE)
+    assert code == 2
+    assert "vocabulary" in err
+
+
+def test_monitor_through_cloud_mode_streams_sse_lines_and_registers_a_session(cloud, capsys):
+    """``fm task monitor`` (cloud): registers a live session first (POST
+    /agent-sessions), then prints the server's own monitor lines verbatim
+    off the SSE stream, stopping on DECS-DONE — the two pieces C1141's
+    brief named explicitly."""
+    calls, _responses, stream_lines = cloud
+    stream_lines.extend([
+        "event: line\ndata: DECS-UPDATED X5: something changed\n\n",
+        "event: line\ndata: DECS-DONE nothing of yours is open\n\n",
+    ])
+    code, out, err = _run(capsys, "monitor", "--mine", "--author", "agent · x",
+                           "--host", "formist", "--space", SPACE)
+    assert code == 0
+    assert "DECS-UPDATED X5: something changed" in out
+    assert "DECS-DONE nothing of yours is open" in out
+    assert err == ""  # the session registration did not fail
+    assert any(c[0] == "POST" and c[1].endswith("/agent-sessions") for c in calls)
+    assert any(c[0] == "STREAM" and c[1].endswith("/nodes/events") for c in calls)

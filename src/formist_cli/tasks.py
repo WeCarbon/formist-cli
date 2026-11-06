@@ -5,12 +5,11 @@ command's output (or as ``"mode"`` in ``--json``):
 
 - ``--local`` forces local mode.
 - ``--host <name>`` (or a stored credential for the default host) asks for
-  remote mode — **not wired to a live server yet**: the server side
-  (C1048, ``feat/noddit-tasks``) hasn't landed the ``/projects/{id}/nodes``
-  router this would call. ``task_cloud`` implements the client against
-  the contract so it is ready the day that router exists; today it
-  raises a clear "not available yet" error rather than guessing at a
-  shape.
+  remote mode, wired to the server's ``/projects/{id}/nodes`` router
+  (C1092/C1093, ``feat/noddit-tasks``) — see ``task_cloud.py``'s module
+  docstring for exactly which verbs that covers and which still raise
+  "not available" (no server route yet: ``show``, ``search``, ``attach``,
+  ``changes``, ``flag``, ``order``, ``check``, ``config``, ...).
 - Otherwise, local mode when a ``decisions/`` folder is found upward from
   the cwd (the same lookup `nod` does, including the git-worktree
   main-checkout hop).
@@ -70,7 +69,7 @@ def resolve_mode(args) -> tuple[str, object]:
     if host or remembered:
         from formist_cli import task_cloud
 
-        return "cloud", task_cloud.CloudTarget(host=host or remembered)
+        return "cloud", task_cloud.cloud_store(args)
     layout = task_paths.find_layout(getattr(args, "dir", None))
     if layout:
         return "local", task_store.LocalStore(layout)
@@ -195,9 +194,10 @@ def _print_node(node, as_json: bool, lang: str = "en") -> None:
 
 
 def _add_common(p: argparse.ArgumentParser, *, write: bool = False) -> None:
-    from formist_cli.cli import _add_env  # lazy: avoids a cli<->tasks import cycle
+    from formist_cli.cli import _add_env, _add_space  # lazy: avoids a cli<->tasks import cycle
 
     _add_env(p, for_write=write)
+    _add_space(p)
     p.add_argument("--local", action="store_true", help="force local mode (a decisions/ directory)")
     p.add_argument("--dir", help="project root to look for decisions/ in (default: cwd, walking up)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
@@ -528,12 +528,20 @@ def _task_user_errors() -> tuple[type[BaseException], ...]:
     then, and by this module's own tests). Imported lazily to avoid a
     load-time dependency from this module onto the Store/questions/attach/
     title modules just to build an error tuple."""
+    from formist_cli.api import ApiError
+    from formist_cli.prefs import PrefsError
+    from formist_cli.targets import TargetError
     from formist_cli.task_attach import AttachError
+    from formist_cli.task_cloud import CloudError
     from formist_cli.task_questions import QuestionsError
     from formist_cli.task_store import StoreError
     from formist_cli.task_title import TitleTooLong
+    from formist_cli.tokens import TokenError
 
-    return (TasksError, StoreError, QuestionsError, AttachError, TitleTooLong)
+    return (
+        TasksError, StoreError, QuestionsError, AttachError, TitleTooLong,
+        CloudError, ApiError, PrefsError, TargetError, TokenError,
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -621,11 +629,7 @@ def _parse_options(raw: list[str]):
 def _cmd_add(args) -> int:
     from formist_cli.task_assignee import assignee_arg
 
-    mode, target = resolve_mode(args)
-    if mode != "local":
-        from formist_cli import task_cloud
-
-        return task_cloud.add(target, args)
+    _mode, target = resolve_mode(args)
     author = _author(args)
     options = _parse_options(args.option)
     assignee = assignee_arg(args.for_) if args.for_ else None
@@ -773,23 +777,27 @@ def _cmd_search(args) -> int:
 
 
 def _resolve_local(target, ref):
-    """Resolve ``ref`` and, in the same breath, enforce that this verb only
-    runs in local mode — most verbs below don't yet have a cloud-mode
-    implementation to branch into (C1048 hasn't landed), so this is the one
-    place that refusal needs stating rather than 18 copies of it."""
-    if not isinstance(target, task_store.LocalStore):
-        raise TasksError(
-            "this `fm task` verb is local-mode only until the server's node "
-            "router exists (C1048) — pass --local, or run it from a decisions/ "
-            "directory with no `fm use` default set."
-        )
+    """Resolve ``ref`` against either mode. Despite the name (kept so the
+    ~20 call sites below didn't all need touching when cloud mode landed,
+    C1141), this no longer refuses cloud mode itself — ``target.resolve``
+    works against a ``CloudStore`` too (``GET /nodes/{ref}``). A verb this
+    CLOUD store doesn't implement yet still fails, just later and with a
+    clearer, verb-specific message (``task_cloud.CloudNotAvailable``) than
+    a blanket refusal here would give."""
+    from formist_cli import task_cloud
+
+    if not isinstance(target, (task_store.LocalStore, task_cloud.CloudStore)):
+        raise TasksError("unexpected `fm task` target — this is an internal error, not a usage mistake")
     return target.resolve(ref)
 
 
 def _cmd_start(args) -> int:
-    mode, target = resolve_mode(args)
+    _mode, target = resolve_mode(args)
     node = _resolve_local(target, args.ref)
-    result = target.start(node.id, force=args.force) if mode == "local" else _cloud(args, target, "start")
+    # `force` is a local-mode-only override (CloudStore.start ignores an
+    # extra kwarg it was never given — the server route takes none), same
+    # as every other lifecycle verb below that doesn't branch on mode.
+    result = target.start(node.id, force=args.force) if isinstance(target, task_store.LocalStore) else target.start(node.id)
     _print_node(result, args.json)
     return 0
 
@@ -991,7 +999,21 @@ def _cmd_read(args) -> int:
 def _cmd_queue(args) -> int:
     mode, target = resolve_mode(args)
     if mode != "local":
-        raise TasksError("`fm task queue` is local-mode only for now")
+        # Deliberately a different --json shape from local mode below (full
+        # nodes, not bare ids): the server's GET /nodes/queue hands back
+        # whole NodeOut rows, and re-fetching each by id just to match
+        # local's shape would be a wasted round trip per id for no benefit.
+        nodes = target.queue_refs()
+        if args.json:
+            from formist_cli import task_json
+
+            print(json.dumps([task_json.to_json(n) for n in nodes], indent=2, ensure_ascii=False, default=str))
+            return 0
+        from formist_cli.task_ref import format_ref
+
+        for n in nodes:
+            print(f"{format_ref(n.id, n.letter)}  {n.title}")
+        return 0
     from formist_cli.task_queue import read_queue
 
     ids = read_queue(target.layout)
@@ -1108,9 +1130,7 @@ def _cmd_expand(args) -> int:
 
 
 def _cmd_briefs(args) -> int:
-    mode, target = resolve_mode(args)
-    if mode != "local":
-        raise TasksError("`fm task briefs` is local-mode only for now")
+    _mode, target = resolve_mode(args)
     nodes = target.briefs(include_claimed=args.all)
     if args.json:
         from formist_cli import task_json
@@ -1188,7 +1208,7 @@ def _cmd_monitor(args) -> int:
 
     mode, target = resolve_mode(args)
     if mode != "local":
-        raise TasksError("`fm task monitor` is local-mode only for now")
+        return _cloud_monitor(args, target)
     author = _monitor_author(args)
     explicit_since = bool(args.since)
     since = args.since or task_monitor.load_cursor(target.layout, author) or _now_iso()
@@ -1222,7 +1242,7 @@ def _cmd_wait(args) -> int:
 
     mode, target = resolve_mode(args)
     if mode != "local":
-        raise TasksError("`fm task wait` is local-mode only for now")
+        raise TasksError("`fm task wait` is local-mode only for now; cloud mode has `fm task monitor` instead")
     author = _monitor_author(args)
     want_ids = {target.resolve(r).id for r in args.refs} if args.refs else None
     start = _time.monotonic()
@@ -1273,7 +1293,7 @@ def _cmd_watch(args) -> int:
 
     mode, target = resolve_mode(args)
     if mode != "local":
-        raise TasksError("`fm task watch` is local-mode only for now")
+        raise TasksError("`fm task watch` is local-mode only for now; cloud mode has `fm task monitor` instead")
     author = _monitor_author(args)
     since = _now_iso()
     # Poll-based (no fs.watch equivalent — stdlib-only, C1138 research spec
@@ -1294,7 +1314,58 @@ def _now_iso() -> str:
     return now_stamp(ms=True)
 
 
+def _cloud_monitor(args, target) -> int:
+    """``fm task monitor`` (cloud): the server's push SSE stream
+    (``GET /nodes/events``, contract §5/§93) rather than a poll loop —
+    the same monitor lines local mode's own ``task_monitor`` prints,
+    rendered server-side, so this function does no line-formatting of
+    its own.
+
+    Registers a live agent session first (``POST /agent-sessions``,
+    contract §7) so the space's member list of active sessions shows
+    this one — best-effort: a registration failure is reported but does
+    not stop the monitor, same as the server's own dispatcher-emit
+    failures never block the write they are reporting on.
+
+    ``--idle-exit`` is not ported for cloud mode (gap): the server's own
+    SSE heartbeat (every 15s) keeps the connection itself from reading as
+    idle, so there is no silence to measure the way local mode's poll
+    loop does; ``DECS-DONE`` (nothing of this agent's left open) remains
+    the one automatic stop condition, same as local."""
+    author = _monitor_author(args)
+    try:
+        target.register_session(
+            getattr(args, "session", None) or task_identity.current_session() or "fm-task-monitor",
+            author=author, current=None,
+        )
+    except Exception as exc:  # noqa: BLE001 - a session-registration failure must not block monitoring
+        print(f"(could not register this session: {exc})", file=sys.stderr)
+    try:
+        for line in target.watch_events(mine=author):
+            print(line)
+            if line.startswith("DECS-DONE") or getattr(args, "once", False):
+                return 0
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
 def _cloud(args, target, verb):
+    """The dispatch for the four verbs (``get``/``show``/``tree``/
+    ``search``) that branch on ``mode == "local"`` at the call site
+    instead of going through :func:`_resolve_local` — ``get`` needs no
+    ref-then-verb split (it IS the resolve), and ``show``/``tree``/
+    ``search`` take their own argument shapes. ``target`` is always a
+    ``task_cloud.CloudStore`` here (the ``mode == "local"`` branch never
+    reaches this function)."""
+    if verb == "get":
+        return target.resolve(args.ref)
+    if verb == "show":
+        return target.show(args.scope, args.stale)
+    if verb == "tree":
+        return target.tree(args.ref, include_archived=args.all)
+    if verb == "search":
+        return target.search(args.words, include_archived=args.all)
     from formist_cli import task_cloud
 
     raise task_cloud.CloudNotAvailable(verb)

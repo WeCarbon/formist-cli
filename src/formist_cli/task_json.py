@@ -104,6 +104,17 @@ def _delay_json(node: Node) -> dict | None:
 
 
 def to_json(d: Node, lang: str = "en") -> dict:
+    """``fm task <verb> --json``'s wire shape. A cloud-mode result (see
+    ``task_cloud.CloudNode``) carries this exact shape already — the
+    server's ``NodeOut`` is documented as "noddit `--json` plus task_id/
+    status_key/assignees" (routes/task_nodes.py) — so it short-circuits
+    here rather than being re-derived through a local ``Node``'s fields,
+    which it is not one of. ``lang`` has no effect on a cloud result:
+    the server renders ``status_label`` itself, in whatever locale it
+    runs in (a known, cosmetic gap, not re-requested over the wire)."""
+    raw = getattr(d, "_raw_json", None)
+    if raw is not None:
+        return raw
     return {
         "id": d.id,
         "ref": format_ref(d.id, d.letter),
