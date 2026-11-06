@@ -261,8 +261,37 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     _add_common(p)
 
     p = verbs.add_parser("show", help="list nodes, one line each")
-    p.add_argument("view", nargs="?", default="available")
+    p.add_argument("scope", nargs="?", default="open",
+                    help="open (default) | answered | active | archived | all | fyi | "
+                         "deferred | flagged | due | remind | <status>")
+    p.add_argument("--stale", action="store_true", help="only in-progress nodes past their own stale_after")
     _add_common(p)
+
+    p = verbs.add_parser("views", help="the bench's tabs and their definitions")
+    _add_common(p)
+
+    p = verbs.add_parser("view", help="make your own tabs, change or remove one, restore the built-ins")
+    view_sub = p.add_subparsers(dest="view_verb", required=True)
+    vp = view_sub.add_parser("add", help="a new tab")
+    vp.add_argument("id")
+    vp.add_argument("--name")
+    vp.add_argument("--icon")
+    vp.add_argument("--filter")
+    vp.add_argument("--layout", choices=["tree", "list"], default="list")
+    vp.add_argument("--group", choices=["project", "state", "assignee", "none"])
+    vp.add_argument("--sort")
+    vp.add_argument("--finished", choices=["hide", "show", "fold"])
+    vp.add_argument("--deferred", choices=["hide", "show", "fold"])
+    _add_common(vp)
+    vp = view_sub.add_parser("rm", help="remove tabs (the last one stays)")
+    vp.add_argument("ids", nargs="+")
+    _add_common(vp)
+    vp = view_sub.add_parser("reset", help="back to the built-ins: every tab, or just that built-in")
+    vp.add_argument("id", nargs="?")
+    _add_common(vp)
+    vp = view_sub.add_parser("show", help="one view's definition")
+    vp.add_argument("id")
+    _add_common(vp)
 
     p = verbs.add_parser("tree", help="the node tree")
     p.add_argument("ref", nargs="?")
@@ -620,7 +649,7 @@ def _cmd_get(args) -> int:
 
 def _cmd_show(args) -> int:
     mode, target = resolve_mode(args)
-    nodes = target.show(args.view) if mode == "local" else _cloud(args, target, "show")
+    nodes = target.show(args.scope, args.stale) if mode == "local" else _cloud(args, target, "show")
     if args.json:
         from formist_cli import task_json
 
@@ -631,6 +660,79 @@ def _cmd_show(args) -> int:
     for n in nodes:
         print(f"{format_ref(n.id, n.letter)}  {n.state:<14} {n.title}")
     return 0
+
+
+def _view_to_json(v) -> dict:
+    from formist_cli import task_filter
+
+    return {
+        "id": v.id, "layout": v.layout, "name": v.name, "icon": v.icon,
+        "filter": None if v.filter is None else task_filter.filter_text(v.filter),
+        "group": v.group, "sort": v.sort, "finished": v.finished, "deferred": v.deferred,
+        "window": v.window, "count": v.count,
+    }
+
+
+def _cmd_views(args) -> int:
+    from formist_cli import task_views
+
+    mode, _target = resolve_mode(args)
+    if mode != "local":
+        raise TasksError("`fm task views` is local-mode only for now")
+    views = task_views.load_views()
+    if args.json:
+        print(json.dumps({"file": task_views.views_path(), "views": [_view_to_json(v) for v in views]},
+                          indent=2, ensure_ascii=False))
+        return 0
+    for v in views:
+        name = v.name if isinstance(v.name, str) else v.id
+        print(f"{v.id:<12} {name}")
+    return 0
+
+
+def _cmd_view(args) -> int:
+    from formist_cli import task_filter, task_views
+
+    mode, _target = resolve_mode(args)
+    if mode != "local":
+        raise TasksError("`fm task view` is local-mode only for now")
+
+    if args.view_verb == "add":
+        view = task_views.ViewDef(
+            id=args.id, layout=args.layout,
+            name=args.name, icon=args.icon,
+            filter=task_filter.parse_filter(args.filter) if args.filter else None,
+            group=args.group, sort=args.sort.split(",") if args.sort else ["bench"],
+            finished=args.finished or "hide", deferred=args.deferred or "hide",
+        )
+        views = [v for v in task_views.load_views() if v.id != view.id] + [view]
+        task_views.save_views(views)
+        print(f"added view {view.id}")
+        return 0
+    if args.view_verb == "rm":
+        views = task_views.load_views()
+        remaining = [v for v in views if v.id not in args.ids]
+        if not remaining:
+            raise TasksError("can't remove the last view")
+        task_views.save_views(remaining)
+        print(f"removed: {' '.join(args.ids)}")
+        return 0
+    if args.view_verb == "reset":
+        views = task_views.reset_views(args.id)
+        print(f"reset: {args.id or 'all views'}")
+        if args.json:
+            print(json.dumps([_view_to_json(v) for v in views], indent=2, ensure_ascii=False))
+        return 0
+    if args.view_verb == "show":
+        v = task_views.find_view(args.id)
+        if not v:
+            raise TasksError(f"no such view: {args.id}")
+        if args.json:
+            print(json.dumps(_view_to_json(v), indent=2, ensure_ascii=False))
+        else:
+            print(f"{v.id}  layout={v.layout}  filter={task_filter.filter_text(v.filter) or '(none)'}")
+        return 0
+    raise TasksError(f"unknown `fm task view` subcommand: {args.view_verb}")
 
 
 def _cmd_tree(args) -> int:
@@ -1166,7 +1268,8 @@ def _cloud(args, target, verb):
 
 _VERBS = {
     "init": _cmd_init, "config": _cmd_config, "whoami": _cmd_whoami,
-    "add": _cmd_add, "get": _cmd_get, "show": _cmd_show, "tree": _cmd_tree, "search": _cmd_search,
+    "add": _cmd_add, "get": _cmd_get, "show": _cmd_show, "views": _cmd_views, "view": _cmd_view,
+    "tree": _cmd_tree, "search": _cmd_search,
     "start": _cmd_start, "done": _cmd_done, "close": _cmd_close, "archive": _cmd_archive,
     "defer": _cmd_defer, "undefer": _cmd_undefer, "retitle": _cmd_retitle, "move": _cmd_move,
     "supersede": _cmd_supersede,

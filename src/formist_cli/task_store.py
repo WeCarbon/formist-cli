@@ -340,6 +340,7 @@ class LocalStore:
 
             node = Node(
                 id=id_, title=title, author=author, state=state,
+                kind="fyi" if fyi else "task",
                 created=created, updated_at=created,
                 default=default, tags=tags or [], urgency=urgency, due=due,
                 after=after or [], est=est, assignee=assignee, milestone=milestone,
@@ -1268,10 +1269,11 @@ class LocalStore:
         root = self.resolve(root_ref)
         return [n for n in nodes if n.id == root.id]
 
-    def show(self, view: str = "available") -> list[Node]:
+    def show(self, scope: str = "open", stale: bool = False) -> list[Node]:
+        """``nod show [scope] [--stale]``."""
         from formist_cli import task_views
 
-        return task_views.apply_view(self.all_nodes(), view)
+        return task_views.apply_show_scope(self.all_nodes(), scope, stale)
 
     def changes(self, since: str) -> list[dict]:
         """``nod changes`` — simplified: derived from every node's own

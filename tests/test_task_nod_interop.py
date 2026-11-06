@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 
@@ -46,10 +47,19 @@ def _fm(capsys, *args):
 
 @pytest.fixture
 def interop_env(tmp_path, monkeypatch):
+    # NODDIT_HOME isolated too: some verbs (views.json, session state)
+    # live under the user's home, not under the project's decisions/ —
+    # a bare `env = {**os.environ, ...}` would read and WRITE the real
+    # owner's ~/.decs.
+    home = tmp_path / "home"
+    home.mkdir()
     monkeypatch.setenv("NODDIT_AUTHOR", "agent · interop test")
-    env = {**os.environ, "NODDIT_AUTHOR": "agent · interop test"}
-    _nod("init", "--dir", str(tmp_path), env=env)
-    return tmp_path, env
+    monkeypatch.setenv("NODDIT_HOME", str(home))
+    env = {**os.environ, "NODDIT_AUTHOR": "agent · interop test", "NODDIT_HOME": str(home)}
+    project = tmp_path / "project"
+    project.mkdir()
+    _nod("init", "--dir", str(project), env=env)
+    return project, env
 
 
 def test_nod_creates_fm_mutates_nod_reads_back(interop_env, capsys):
@@ -132,6 +142,44 @@ def test_order_matches_nod(interop_env, capsys):
     _fm(capsys, "order", "X2", "X1", "--dir", str(tmp_path))
     nod_json = json.loads(_nod("get", "1", "--dir", str(tmp_path), "--json", env=env))
     assert nod_json["order"] == -1
+
+
+def test_show_scopes_match_nod(interop_env, capsys):
+    tmp_path, env = interop_env
+    _nod("add", "Not started", "--dir", str(tmp_path), "--task", "--json", env=env)
+    _nod("add", "Pick one", "--dir", str(tmp_path), "-o", "1=A", "-o", "2=B", "--json", env=env)
+    _nod("add", "Milestone", "--dir", str(tmp_path), "--milestone", "--due", "2026-12-25", "--json", env=env)
+    _nod("add", "Just an fyi", "--dir", str(tmp_path), "--fyi", "--json", env=env)
+    _nod("start", "1", "--dir", str(tmp_path), env=env)
+    _nod("push", "2", "1", "--human", "--dir", str(tmp_path), env=env)
+    _nod("done", "1", "--dir", str(tmp_path), env=env)
+
+    for scope in ("open", "answered", "active", "archived", "all", "fyi", "flagged"):
+        nod_refs = sorted(json.loads(_nod("show", scope, "--dir", str(tmp_path), "--json", env=env)),
+                           key=lambda x: x["ref"])
+        nod_refs = [x["ref"] for x in nod_refs]
+        out = _fm(capsys, "show", scope, "--dir", str(tmp_path), "--json")
+        fm_refs = sorted(x["ref"] for x in json.loads(out))
+        assert fm_refs == nod_refs, f"scope {scope}: fm={fm_refs} nod={nod_refs}"
+
+
+def test_view_add_storage_matches_nod(interop_env, capsys):
+    tmp_path, env = interop_env
+    home = env["NODDIT_HOME"]
+    _nod("view", "add", "nod-made", "--filter", "state:in_progress", "--dir", str(tmp_path), env=env)
+    nod_file = (pathlib.Path(home) / "views.json").read_text()
+
+    _fm(capsys, "view", "add", "fm-made", "--filter", "state:in_progress", "--dir", str(tmp_path))
+    both = json.loads((pathlib.Path(home) / "views.json").read_text())
+    ids = [v["id"] for v in both["views"]]
+    assert "nod-made" in ids and "fm-made" in ids
+    fm_view = next(v for v in both["views"] if v["id"] == "fm-made")
+    nod_view = next(v for v in json.loads(nod_file)["views"] if v["id"] == "nod-made")
+    assert fm_view["filter"] == nod_view["filter"] == {"field": "state", "value": ["in_progress"]}
+
+    # Real nod must be able to read fm's own addition back without error.
+    reread = json.loads(_nod("views", "--dir", str(tmp_path), "--json", env=env))
+    assert "fm-made" in [v["id"] for v in reread["views"]]
 
 
 def test_round_trip_every_fixture_through_both_tools(interop_env):

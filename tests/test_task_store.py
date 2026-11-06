@@ -50,6 +50,17 @@ def test_add_without_options_defaults_to_acceptance(store):
     assert [o.key for o in node.options] == ["1"]
 
 
+def test_add_fyi_writes_the_kind_marker(store):
+    """Regression: `kind: fyi` was never written to the file (only the
+    in-memory pre-reread Node defaulted to kind="task"), so a freshly
+    created fyi node read back as kind="task" instead of "fyi" until
+    this was fixed (found while testing `show fyi`/C1137)."""
+    node = store.create("Just letting you know", "agent · author", fyi=True)
+    assert node.kind == "fyi"
+    with open(node.file, encoding="utf-8") as fh:
+        assert "kind: fyi" in fh.read()
+
+
 def test_decision_answer_queues_and_deliver_dequeues(store):
     node = store.create(
         "Pick one", "agent · author", options=[Option(key="1", label="A"), Option(key="2", label="B")], default="1",
@@ -304,13 +315,35 @@ def test_search_matches_title_and_body(store):
     assert hits[0].title == "Findable title"
 
 
-def test_show_available_excludes_milestones(store):
+def test_show_open_scope_is_needs_decision(store):
+    task = store.create("A task", "agent · author", task=True)
+    decision = store.create("Pick one", "agent · author", options=[Option(key="1", label="A")])
+    shown = {n.id for n in store.show("open")}
+    assert decision.id in shown
+    assert task.id not in shown
+
+
+def test_show_active_scope_excludes_archived(store):
+    task = store.create("A task", "agent · author", task=True)
+    done = store.create("Done already", "agent · author", task=True)
+    store.complete(done.id)
+    shown = {n.id for n in store.show("active")}
+    assert task.id in shown
+    assert done.id not in shown
+
+
+def test_available_view_excludes_milestones(store):
+    """`available` is a BENCH VIEW (the filter DSL), a different
+    vocabulary from `show`'s scopes — see task_views.apply_show_scope
+    vs. apply_view."""
+    from formist_cli import task_views
+
     task = store.create("A task", "agent · author", task=True)
     milestone = store.create("A milestone", "agent · author", task=True, milestone=True, due="2026-12-25T23:59:59+08:00")
-    shown = store.show("available")
-    ids = {n.id for n in shown}
-    assert task.id in ids
-    assert milestone.id not in ids
+    nodes = store.all_nodes()
+    shown = {n.id for n in task_views.apply_view(nodes, "available")}
+    assert task.id in shown
+    assert milestone.id not in shown
 
 
 def test_attach_and_approve(store, tmp_path):

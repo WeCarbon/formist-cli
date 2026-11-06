@@ -70,13 +70,22 @@ def test_push_human_defaults_by_to_owner(tmp_path, monkeypatch, capsys):
     assert answer["choice"] == "1"
 
 
-def test_show_lists_available_nodes(tmp_path, monkeypatch, capsys):
+def test_show_active_scope_lists_the_node(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
     _run(capsys, "init", str(tmp_path))
     _run(capsys, "add", "Task one", "--task", "--dir", str(tmp_path), "--json")
-    code, out, _ = _run(capsys, "show", "available", "--dir", str(tmp_path))
+    code, out, _ = _run(capsys, "show", "active", "--dir", str(tmp_path))
     assert code == 0
     assert "Task one" in out
+
+
+def test_views_lists_the_six_built_ins(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    _run(capsys, "init", str(tmp_path))
+    code, out, _ = _run(capsys, "views", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    ids = {v["id"] for v in json.loads(out)["views"]}
+    assert ids == {"decide", "available", "active", "waiting", "live", "all", "external"}
 
 
 def test_order_through_cli(tmp_path, monkeypatch, capsys):
