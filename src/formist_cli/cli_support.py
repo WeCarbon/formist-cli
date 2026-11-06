@@ -35,6 +35,25 @@ PLATFORM_ADMIN_GATE_NOTE = (
 ADMIN_FLAG_HELP = "platform administrators only"
 
 
+def warn_deprecated_alias(old_command: str, new_group: str) -> None:
+    """Printed by a top-level command that is now a kept-for-one-release alias
+    for a noun-group command (``fm skills-add`` -> ``fm skill add``, ``fm
+    project`` -> ``fm spaces set-logo``, ``fm chats`` -> ``fm chat list``,
+    ``fm connectors`` -> ``fm connector list``/``grants``).
+
+    The old command keeps running with its exact old behaviour; this is only
+    a hint, printed to stderr so it never pollutes ``--json`` output or a
+    script that greps stdout. One release after this one, the alias goes
+    away and the old name stops being registered at all.
+    """
+    print(
+        f"note: `fm {old_command}` is deprecated, use `fm {new_group}` instead "
+        "(same flags, grouped under one noun). This alias is kept through the "
+        "next release only.",
+        file=sys.stderr,
+    )
+
+
 def add_admin_flag(parser: argparse.ArgumentParser) -> None:
     """Add ``--admin`` to a subcommand, the same way ``cli._add_env`` wires
     ``--host``: ``default=argparse.SUPPRESS`` so that when this flag is not

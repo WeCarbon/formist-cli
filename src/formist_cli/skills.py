@@ -51,6 +51,14 @@ class SkillSourceError(SystemExit):
     """A local ``source`` argument that is not a usable SKILL.md source."""
 
 
+class SkillGroupError(Exception):
+    """An unknown subject under the `fm skill` noun group
+    (`cli.cmd_skill`): add/update/attach/install-package, the four commands
+    `skills-add`/`skills-update`/`skill-attach`/`skill-library-install` used
+    to be reached under before being grouped under one noun.
+    """
+
+
 def _read_skill_dir(path: Path) -> tuple[str, list[Path]]:
     """``(markdown text, [attachment file paths])`` from a directory holding
     ``SKILL.md``: every OTHER file directly inside it is an attachment,

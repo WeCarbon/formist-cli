@@ -75,7 +75,11 @@ def _subject_error(subject: object) -> ProjectsError:
     )
 
 
-def run(args) -> int:
+def run(args, *, label: str = "fm project set-logo") -> int:
+    """``label`` names this call in its own error/usage messages: also reached
+    from ``fm spaces set-logo`` (:func:`formist_cli.spaces._run_set_logo`),
+    which passes its own name rather than this deprecated alias's.
+    """
     subject = (getattr(args, "subject", None) or "").strip().lower()
     if subject not in SUBJECTS:
         raise _subject_error(getattr(args, "subject", None))
@@ -87,8 +91,8 @@ def run(args) -> int:
 
     if not args.path:
         raise ProjectsError(
-            "`fm project set-logo` needs a local image path.\n"
-            "Usage: fm project set-logo <path> --space <id> [--apply]"
+            f"`{label}` needs a local image path.\n"
+            f"Usage: {label} <path> --space <id> [--apply]"
         )
     image_path = Path(args.path)
     if not image_path.is_file():

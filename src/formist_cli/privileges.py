@@ -291,16 +291,27 @@ TABLE: dict[str, Privilege] = {
         "irreversible",
     ),
     "project": Privilege(
-        LEVEL_USER, ("POST /projects/{space}/logo (only with --apply)",)
+        LEVEL_USER, ("POST /projects/{space}/logo (only with --apply)",),
+        "deprecated alias of `fm spaces set-logo` (kept through the next "
+        "release); same route, same level",
     ),
     "connector": Privilege(
-        LEVEL_USER,
+        LEVEL_MIXED,
         (
+            ("GET /projects/{space}/connections (`list`, folded in from the old "
+             "`fm connectors`; member)"),
+            "GET /admin/spaces/{space}/connectors (`list --admin`)",
+            ("GET /admin/spaces/{space}/connectors/grants (`grants`, folded in; "
+             "always needs --admin)"),
             "POST /projects/{space}/connections/{id}/reauth (only with --apply)",
             "GET /projects/{space}/connections/{id}/reauth/poll",
             "POST /projects/{space}/connectors/{id}/sync (only with --apply)",
         ),
-        "the caller's own space connections; the server's project ACL decides",
+        "MIXED since `fm connectors` folded in: `reauth`/`sync` are the "
+        "caller's own space connections (server's project ACL decides), "
+        "`list` defaults to the same but takes --admin for an arbitrary "
+        "space, `grants` has no member-level equivalent and always needs "
+        "--admin -- same shape `fm spaces`/`fm files` already have",
     ),
     "participants": Privilege(
         LEVEL_ADMIN,
@@ -320,6 +331,20 @@ TABLE: dict[str, Privilege] = {
         ("PATCH /projects/{space}/skills/{id}/import",),
         "updates an existing skill IN PLACE through the same require_writer gate; "
         "never creates a second row",
+    ),
+    "skill": Privilege(
+        LEVEL_USER,
+        (
+            "POST /projects/{space}/skills/import (`add`)",
+            "PATCH /projects/{space}/skills/{id}/import (`update`)",
+            "POST /projects/{space}/uploads/sessions (`attach`)",
+            "GET /projects/{space}/skills/{id} (`attach`)",
+            ("POST /projects/{space}/skill-library/packages/{id}/install "
+             "(`install-package`)"),
+        ),
+        "the noun group `skills-add`/`skills-update`/`skill-attach`/"
+        "`skill-library-install` folded into, one subject each; all four "
+        "were already LEVEL_USER, so grouping them changes no gate",
     ),
 }
 

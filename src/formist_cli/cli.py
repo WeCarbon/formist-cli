@@ -319,6 +319,53 @@ def build_parser() -> argparse.ArgumentParser:
     skills.add_parser(sub)
 
     p = sub.add_parser(
+        "skill",
+        help="skill operations: add, update, attach, install-package (all WRITE)",
+        description=(
+            "Groups the four skill-writing commands under one noun; each is "
+            "the exact behaviour of its old top-level name, kept as a "
+            "deprecated alias through the next release:\n\n"
+            "  fm skill add <source> --space <id> [--apply]                "
+            "(was `fm skills-add`)\n"
+            "  fm skill update <source> --skill <id|name> --space <id> [--apply]  "
+            "(was `fm skills-update`)\n"
+            "  fm skill attach <skill> <file> --space <id> [--apply]       "
+            "(was `fm skill-attach`)\n"
+            "  fm skill install-package <package> --space <id> [--apply]  "
+            "(was `fm skill-library-install`)\n\n"
+            "Each is DRY RUN by default; run the old command's own --help "
+            "(e.g. `fm skills-add --help`) for the full contract, which has "
+            "not changed."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p, for_write=True)
+    _add_space(p)
+    p.add_argument("subject", help=f"one of: {', '.join(_SKILL_SUBJECTS)}")
+    p.add_argument(
+        "arg1", nargs="?", default=None,
+        help="add/update: source directory or .zip. attach: skill id or exact "
+        "name. install-package: the package id",
+    )
+    p.add_argument(
+        "arg2", nargs="?", default=None,
+        help="attach only: path to the local file",
+    )
+    p.add_argument("--skill", default=None, help="update: skill id (UUID) or exact name")
+    p.add_argument(
+        "--folder-path", default=uploads_mod.DEFAULT_FOLDER_PATH,
+        help="attach: folder path recorded alongside the uploaded file",
+    )
+    p.add_argument("--owner", default=None, help="attach: free-text team label")
+    p.add_argument(
+        "--file-id", dest="file_id", default=None,
+        help="attach: attach this already-uploaded file id instead of "
+        "uploading the file again",
+    )
+    p.add_argument("--apply", action="store_true", help="perform the write (default: dry run)")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p = sub.add_parser(
         "doctor",
         help="readable health rollup across environments",
         description=(
@@ -412,7 +459,62 @@ def build_parser() -> argparse.ArgumentParser:
 
     chats_mod.add_parser(sub)
 
-    chat_mod.add_parser(sub)
+    # Replaces `chat_mod.add_parser(sub)`: `chats_mod.add_parser(sub)` above
+    # (the plural, kept as a deprecated alias of `list`) still runs
+    # separately and is untouched.
+    p = sub.add_parser(
+        "chat",
+        help="a space's chats: `list` them, or `send` into one (WRITE)",
+        description=(
+            "  fm chat list [chat_id] [--kind ..] [--archived] [--latest] "
+            "[--messages] [--all-messages] [--limit N] [--json]   (was `fm chats`)\n"
+            "  fm chat send [chat_id] [--model ..] [--effort ..] [--message TEXT] [--json]\n\n"
+            "`list` reads (member route, see `fm chats --help`); `send` opens "
+            "the interactive REPL, or with --message sends one turn "
+            "non-interactively and exits (see the old `fm chat --help`). "
+            "Neither behaviour changed, only the names they are reached "
+            "under.\n\n"
+            "A bare `fm chat [chat_id]` (no subject) still works exactly as "
+            "it always did -- equivalent to `fm chat send [chat_id]` -- since "
+            "`chat` is not an alias here, it is the same name carrying one "
+            "more way to spell the same thing."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p)
+    _add_space(p)
+    p.add_argument(
+        "subject_or_id", nargs="?", default=None,
+        help="`list` or `send`, or (legacy, no subject) a chat UUID to "
+        "continue/show directly",
+    )
+    p.add_argument(
+        "second_arg", nargs="?", default=None,
+        help="the chat UUID, when `subject_or_id` is `list` or `send`",
+    )
+    p.add_argument("--kind", help="list: background-agent | user-chat (default: both)")
+    p.add_argument("--archived", action="store_true", help="list: list archived chats")
+    p.add_argument(
+        "--latest", action="store_true",
+        help="list: address the newest matching chat instead of naming an id",
+    )
+    p.add_argument(
+        "--messages", action="store_true", help="list: also print the transcript (one page)"
+    )
+    p.add_argument(
+        "--all-messages", dest="all_messages", action="store_true",
+        help="list: page the WHOLE transcript, however long",
+    )
+    p.add_argument("--limit", type=int, default=50, help="list: page size")
+    p.add_argument("--model", default=None, help="send: override the chat's model for this run")
+    p.add_argument(
+        "--effort", default=None, help="send: low|medium|high|xhigh (ignored by models with no knob)"
+    )
+    p.add_argument(
+        "--message", default=None, metavar="TEXT",
+        help="send: send this one message non-interactively and exit when the run finishes",
+    )
+    p.add_argument("--json", action="store_true", help="machine-readable output")
 
 
     export_mod.add_parser(sub)
@@ -824,7 +926,7 @@ def cmd_audit_log(args) -> int:
     return 0
 
 
-def cmd_connectors(args) -> int:
+def cmd_connectors(args, *, label: str = "fm connectors grants") -> int:
     """A space's connectors, what each one's last sync run actually did, or
     `grants` for what they may do.
 
@@ -840,6 +942,10 @@ def cmd_connectors(args) -> int:
     did), and `dur` is how long the run held the tick. The tick is
     strictly serial, so a large number here on one connector explains
     every other connector running late.
+
+    ``label`` names this call in the --admin refusal message: this is also
+    reached from `fm connector list`/`fm connector grants` (:func:`cmd_connector`),
+    which should name itself, not the deprecated `fm connectors` alias.
     """
     subject = (getattr(args, "subject", None) or connectors_mod.DEFAULT_SUBJECT).strip().lower()
     if subject not in connectors_mod.SUBJECTS:
@@ -850,7 +956,7 @@ def cmd_connectors(args) -> int:
     if subject == "grants":
         # No member-level equivalent: the grant view (consented scopes, auth
         # status, expiry) is platform-admin only, always.
-        privileges.require_admin_flag("fm connectors grants", admin)
+        privileges.require_admin_flag(label, admin)
         return connectors_mod.run_grants(args, _effective(args))
     eff = _effective(args)
     target, space = eff.target, eff.space
@@ -894,6 +1000,33 @@ def cmd_connectors(args) -> int:
         if run.get("error"):
             print(f"      error: {run['error']}")
     return 0
+
+
+#: Every subject `fm connector` answers to, now that `fm connectors`' two
+#: (list, grants) are folded in alongside its own (reauth, sync). Checked
+#: here, once, rather than in two different modules that would each only see
+#: half the vocabulary.
+_CONNECTOR_ALL_SUBJECTS = connectors_mod.SUBJECTS + connectors_mod.CONNECTOR_SUBJECTS
+
+
+def cmd_connector(args) -> int:
+    """`fm connector list|grants|reauth|sync` -- the noun-group command
+    `fm connectors` (list/grants) and `fm connector` (reauth/sync) are now
+    folded into. Routes to the two ORIGINAL, unchanged handlers rather than
+    re-implementing either: `list`/`grants` reuse :func:`cmd_connectors`
+    (the `space_id`-vs-connection-id positional is the same reuse-the-generic-
+    slot trick `fm spaces`/`fm whatsapp` already use, documented on
+    ``arg``'s own help text), `reauth`/`sync` reuse
+    `connectors_mod.run_connector` exactly as `fm connector` always has.
+    """
+    subject = (getattr(args, "subject", None) or "").strip().lower()
+    if subject not in _CONNECTOR_ALL_SUBJECTS:
+        raise connectors_mod.connector_subject_error(getattr(args, "subject", None))
+    if subject in connectors_mod.SUBJECTS:
+        if getattr(args, "arg", None) and not getattr(args, "space_id", None):
+            args.space_id = args.arg
+        return cmd_connectors(args, label="fm connector grants")
+    return connectors_mod.run_connector(args)
 
 
 def cmd_entity_fields(args) -> int:
@@ -1231,6 +1364,80 @@ def _items(payload: object) -> list[dict]:
     return []
 
 
+# ===========================================================================
+# Noun-group commands: `fm skill` and `fm chat`
+#
+# Each groups commands that used to be unrelated-looking top-level names
+# under one noun with several subjects, the same "generic positional slot
+# reused per subject, flags unioned, meaning resolved in the handler"
+# pattern `fm spaces`/`fm whatsapp`/`fm connector` already use -- not
+# argparse's nested subparsers, which cannot express "this token is either
+# one of a few keywords or an arbitrary id" without the same kind of
+# pre-dispatch logic anyway. The four old modules' own handlers are called
+# UNCHANGED; this is routing, not a second implementation.
+# ===========================================================================
+
+_SKILL_SUBJECTS = ("add", "update", "attach", "install-package")
+
+
+def cmd_skill(args) -> int:
+    subject = (getattr(args, "subject", None) or "").strip().lower()
+    if subject == "add":
+        args.source = args.arg1
+        return skills.cmd_skills_add(args)
+    if subject == "update":
+        args.source = args.arg1
+        return skills.cmd_skills_update(args)
+    if subject == "attach":
+        args.skill = args.arg1
+        args.file = args.arg2
+        return uploads_mod.cmd_skill_attach(args)
+    if subject == "install-package":
+        args.package = args.arg1
+        return skill_library.run_install(args)
+    raise skills.SkillGroupError(
+        f"unknown subcommand {getattr(args, 'subject', None)!r}. "
+        f"Valid: {', '.join(_SKILL_SUBJECTS)}."
+    )
+
+
+def cmd_chat_grouped(args) -> int:
+    first = args.subject_or_id
+    if first == "list":
+        args.chat_id = args.second_arg
+        return chats_mod.cmd_chats(args)
+    if first == "send":
+        args.chat_id = args.second_arg
+        return chat_mod.cmd_chat(args)
+    # Legacy shape: no subject given, so `first` IS the chat id (or None, to
+    # start a new chat) -- `fm chat [chat_id]`'s behaviour before `list`/
+    # `send` existed, kept working rather than aliased away (see
+    # `_add_chat_parser`'s own description of why `chat` is not an alias).
+    if first is not None:
+        print(
+            "note: `fm chat <id>` without a subject is the older spelling of "
+            "`fm chat send <id>`; both work, this one through the next "
+            "release only.",
+            file=sys.stderr,
+        )
+    args.chat_id = first
+    return chat_mod.cmd_chat(args)
+
+
+def _deprecated_alias(old_command: str, new_group: str, handler):
+    """Wraps a kept-for-one-release alias's ORIGINAL handler: prints the
+    deprecation note (`cli_support.warn_deprecated_alias`) then runs it
+    completely unchanged. One release after this one, the `_COMMANDS` entry
+    this wraps is deleted, not just the wrapper.
+    """
+
+    def wrapped(args):
+        cli_support.warn_deprecated_alias(old_command, new_group)
+        return handler(args)
+
+    return wrapped
+
+
 _COMMANDS = {
     "login": cmd_login,
     "logout": cmd_logout,
@@ -1240,35 +1447,38 @@ _COMMANDS = {
     "spaces": spaces_mod.run,
     "proposals": cmd_proposals,
     "audit-log": cmd_audit_log,
-    "connectors": cmd_connectors,
+    "connectors": _deprecated_alias("connectors", "connector list|grants", cmd_connectors),
     "entity-fields": cmd_entity_fields,
     "doctor": cmd_doctor,
     "use": cmd_use,
     "get": cmd_get,
-    "chats": chats_mod.cmd_chats,
-    "chat": chat_mod.cmd_chat,
+    "chats": _deprecated_alias("chats", "chat list", chats_mod.cmd_chats),
+    "chat": cmd_chat_grouped,
     "export": export_mod.cmd_export,
     "import": importer_mod.cmd_import,
     "update": cmd_update,
     "logs": logs.run,
     "users": users.run,
     "space-plan": space_plan.run,
-    "skill-library-install": skill_library.run_install,
-    "skills-add": skills.cmd_skills_add,
-    "skills-update": skills.cmd_skills_update,
+    "skill-library-install": _deprecated_alias(
+        "skill-library-install", "skill install-package", skill_library.run_install
+    ),
+    "skills-add": _deprecated_alias("skills-add", "skill add", skills.cmd_skills_add),
+    "skills-update": _deprecated_alias("skills-update", "skill update", skills.cmd_skills_update),
+    "skill": cmd_skill,
     "diff": diff_mod.cmd_diff,
     "airtable": airtable_mod.cmd_airtable,
     "participants": participants_mod.cmd_participants,
     "upload": uploads_mod.cmd_upload,
-    "skill-attach": uploads_mod.cmd_skill_attach,
+    "skill-attach": _deprecated_alias("skill-attach", "skill attach", uploads_mod.cmd_skill_attach),
     "usage-tokens": usage_tokens_mod.run,
     "alerts": alerts_mod.run,
     "settings": settings_mod.run,
     "kb": kb_mod.run,
     "meeting": meetings_mod.run,
     "files": files_mod.cmd_files,
-    "project": projects_mod.run,
-    "connector": connectors_mod.run_connector,
+    "project": _deprecated_alias("project", "spaces set-logo", projects_mod.run),
+    "connector": cmd_connector,
     "messages": messages_mod.run,
     "whatsapp": whatsapp_mod.run,
 }
@@ -1358,6 +1568,7 @@ USER_ERRORS = (
     KbError,
     MeetingsError,
     ProjectsError,
+    skills.SkillGroupError,
     privileges.PrivilegeError,
     login_mod.LoginError,
 )
