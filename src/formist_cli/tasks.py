@@ -521,6 +521,19 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--author")
     _add_common(p)
 
+    # Internal: what the Claude Code plugin's hooks/hooks.json runs directly
+    # (C1053/C1139) — read Claude Code's hook JSON from stdin, print its own
+    # hook-output JSON to stdout. Not meant to be run by hand; see
+    # plugin_hooks.py's module docstring for why there is no separate
+    # plugin/*.py wrapper script the way noddit's hooks need (fm is an
+    # installed console script, not a git checkout a wrapper can import
+    # from, so the hook's "thin script" IS this subcommand).
+    p = verbs.add_parser("plugin-session-start", help=argparse.SUPPRESS)
+    _add_common(p)
+
+    p = verbs.add_parser("plugin-prompt-refs", help=argparse.SUPPRESS)
+    _add_common(p)
+
     return parser
 
 
@@ -1410,6 +1423,55 @@ def _now_iso() -> str:
     return now_stamp(ms=True)
 
 
+def _read_hook_json() -> dict:
+    try:
+        raw = sys.stdin.read()
+    except OSError:
+        return {}
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _cmd_plugin_session_start(args) -> int:
+    """``hooks/hooks.json``'s ``SessionStart`` entry: the plugin's own
+    rules text, plus this project's/space's open work, exactly as
+    noddit's ``session-start.mjs`` builds it — see ``plugin_hooks.py``'s
+    module docstring for why this subcommand, not a separate wrapper
+    script, is the "thin script" here."""
+    from formist_cli import plugin_hooks, task_json
+
+    hook_input = _read_hook_json()
+    tree_json = None
+    try:
+        probe = argparse.Namespace(local=False, host=None, space=None, dir=hook_input.get("cwd"))
+        _mode, target = resolve_mode(probe)
+        tree_json = [task_json.to_json(n) for n in target.tree()]
+    except Exception:  # noqa: BLE001 - no project/space here is not an error; the rules alone still apply
+        tree_json = None
+    text = plugin_hooks.build_session_start_context(plugin_hooks.RULES_TEXT, tree_json)
+    print(json.dumps(plugin_hooks.SessionStartResult(text).to_hook_output()))
+    return 0
+
+
+def _cmd_plugin_prompt_refs(args) -> int:
+    """``hooks/hooks.json``'s ``UserPromptSubmit`` entry: a reminder when
+    the owner's message names a node — noddit's ``prompt-refs.mjs``."""
+    from formist_cli import plugin_hooks
+
+    hook_input = _read_hook_json()
+    prompt = hook_input.get("prompt") or ""
+    known = plugin_hooks.known_letters_for(hook_input.get("cwd"))
+    refs = plugin_hooks.detect_refs(prompt, known)
+    if not refs:
+        return 0
+    text = plugin_hooks.build_prompt_refs_reminder(refs)
+    print(json.dumps(plugin_hooks.PromptSubmitResult(text).to_hook_output()))
+    return 0
+
+
 def _cloud_monitor(args, target) -> int:
     """``fm task monitor`` (cloud): the server's push SSE stream
     (``GET /nodes/events``, contract §5/§93) rather than a poll loop —
@@ -1479,4 +1541,5 @@ _VERBS = {
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,
     "briefs": _cmd_briefs, "check": _cmd_check, "changes": _cmd_changes, "monitor": _cmd_monitor,
     "wait": _cmd_wait, "watch": _cmd_watch, "tell": _cmd_tell,
+    "plugin-session-start": _cmd_plugin_session_start, "plugin-prompt-refs": _cmd_plugin_prompt_refs,
 }

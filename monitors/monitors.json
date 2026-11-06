@@ -1,0 +1,7 @@
+[
+  {
+    "name": "fm",
+    "command": "fm task monitor --here",
+    "description": "fm task: the owner's replies, briefs filed for this project/space"
+  }
+]

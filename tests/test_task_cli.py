@@ -497,3 +497,62 @@ def test_tell_needs_text_or_a_subcommand_flag(tmp_path, monkeypatch, capsys):
     code, _out, err = _run(capsys, "tell", "--dir", str(tmp_path))
     assert code == 2
     assert "needs the owner's words" in err
+
+
+# ===========================================================================
+# plugin-session-start / plugin-prompt-refs (C1053/C1139): what
+# hooks/hooks.json runs directly, end to end through tasks.main().
+# ===========================================================================
+def _run_with_stdin(capsys, monkeypatch, stdin_text, *argv):
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin_text))
+    return _run(capsys, *argv)
+
+
+def test_plugin_session_start_includes_rules_and_open_work(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    _run(capsys, "add", "A plain task", "--task", "--dir", str(tmp_path))
+
+    code, out, _err = _run_with_stdin(
+        capsys, monkeypatch, json.dumps({"cwd": str(tmp_path)}), "plugin-session-start",
+    )
+    assert code == 0
+    payload = json.loads(out)
+    text = payload["hookSpecificOutput"]["additionalContext"]
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "MUST FOLLOW" in text
+    assert "A plain task" in text
+
+
+def test_plugin_session_start_with_no_project_is_rules_only(tmp_path, monkeypatch, capsys):
+    from formist_cli import prefs
+
+    monkeypatch.setattr(prefs, "load", lambda: prefs.Prefs(space=None, env=None, space_region=None, set_at=None))
+    code, out, _err = _run_with_stdin(
+        capsys, monkeypatch, json.dumps({"cwd": str(tmp_path)}), "plugin-session-start",
+    )
+    assert code == 0
+    text = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "MUST FOLLOW" in text
+    assert "Open work" not in text
+
+
+def test_plugin_prompt_refs_reminds_when_a_ref_is_named(tmp_path, monkeypatch, capsys):
+    code, out, _err = _run_with_stdin(
+        capsys, monkeypatch, json.dumps({"prompt": "please check C1052 today", "cwd": str(tmp_path)}),
+        "plugin-prompt-refs",
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert "C1052" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_plugin_prompt_refs_prints_nothing_with_no_ref_named(tmp_path, monkeypatch, capsys):
+    code, out, _err = _run_with_stdin(
+        capsys, monkeypatch, json.dumps({"prompt": "hello there", "cwd": str(tmp_path)}), "plugin-prompt-refs",
+    )
+    assert code == 0
+    assert out == ""
