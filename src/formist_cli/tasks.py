@@ -105,6 +105,11 @@ def _author(args) -> str:
     env_author = task_identity.current_author()
     if env_author:
         return env_author
+    from formist_cli import task_sessions
+
+    remembered = task_sessions.remembered_author()
+    if remembered:
+        return remembered
     raise TasksError('who is writing this? pass --author "<agent> · <doing what>", or set NODDIT_AUTHOR.')
 
 
@@ -137,6 +142,11 @@ def _by(args) -> str:
     env_author = task_identity.current_author()
     if env_author:
         return env_author
+    from formist_cli import task_sessions
+
+    remembered = task_sessions.remembered_author()
+    if remembered:
+        return remembered
     raise TasksError('who is writing this? pass --author "<agent> · <doing what>", or set NODDIT_AUTHOR.')
 
 
@@ -306,6 +316,12 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p = verbs.add_parser("start", help="to do -> in progress")
     p.add_argument("ref")
     p.add_argument("--force", action="store_true")
+    # Not full `_add_common(p, write=True)` (no --human/--agent: there is no
+    # "role" to pick when starting a node) — just the one flag `nod start`
+    # itself resolves (`resolveAuthor(args)`), remembered for this session
+    # (task_sessions.record_started) the same as an explicit --author on
+    # `claim` already is.
+    p.add_argument("--author", help='"<agent> · <doing what>" (default: $NODDIT_AUTHOR)')
     _add_common(p)
 
     p = verbs.add_parser("done", help="-> done, archived")
@@ -404,7 +420,11 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     _add_common(p)
 
     p = verbs.add_parser("note", help="append a note; does not archive")
-    p.add_argument("ref")
+    # ref may be omitted (falls back to this session's current node, local
+    # mode only — see task_sessions.py's module docstring for exactly why
+    # this verb's shape (one optional slot, one required) is safe to
+    # retrofit this way and progress/steps below are not).
+    p.add_argument("ref", nargs="?")
     p.add_argument("text")
     p.add_argument("--summary")
     p.add_argument("--relayed", action="store_true")
@@ -421,24 +441,32 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     _add_by(p)
 
     p = verbs.add_parser("progress", help="progress for a node")
+    # ref stays required here (not an inconsistency with note/step/beat
+    # below): with it optional, "ref? pct msg?" has TWO optional slots
+    # around the required one, so argparse's positional matching greedily
+    # assigns the first plain argument to ref instead of falling back
+    # whenever both pct AND msg are given — see task_sessions.py's module
+    # docstring for the argparse mechanics.
     p.add_argument("ref")
     p.add_argument("pct", type=int)
     p.add_argument("msg", nargs="?")
     _add_common(p)
 
     p = verbs.add_parser("steps", help="define a node's steps")
+    # Same reason as progress above: "ref? labels+" lets 2+ given labels
+    # swallow the first one as ref instead of falling back.
     p.add_argument("ref")
     p.add_argument("labels", nargs="+")
     _add_common(p)
 
     p = verbs.add_parser("step", help="step n done -> progress n/total")
-    p.add_argument("ref")
+    p.add_argument("ref", nargs="?")  # see note's own comment above
     p.add_argument("n", type=int)
     p.add_argument("--note")
     _add_common(p, write=True)
 
     p = verbs.add_parser("beat", help="still on it (silent unless --note)")
-    p.add_argument("ref")
+    p.add_argument("ref", nargs="?")  # see note's own comment above
     p.add_argument("--note")
     _add_common(p, write=True)
 
@@ -829,6 +857,29 @@ def _resolve_local(target, ref):
     return target.resolve(ref)
 
 
+def _resolve_ref_or_current(target, ref):
+    """Like :func:`_resolve_local`, but ``ref`` may be ``None`` — only on
+    the few verbs whose own positional shape makes that unambiguous for
+    argparse (``beat``/``step``/``note``; see ``task_sessions.py``'s
+    module docstring for why not every verb gets this). Falls back to
+    this session's current node, local mode only — cloud mode has no
+    local session file to remember one in (C1141's own ``agent_session``
+    row is the cloud equivalent, not consulted here)."""
+    if ref is not None:
+        return _resolve_local(target, ref)
+    if not isinstance(target, task_store.LocalStore):
+        raise TasksError("this verb needs an explicit ref in cloud mode (no local session to fall back to)")
+    from formist_cli import task_sessions
+
+    current = task_sessions.current_node()
+    if not current:
+        raise TasksError(
+            "no ref given, and this session has no current node — "
+            "`fm task start <ref>` (or `claim`) first, or pass one explicitly"
+        )
+    return target.resolve(current["ref"])
+
+
 def _cmd_start(args) -> int:
     _mode, target = resolve_mode(args)
     node = _resolve_local(target, args.ref)
@@ -836,8 +887,36 @@ def _cmd_start(args) -> int:
     # extra kwarg it was never given — the server route takes none), same
     # as every other lifecycle verb below that doesn't branch on mode.
     result = target.start(node.id, force=args.force) if isinstance(target, task_store.LocalStore) else target.start(node.id)
+    _remember_started(target, result, args)
     _print_node(result, args.json)
     return 0
+
+
+def _remember_started(target, node, args) -> None:
+    """local mode only: ``fm task start``/``claim``'s session-state side
+    effect (``task_sessions.record_started``) — cloud mode's equivalent
+    is the server's own ``agent_session.current_task_id``, set through
+    ``register_session``/``fm task monitor``, not this file.
+
+    Gated on a resolved author, matching noddit's own ``if (author &&
+    rememberStarted(...))``: a human running this from a bare terminal
+    (no --author, no NODDIT_AUTHOR) gets no session state recorded at
+    all, same as nod — there is no repeated-call convenience to build
+    for someone who isn't making repeated CLI calls."""
+    if not isinstance(target, task_store.LocalStore):
+        return
+    author = getattr(args, "author", None) or task_identity.current_author()
+    if not author:
+        return
+    from formist_cli import task_sessions
+
+    task_sessions.record_started(target.layout.project_root, node.id, _ref_of(node), author)
+
+
+def _ref_of(node) -> str:
+    from formist_cli.task_ref import format_ref
+
+    return format_ref(node.id, node.letter)
 
 
 def _cmd_done(args) -> int:
@@ -1065,7 +1144,7 @@ def _cmd_queue(args) -> int:
 
 def _cmd_note(args) -> int:
     _mode, target = resolve_mode(args)
-    node = _resolve_local(target, args.ref)
+    node = _resolve_ref_or_current(target, args.ref)
     role = _resolved_role(args)
     author = _by(args)
     result = target.note(node.id, args.text, author, role=role, summary=args.summary, relayed=args.relayed)
@@ -1111,7 +1190,7 @@ def _cmd_steps(args) -> int:
 
 def _cmd_step(args) -> int:
     _mode, target = resolve_mode(args)
-    node = _resolve_local(target, args.ref)
+    node = _resolve_ref_or_current(target, args.ref)
     result = target.mark_step(node.id, args.n, note_text=args.note, author=_author_opt(args))
     _print_node(result, args.json)
     return 0
@@ -1119,7 +1198,7 @@ def _cmd_step(args) -> int:
 
 def _cmd_beat(args) -> int:
     _mode, target = resolve_mode(args)
-    node = _resolve_local(target, args.ref)
+    node = _resolve_ref_or_current(target, args.ref)
     result = target.beat(node.id, note_text=args.note, author=_author_opt(args))
     _print_node(result, args.json)
     return 0
@@ -1154,6 +1233,7 @@ def _cmd_claim(args) -> int:
     _mode, target = resolve_mode(args)
     node = _resolve_local(target, args.ref)
     result, _already = target.claim(node.id, _author(args), force=args.force)
+    _remember_started(target, result, args)
     _print_node(result, args.json)
     return 0
 

@@ -556,3 +556,104 @@ def test_plugin_prompt_refs_prints_nothing_with_no_ref_named(tmp_path, monkeypat
     )
     assert code == 0
     assert out == ""
+
+
+# ===========================================================================
+# session convenience (C1139): omitting a ref on beat/step/note falls back
+# to this session's current node; omitting --author falls back to what
+# this session last signed as — both through the real CLI, local mode only.
+# ===========================================================================
+def test_start_with_an_author_remembers_both_the_node_and_the_author(tmp_path, monkeypatch):
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setenv("NODDIT_WORKTREE", "/w")
+    monkeypatch.delenv("NODDIT_AUTHOR", raising=False)
+    project = tmp_path / "proj"
+    tasks.main(["init", str(project)])
+    tasks.main(["add", "A task", "--task", "--author", "agent · y", "--dir", str(project)])
+    tasks.main(["start", "X1", "--author", "agent · y", "--dir", str(project)])
+
+    from formist_cli import task_sessions
+
+    assert task_sessions.current_node()["ref"] == "X1"
+    assert task_sessions.remembered_author() == "agent · y"
+
+
+def test_beat_with_no_ref_falls_back_to_the_session_current_node(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setenv("NODDIT_WORKTREE", "/w")
+    monkeypatch.delenv("NODDIT_AUTHOR", raising=False)
+    project = tmp_path / "proj"
+    _run(capsys, "init", str(project))
+    _run(capsys, "add", "A task", "--task", "--author", "agent · y", "--dir", str(project))
+    _run(capsys, "start", "X1", "--author", "agent · y", "--dir", str(project))
+
+    code, out, _err = _run(capsys, "beat", "--dir", str(project), "--json")
+    assert code == 0
+    assert json.loads(out)["ref"] == "X1"
+
+
+def test_note_with_no_ref_and_no_author_uses_both_remembered_values(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setenv("NODDIT_WORKTREE", "/w")
+    monkeypatch.delenv("NODDIT_AUTHOR", raising=False)
+    project = tmp_path / "proj"
+    _run(capsys, "init", str(project))
+    _run(capsys, "add", "A task", "--task", "--author", "agent · y", "--dir", str(project))
+    _run(capsys, "start", "X1", "--author", "agent · y", "--dir", str(project))
+
+    code, out, _err = _run(capsys, "note", "relying on remembered state", "--agent", "--dir", str(project), "--json")
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["ref"] == "X1"
+    assert payload["notes"][-1]["author"] == "agent · y"
+
+
+def test_step_with_no_ref_falls_back_to_the_session_current_node(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setenv("NODDIT_WORKTREE", "/w")
+    monkeypatch.delenv("NODDIT_AUTHOR", raising=False)
+    project = tmp_path / "proj"
+    _run(capsys, "init", str(project))
+    _run(capsys, "add", "A task", "--task", "--author", "agent · y", "--dir", str(project))
+    _run(capsys, "start", "X1", "--author", "agent · y", "--dir", str(project))
+    _run(capsys, "steps", "X1", "a", "b", "--dir", str(project))
+
+    code, out, _err = _run(capsys, "step", "1", "--dir", str(project), "--json")
+    assert code == 0
+    assert json.loads(out)["ref"] == "X1"
+
+
+def test_beat_with_no_ref_and_no_session_refuses_clearly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    monkeypatch.delenv("NODDIT_AUTHOR", raising=False)
+    project = tmp_path / "proj"
+    _run(capsys, "init", str(project))
+
+    code, _out, err = _run(capsys, "beat", "--dir", str(project))
+    assert code == 2
+    assert "current node" in err
+
+
+def test_a_human_running_start_records_no_session_state(tmp_path, monkeypatch):
+    """Matches noddit's own `if (author && rememberStarted(...))`: a bare
+    `fm task start` with no author resolved at all records nothing — the
+    session convenience is for repeated agent CLI calls, not a human's
+    one-off terminal use."""
+    monkeypatch.setenv("NODDIT_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setenv("NODDIT_WORKTREE", "/w")
+    monkeypatch.delenv("NODDIT_AUTHOR", raising=False)
+    project = tmp_path / "proj"
+    tasks.main(["init", str(project)])
+    tasks.main(["add", "A task", "--task", "--author", "agent · y", "--dir", str(project)])
+    tasks.main(["start", "X1", "--dir", str(project)])  # no --author this time
+
+    from formist_cli import task_sessions
+
+    assert task_sessions.current_node() is None
