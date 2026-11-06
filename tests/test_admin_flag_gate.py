@@ -26,18 +26,16 @@ SPACE = "452093ea-7b91-491e-88b6-3285edd48a31"
 #: One parseable argv per LEVEL_ADMIN command, minus `--admin`. Positionals
 #: are filled with whatever makes argparse accept the line; none of them is
 #: ever read, because the gate must refuse before anything downstream runs.
+#:
+#: Ten commands that used to be here (instance/users/logs/space-plan/
+#: usage-tokens/alerts/settings/update/airtable/whatsapp) moved to
+#: curist-server's `fmdev` (C1105/C1114): none had a non-admin meaning in
+#: `fm`, so this gate -- the refusal path for a command with NO member-level
+#: equivalent -- no longer applies to them in `fm` at all; they are
+#: LEVEL_LOCAL redirect stubs now (see `tests/test_moved_to_fmdev.py`), and
+#: fmdev enforces the same gate they tested here, on the same modules.
 ADMIN_ONLY_COMMANDS = {
-    "instance": ["instance", "--host", "evane"],
-    "users": ["users", "--host", "evane"],
-    "logs": ["logs", "--host", "evane"],
-    "space-plan": ["space-plan", "--host", "evane", "--space", SPACE],
-    "usage-tokens": ["usage-tokens", "--host", "evane"],
-    "alerts": ["alerts", "--host", "evane"],
     "messages": ["messages", "--host", "evane"],
-    "settings": ["settings", "--host", "evane"],
-    "update": ["update", "--host", "evane", "--space", SPACE, "payload.json"],
-    "airtable": ["airtable", "--host", "evane", "--space", SPACE, "direction"],
-    "whatsapp": ["whatsapp", "--host", "evane"],
     "participants": ["participants", "--host", "evane", "--space", SPACE, "dedupe"],
 }
 

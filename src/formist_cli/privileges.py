@@ -92,6 +92,20 @@ class Privilege:
     note: str = ""
 
 
+#: ``instance``/``users``/``logs``/``space-plan``/``usage-tokens``/``alerts``/
+#: ``settings``/``update``/``airtable``/``whatsapp`` (C1105/C1114): moved to
+#: curist-server's ``fmdev`` (``evdev`` renamed). None of the ten ever had a
+#: non-admin meaning in `fm`, so a customer install never reached the server
+#: for them either way. The ``_COMMANDS`` entry under each name is now a
+#: stub (``cli.cmd_moved_to_fmdev``) that prints the redirect and exits,
+#: hence ``LEVEL_LOCAL``: it is true of the stub, not a relaxation of what
+#: the real command needed, which fmdev enforces exactly as this table once
+#: did for `fm` (same modules, same gate, different CLI).
+_MOVED_TO_FMDEV_NOTE = (
+    "moved to curist-server's `fmdev`; this is the one-release redirect "
+    "stub left in `fm`, not the real command"
+)
+
 #: Keys must equal ``formist_cli.cli._COMMANDS``' keys exactly, asserted
 #: in both directions: a removed command must lose its row too, or the
 #: table starts describing a tool that no longer exists.
@@ -119,10 +133,7 @@ TABLE: dict[str, Privilege] = {
         LEVEL_MIXED, ("GET /health", "GET /admin/health (only with --admin)"),
         "public without --admin",
     ),
-    "instance": Privilege(
-        LEVEL_ADMIN, ("GET /admin/instance",),
-        "build/migration identity has no user-level meaning",
-    ),
+    "instance": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
     "doctor": Privilege(
         LEVEL_LOCAL, ("GET /health",), "local config checks plus the public health probe"
     ),
@@ -176,18 +187,7 @@ TABLE: dict[str, Privilege] = {
         "MIXED: `list` (the default, no subject needed) and `create` work for any "
         "signed-in user; every other subject is platform-admin and needs --admin",
     ),
-    "users": Privilege(
-        LEVEL_ADMIN,
-        (
-            "GET/POST /admin/users",
-            "GET/PATCH /admin/users/{id}",
-            "GET /admin/users/{id}/spaces",
-            "DELETE /admin/users/{id}/spaces/{space}",
-            "GET /admin/users/{id}/grants",
-        ),
-        "platform user management has no user-level meaning: there is nothing for "
-        "an ordinary signed-in user to default to",
-    ),
+    "users": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
     "proposals": Privilege(
         LEVEL_MIXED,
         (
@@ -217,18 +217,16 @@ TABLE: dict[str, Privilege] = {
         "MIXED: `list` (the default subject) works for any member of the space; "
         "`grants` is a platform-admin view with no member-level equivalent",
     ),
-    "logs": Privilege(
-        LEVEL_ADMIN, ("GET /admin/events", "GET /admin/events/{subject}"),
-        "also shells out to `az` for Log Analytics, which has its own identity",
-    ),
-    "space-plan": Privilege(LEVEL_ADMIN, ("GET/PUT /admin/spaces/{space}/plan",)),
-    "usage-tokens": Privilege(LEVEL_ADMIN, ("GET /admin/usage/tokens",)),
-    "alerts": Privilege(LEVEL_ADMIN, ("GET /admin/alerts", "GET /admin/alerts/conditions",)),
+    "logs": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
+    "space-plan": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
+    "usage-tokens": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
+    "alerts": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
     "messages": Privilege(
         LEVEL_ADMIN,
         ("GET /admin/messages/dedupe-scan", "POST /admin/messages/dedupe"),
+        "stays in fm, NOT moved to fmdev: retires with C1073/C1110 instead",
     ),
-    "settings": Privilege(LEVEL_ADMIN, ("GET/PUT /admin/settings",)),
+    "settings": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
     "skill-library-install": Privilege(
         LEVEL_USER,
         (
@@ -241,30 +239,9 @@ TABLE: dict[str, Privilege] = {
         "synced package into the caller's own space, the same route the gallery's "
         "own 'Install' button uses",
     ),
-    # These three are NOT under /admin, and that is exactly why they are easy to
-    # misfile. They are project-scoped paths gated by the same platform-admin
-    # check as everything above.
-    "update": Privilege(
-        LEVEL_ADMIN, ("POST /projects/{space}/admin/data-changes",),
-        "bulk data changes: site-wide admin, not a space role",
-    ),
-    "airtable": Privilege(
-        LEVEL_ADMIN, ("POST /projects/{space}/admin/airtable/direction",),
-    ),
-    "whatsapp": Privilege(
-        LEVEL_ADMIN,
-        (
-            "GET/POST /admin/whatsapp/devices",
-            "GET /admin/whatsapp/devices/{id}",
-            "POST /admin/whatsapp/devices/{id}/{pair,start,stop,logout,mark-account-deleted}",
-            "GET /admin/whatsapp/devices/{id}/pairing",
-            "GET /admin/whatsapp/devices/{id}/groups",
-            "DELETE /admin/whatsapp/devices/{id}",
-            "GET /admin/whatsapp/runner",
-            "POST /admin/whatsapp/runner/{start,stop}",
-        ),
-        "platform-owned WhatsApp devices; every write is dry-run unless --apply",
-    ),
+    "update": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
+    "airtable": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
+    "whatsapp": Privilege(LEVEL_LOCAL, (), _MOVED_TO_FMDEV_NOTE),
     "kb": Privilege(
         LEVEL_USER,
         ("GET /projects/{space}/search", "GET /projects/{space}/files/{id}/content"),

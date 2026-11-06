@@ -16,17 +16,18 @@ from formist_cli import settings as settings_mod
 from formist_cli.settings import SettingsError, canonical_subject, parse_assignments
 
 
-def test_the_command_is_registered_as_both_a_parser_and_a_runner():
-    """Registering a parser without a dispatch entry produces a command that
-    parses and then does nothing, so both halves are asserted."""
-    assert cli._COMMANDS["settings"] is settings_mod.run
+def test_fm_settings_is_now_a_redirect_to_fmdev():
+    """`settings` moved to curist-server's `fmdev` (C1105/C1114): `fm
+    settings` is a one-release stub (`cli.cmd_moved_to_fmdev`), not
+    `settings_mod.run` any more. The real parser this test used to assert
+    on now lives only in fmdev, built by calling `settings_mod.add_parser`
+    directly (unchanged -- this module's own parser-building code is not
+    touched by the move, only `fm`'s registration of it)."""
+    assert cli._COMMANDS["settings"] is cli.cmd_moved_to_fmdev
     parsed = cli.build_parser().parse_args(
         ["settings", "set", "--host", "evane", "scheduler.disabled=true"]
     )
     assert parsed.command == "settings"
-    assert parsed.subject == "set"
-    assert parsed.assignments == ["scheduler.disabled=true"]
-    assert parsed.host == "evane"
 
 
 @pytest.mark.parametrize("subject", ["show", "set", "clear"])

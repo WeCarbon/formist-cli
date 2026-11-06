@@ -36,9 +36,19 @@ import json
 import sys
 from dataclasses import replace
 
-from formist_cli import airtable as airtable_mod
-from formist_cli import alerts as alerts_mod
-from formist_cli import api, context, logs, prefs, privileges, skill_library, skills, space_plan, tokens, users
+from formist_cli import (
+    api,
+    cli_support,
+    context,
+    logs,
+    prefs,
+    privileges,
+    skill_library,
+    skills,
+    space_plan,
+    tokens,
+    users,
+)
 from formist_cli import chat as chat_mod
 from formist_cli import chats as chats_mod
 from formist_cli import connectors as connectors_mod
@@ -54,16 +64,12 @@ from formist_cli import messages as messages_mod
 from formist_cli import participants as participants_mod
 from formist_cli import projects as projects_mod
 from formist_cli import resolve as resolve_mod
-from formist_cli import settings as settings_mod
 from formist_cli import spaces as spaces_mod
 from formist_cli import update as update_mod
 from formist_cli import uploads as uploads_mod
-from formist_cli import usage_tokens as usage_tokens_mod
-from formist_cli import whatsapp as whatsapp_mod
 from formist_cli.airtable import AirtableError
 from formist_cli.alerts import AlertsError
 from formist_cli.chats import ChatsError
-from formist_cli import cli_support
 from formist_cli.cli_support import as_dict
 from formist_cli.diff import DiffError
 from formist_cli.export import ExportError
@@ -232,10 +238,6 @@ def build_parser() -> argparse.ArgumentParser:
              "region's, in one call (" + cli_support.ADMIN_FLAG_HELP + ")",
     )
 
-    p = sub.add_parser("instance", help="build + migration identity (Tier 1 endpoint)")
-    _add_env(p)
-    cli_support.add_admin_flag(p)
-
     spaces_mod.add_parser(sub)
 
     p = sub.add_parser(
@@ -310,11 +312,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_env(p)
     _add_space(p)
 
-    # Parser and body live in logs.py: cli.py gets an import and a dispatch
-    # entry and nothing else.
-    logs.add_parser(sub)
-    users.add_parser(sub)
-    space_plan.add_parser(sub)
     skill_library.add_install_parser(sub)
     skills.add_parser(sub)
 
@@ -420,43 +417,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", help="exact name; omit to list the kind")
     p.add_argument("--json", action="store_true", help="machine-readable output")
 
-    p = sub.add_parser(
-        "update",
-        help="bulk data change: dry-run always, apply with the plan token",
-        description=(
-            "Applies a batch of data changes transactionally, or reports what would "
-            "happen. A dry run ALWAYS runs first and prints a plan token; --apply "
-            "takes that token and re-runs the dry run to check it still matches "
-            "before committing.\n\n"
-            "Payload ops use the endpoint's own vocabulary ($action, $kind, $id, "
-            "$set, $expect, $ref, $replace_data, $hard) plus one fm-side addition: "
-            "$name, resolved to an id here, seconds before the write, against the "
-            "environment being written. The name is copied into $expect so the "
-            "server re-checks the resolution against the row itself.\n\n"
-            "A $set naming `data` (STAKEHOLDER / CUSTOM's free-form blob) MERGES "
-            "into the row's existing value by default -- {'country': 'AE'} changes "
-            "only `country`. Add \"$replace_data\": true to an op to replace the "
-            "whole blob instead; that is the only way to remove a key.\n\n"
-            "$action \"delete\" is SOFT -- restorable from the space's Trash, "
-            "like the UI. $hard is refused for a kind with a Trash entry (purge "
-            "from there instead) and required for the two that have none "
-            "(FILE_LINK, SESSION_PARTICIPANT).\n\n"
-            + update_mod.NOT_DEPLOYED_NOTE
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    _add_env(p, for_write=True)
-    _add_space(p)
-    cli_support.add_admin_flag(p)
-    p.add_argument("payload", help="path to a JSON file of ops")
-    p.add_argument(
-        "--apply",
-        metavar="PLAN_TOKEN",
-        help="commit, if this token still matches a fresh dry run of this plan",
-    )
-    p.add_argument("--json", action="store_true", help="machine-readable output")
-
-
     chats_mod.add_parser(sub)
 
     # Replaces `chat_mod.add_parser(sub)`: `chats_mod.add_parser(sub)` above
@@ -523,16 +483,9 @@ def build_parser() -> argparse.ArgumentParser:
     diff_mod.add_parser(sub)
 
 
-    airtable_mod.add_parser(sub)
     participants_mod.add_parser(sub)
 
-    usage_tokens_mod.add_parser(sub)
-
-    alerts_mod.add_parser(sub)
-    settings_mod.add_parser(sub)
-
     messages_mod.add_parser(sub)
-    whatsapp_mod.add_parser(sub)
 
     uploads_mod.add_parser(sub)
 
@@ -541,6 +494,19 @@ def build_parser() -> argparse.ArgumentParser:
     files_mod.add_parser(sub)
     projects_mod.add_parser(sub)
     connectors_mod.add_connector_parser(sub)
+
+    # Moved to curist-server's `fmdev` (evdev renamed), C1105/C1114: these ten
+    # had no non-admin meaning in `fm` at all (no caller's-own-data reading,
+    # unlike `fm spaces`/`fm health`/etc, which keep their --admin branch
+    # right here), so there is nothing here for an external customer to run.
+    # `fmdev` builds its own, identical parsers for these by calling
+    # `add_instance_parser`/`add_update_parser` and the modules' own
+    # `add_parser` directly -- formist_cli stays the one place this shape is
+    # defined. `fm` keeps a one-release stub under each name so a script
+    # still running the old command gets a clear redirect instead of
+    # argparse's bare "invalid choice".
+    for name in _MOVED_TO_FMDEV:
+        _add_moved_to_fmdev_stub(sub, name)
 
     return parser
 
@@ -750,6 +716,20 @@ def cmd_health(args) -> int:
         print(payload)
         return 0
     return 1 if _print_health_block(target.name, payload) else 0
+
+
+def add_instance_parser(sub) -> None:
+    """Public (no leading underscore) because `fm` no longer registers this
+    itself -- `instance` is one of the ten commands that moved to
+    curist-server's `fmdev` (C1105/C1114), which calls this directly to
+    build the exact same parser `fm instance` used to have, and then
+    :func:`cmd_instance`, unchanged, to run it. Kept here rather than moved
+    out entirely so evdev/fmdev, like every other `fm`-reused command,
+    stays a thin caller of formist_cli rather than a second copy of it.
+    """
+    p = sub.add_parser("instance", help="build + migration identity (Tier 1 endpoint)")
+    _add_env(p)
+    cli_support.add_admin_flag(p)
 
 
 def cmd_instance(args) -> int:
@@ -1280,6 +1260,48 @@ def cmd_get(args) -> int:
     return 0
 
 
+def add_update_parser(sub) -> None:
+    """Public, same reason as :func:`add_instance_parser`: `update` is one
+    of the ten commands that moved to curist-server's `fmdev`; this builds
+    the exact parser `fm update` used to have, for `fmdev` to call.
+    """
+    p = sub.add_parser(
+        "update",
+        help="bulk data change: dry-run always, apply with the plan token",
+        description=(
+            "Applies a batch of data changes transactionally, or reports what would "
+            "happen. A dry run ALWAYS runs first and prints a plan token; --apply "
+            "takes that token and re-runs the dry run to check it still matches "
+            "before committing.\n\n"
+            "Payload ops use the endpoint's own vocabulary ($action, $kind, $id, "
+            "$set, $expect, $ref, $replace_data, $hard) plus one fm-side addition: "
+            "$name, resolved to an id here, seconds before the write, against the "
+            "environment being written. The name is copied into $expect so the "
+            "server re-checks the resolution against the row itself.\n\n"
+            "A $set naming `data` (STAKEHOLDER / CUSTOM's free-form blob) MERGES "
+            "into the row's existing value by default -- {'country': 'AE'} changes "
+            "only `country`. Add \"$replace_data\": true to an op to replace the "
+            "whole blob instead; that is the only way to remove a key.\n\n"
+            "$action \"delete\" is SOFT -- restorable from the space's Trash, "
+            "like the UI. $hard is refused for a kind with a Trash entry (purge "
+            "from there instead) and required for the two that have none "
+            "(FILE_LINK, SESSION_PARTICIPANT).\n\n"
+            + update_mod.NOT_DEPLOYED_NOTE
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p, for_write=True)
+    _add_space(p)
+    cli_support.add_admin_flag(p)
+    p.add_argument("payload", help="path to a JSON file of ops")
+    p.add_argument(
+        "--apply",
+        metavar="PLAN_TOKEN",
+        help="commit, if this token still matches a fresh dry run of this plan",
+    )
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+
 def cmd_update(args) -> int:
     """Dry-run a bulk change, then apply it only against the token that dry run gave.
 
@@ -1365,6 +1387,62 @@ def _items(payload: object) -> list[dict]:
 
 
 # ===========================================================================
+# Moved to curist-server's `fmdev` (C1105/C1114): one-release stubs
+# ===========================================================================
+
+#: No non-admin meaning in `fm` at all -- unlike `spaces`/`health`/`proposals`/
+#: `audit-log`/`connector`/`files`, which keep a member-level default here and
+#: only gate their --admin branch, these ten are refused locally before the
+#: --admin check even runs, so a customer install of `fm` never reaches the
+#: server for them either way. `messages`/`participants` are NOT here: they
+#: stay in `fm` unchanged, retiring with C1073/C1110 instead.
+_MOVED_TO_FMDEV = (
+    "instance", "users", "logs", "space-plan", "usage-tokens",
+    "alerts", "settings", "update", "airtable", "whatsapp",
+)
+
+
+def _add_moved_to_fmdev_stub(sub, name: str) -> None:
+    p = sub.add_parser(
+        name,
+        help="MOVED to curist-server's `fmdev`; kept one release as a redirect",
+        description=(
+            f"`fm {name}` moved to curist-server's `fmdev` and no longer runs "
+            f"here: run `fmdev {name}` instead (needs the curist-server repo "
+            "checked out, or ask whoever operates it). This redirect is kept "
+            "through the next release only, after which `fm` stops "
+            f"recognising `{name}` at all."
+        ),
+    )
+    # Must absorb whatever the caller passed -- flags the real command used
+    # to accept included -- without erroring on an unrecognised option:
+    # the point of a redirect is to print it and exit, not to re-validate
+    # arguments for a command that is not going to run. `nargs=REMAINDER`
+    # on a positional does NOT do this: argparse classifies a leading
+    # option-looking token (`fm whatsapp --env ae`, which was this exact
+    # command's own documented example) as an unmatched option before a
+    # positional ever gets to claim it, so `parse_args` still raises
+    # "unrecognized arguments". Overriding `parse_known_args` on this one
+    # parser INSTANCE (not the shared `SubcommandParser` class every other
+    # subcommand uses) is what `_SubParsersAction.__call__` actually
+    # consults, and it both sets `args.command` before calling this and
+    # only raises "unrecognized arguments" on whatever this returns as
+    # leftover -- so returning none, unconditionally, is what makes every
+    # shape of the old invocation land on the redirect instead of an error.
+    p.parse_known_args = lambda args=None, namespace=None: (argparse.Namespace(), [])
+
+
+def cmd_moved_to_fmdev(args) -> int:
+    name = args.command
+    print(
+        f"`fm {name}` moved to curist-server's `fmdev`. Run `fmdev {name}` "
+        "instead. This redirect is kept through the next release only.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+# ===========================================================================
 # Noun-group commands: `fm skill` and `fm chat`
 #
 # Each groups commands that used to be unrelated-looking top-level names
@@ -1443,7 +1521,6 @@ _COMMANDS = {
     "logout": cmd_logout,
     "whoami": cmd_whoami,
     "health": cmd_health,
-    "instance": cmd_instance,
     "spaces": spaces_mod.run,
     "proposals": cmd_proposals,
     "audit-log": cmd_audit_log,
@@ -1456,10 +1533,6 @@ _COMMANDS = {
     "chat": cmd_chat_grouped,
     "export": export_mod.cmd_export,
     "import": importer_mod.cmd_import,
-    "update": cmd_update,
-    "logs": logs.run,
-    "users": users.run,
-    "space-plan": space_plan.run,
     "skill-library-install": _deprecated_alias(
         "skill-library-install", "skill install-package", skill_library.run_install
     ),
@@ -1467,20 +1540,27 @@ _COMMANDS = {
     "skills-update": _deprecated_alias("skills-update", "skill update", skills.cmd_skills_update),
     "skill": cmd_skill,
     "diff": diff_mod.cmd_diff,
-    "airtable": airtable_mod.cmd_airtable,
     "participants": participants_mod.cmd_participants,
     "upload": uploads_mod.cmd_upload,
     "skill-attach": _deprecated_alias("skill-attach", "skill attach", uploads_mod.cmd_skill_attach),
-    "usage-tokens": usage_tokens_mod.run,
-    "alerts": alerts_mod.run,
-    "settings": settings_mod.run,
     "kb": kb_mod.run,
     "meeting": meetings_mod.run,
     "files": files_mod.cmd_files,
     "project": _deprecated_alias("project", "spaces set-logo", projects_mod.run),
     "connector": cmd_connector,
     "messages": messages_mod.run,
-    "whatsapp": whatsapp_mod.run,
+    # Moved to curist-server's `fmdev` (C1105/C1114); one-release redirect
+    # stubs, not the real commands -- see `_MOVED_TO_FMDEV`'s own comment.
+    "instance": cmd_moved_to_fmdev,
+    "users": cmd_moved_to_fmdev,
+    "logs": cmd_moved_to_fmdev,
+    "space-plan": cmd_moved_to_fmdev,
+    "usage-tokens": cmd_moved_to_fmdev,
+    "alerts": cmd_moved_to_fmdev,
+    "settings": cmd_moved_to_fmdev,
+    "update": cmd_moved_to_fmdev,
+    "airtable": cmd_moved_to_fmdev,
+    "whatsapp": cmd_moved_to_fmdev,
 }
 
 

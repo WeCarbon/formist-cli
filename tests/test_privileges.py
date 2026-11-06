@@ -37,14 +37,23 @@ def test_every_level_is_a_known_level():
 def test_the_audit_is_not_all_one_level():
     """A table that classified everything ADMIN would satisfy every other
     assertion here and would say nothing. The CLI must stay usable on an
-    ordinary login, so the user-level half has to actually exist."""
+    ordinary login, so the user-level half has to actually exist.
+
+    The ADMIN threshold dropped from >= 8 when ten commands (instance/
+    users/logs/space-plan/usage-tokens/alerts/settings/update/airtable/
+    whatsapp) moved to curist-server's `fmdev` (C1105/C1114): none had a
+    non-admin meaning in `fm`, so none of fm's remaining commands needed
+    their LEVEL_ADMIN row any more either. `messages`/`participants` stay
+    ADMIN (they retire with C1073/C1110 instead), which is why this still
+    asserts > 0 rather than dropping the check altogether.
+    """
     levels = [p.level for p in privileges.TABLE.values()]
     assert levels.count(privileges.LEVEL_USER) >= 8, levels.count(privileges.LEVEL_USER)
-    assert levels.count(privileges.LEVEL_ADMIN) >= 8, levels.count(privileges.LEVEL_ADMIN)
+    assert levels.count(privileges.LEVEL_ADMIN) >= 2, levels.count(privileges.LEVEL_ADMIN)
 # --- the pre-flight refusal --------------------------------------------------------
 def test_a_credential_without_the_admin_scope_is_refused_before_any_socket():
     with pytest.raises(privileges.PrivilegeError) as exc:
-        privileges.check("users", ["evane:kb", "evane:cli"])
+        privileges.check("participants", ["evane:kb", "evane:cli"])
     message = str(exc.value)
     assert "platform-admin" in message
     assert "fm login" in message
@@ -53,7 +62,7 @@ def test_a_credential_without_the_admin_scope_is_refused_before_any_socket():
 
 
 def test_a_credential_with_the_admin_scope_passes():
-    privileges.check("users", ["evane:kb", "evane:cli", "evane:admin"])
+    privileges.check("participants", ["evane:kb", "evane:cli", "evane:admin"])
 
 
 def test_user_level_commands_are_never_refused_locally():
@@ -69,6 +78,6 @@ def test_unknown_scopes_are_passed_through_to_the_server():
     recorded (an older file, a hand-placed one) must reach the server
     rather than be guessed about locally. A local check must never refuse
     what the server would allow."""
-    privileges.check("users", None)
-    privileges.check("users", [])
-    privileges.check("users", "not-a-list")
+    privileges.check("participants", None)
+    privileges.check("participants", [])
+    privileges.check("participants", "not-a-list")
