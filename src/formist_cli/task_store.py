@@ -676,6 +676,16 @@ class LocalStore:
 
     def defer(self, id_: int, by: str, role: str | None = None, until: str | None = None,
                owner_said: str | None = None) -> Node:
+        """``nod defer`` (passive delay). An agent may only put work off on
+        the owner's own word — pass ``--owner-said`` with what they said,
+        or run it as ``--human`` (the owner typing it themselves)."""
+        resolved_role = role or role_of(by)
+        if resolved_role != "human" and not (owner_said and owner_said.strip()):
+            raise StoreError(
+                "an agent may only defer on the owner's word — pass --owner-said "
+                '"<what they said>", or --human if the owner is doing this themselves'
+            )
+
         def change(fresh: Node):
             if is_terminal(fresh.state):
                 raise StoreError(f"{format_ref(fresh.id, fresh.letter)} is already finished")

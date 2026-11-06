@@ -98,6 +98,24 @@ def test_defer_and_undefer(store):
     assert undeferred.deferred_at is None
 
 
+def test_defer_needs_owner_consent_unless_human_or_owner_said(store):
+    """An agent may only put work off on the owner's own word (verified
+    against real nod: a plain agent defer with neither is refused)."""
+    node = store.create("Something", "agent · author", task=True)
+    with pytest.raises(task_store.StoreError):
+        store.defer(node.id, "agent · author", role="agent", until="2026-12-25T23:59:59+08:00")
+
+    said = store.defer(
+        node.id, "agent · author", role="agent", until="2026-12-25T23:59:59+08:00",
+        owner_said="push it to the 25th",
+    )
+    assert said.deferred_until == "2026-12-25T23:59:59+08:00"
+
+    node2 = store.create("Something else", "agent · author", task=True)
+    human = store.defer(node2.id, "owner", role="human", until="2026-12-25T23:59:59+08:00")
+    assert human.deferred_until == "2026-12-25T23:59:59+08:00"
+
+
 def test_hold_and_unhold_active_wait(store):
     node = store.create("Something", "agent · author", task=True)
     held = store.hold(node.id, "Carol to confirm", "agent · author", until="2026-12-01T00:00:00+08:00")

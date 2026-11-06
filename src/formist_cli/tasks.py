@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
 from formist_cli import task_identity, task_paths, task_store
@@ -138,6 +139,42 @@ def _by(args) -> str:
     if env_author:
         return env_author
     raise TasksError('who is writing this? pass --author "<agent> · <doing what>", or set NODDIT_AUTHOR.')
+
+
+_FULL_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}:\d{2}$")
+
+
+def _resolve_date_flag(raw: str | None, flag: str, resolver) -> str | None:
+    """A date CLI flag's value, through `nod date`'s fuzzy parser — unless
+    it's already a full ISO-with-offset timestamp (what this tool's own
+    ``--json`` output and `now_stamp` produce), which is passed through
+    unchanged rather than re-parsed (re-parsing it through `parse_when`
+    would re-stamp it with THIS machine's current offset, silently
+    changing an explicit one from elsewhere)."""
+    if raw is None or _FULL_ISO_RE.match(raw):
+        return raw
+    resolved = resolver(raw)
+    if resolved is None:
+        raise TasksError(f'{flag} "{raw}" is not a date I can read (try: tomorrow, fri, 3d, 15 nov, 2026-11-15, 下周一)')
+    return resolved
+
+
+def _resolve_due(raw: str | None) -> str | None:
+    from formist_cli import task_fuzzy_date
+
+    return _resolve_date_flag(raw, "--due", task_fuzzy_date.resolve_due)
+
+
+def _resolve_until(raw: str | None) -> str | None:
+    from formist_cli import task_fuzzy_date
+
+    return _resolve_date_flag(raw, "--until", task_fuzzy_date.resolve_until)
+
+
+def _resolve_remind(raw: str | None) -> str | None:
+    from formist_cli import task_fuzzy_date
+
+    return _resolve_date_flag(raw, "--remind", task_fuzzy_date.resolve_until)
 
 
 def _print_node(node, as_json: bool, lang: str = "en") -> None:
@@ -526,9 +563,9 @@ def _cmd_add(args) -> int:
     reversible = {"yes": True, "no": False}.get(args.reversible)
     node = target.create(
         args.title, author, body=_read_body(args), options=options or None, default=args.default,
-        task=args.task, fyi=args.fyi, tags=args.tag, urgency=args.urgency, due=args.due,
+        task=args.task, fyi=args.fyi, tags=args.tag, urgency=args.urgency, due=_resolve_due(args.due),
         parent=args.parent, after=args.after, est=args.est, assignee=assignee,
-        milestone=args.milestone or False, intake=args.brief, remind_at=args.remind,
+        milestone=args.milestone or False, intake=args.brief, remind_at=_resolve_remind(args.remind),
         if_no_answer=args.if_no_answer, reversible=reversible,
     )
     if args.important:
@@ -662,9 +699,9 @@ def _cmd_defer(args) -> int:
         else:
             result = target.undefer(node.id, author, role)
     elif args.on:
-        result = target.hold(node.id, args.on, author, role, until=args.until)
+        result = target.hold(node.id, args.on, author, role, until=_resolve_until(args.until))
     else:
-        result = target.defer(node.id, author, role, until=args.until, owner_said=args.owner_said)
+        result = target.defer(node.id, author, role, until=_resolve_until(args.until), owner_said=args.owner_said)
     _print_node(result, args.json)
     return 0
 
@@ -723,12 +760,13 @@ def _cmd_assign(args) -> int:
 def _cmd_flag(args) -> int:
     _mode, target = resolve_mode(args)
     node = _resolve_local(target, args.ref)
+    due = _resolve_due(args.due)
     if args.flag == "important":
-        result = target.flag(node.id, important=True, due=args.due)
+        result = target.flag(node.id, important=True, due=due)
     elif args.flag == "milestone":
-        result = target.flag(node.id, milestone=True, due=args.due)
+        result = target.flag(node.id, milestone=True, due=due)
     else:
-        result = target.flag(node.id, important=False, milestone=False, due=args.due)
+        result = target.flag(node.id, important=False, milestone=False, due=due)
     _print_node(result, args.json)
     return 0
 

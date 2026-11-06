@@ -86,6 +86,45 @@ def test_order_through_cli(tmp_path, monkeypatch, capsys):
     assert json.loads(out)[0]["order"] is None
 
 
+def test_add_resolves_a_fuzzy_due_date(tmp_path, monkeypatch, capsys):
+    # Not a hardcoded date: "next week" is resolved relative to whenever
+    # the gate actually runs, so this stays correct on any date.
+    from formist_cli import task_fuzzy_date
+
+    expected = task_fuzzy_date.resolve_due("next week")
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    code, out, _ = _run(capsys, "add", "Something", "--task", "--due", "next week", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    assert json.loads(out)["due"] == expected
+
+
+def test_add_refuses_an_unparseable_due_date(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    code, _, err = _run(capsys, "add", "Something", "--task", "--due", "not a date", "--dir", str(tmp_path))
+    assert code != 0
+    assert "--due" in err
+
+
+def test_defer_needs_owner_said_or_human_through_cli(tmp_path, monkeypatch, capsys):
+    from formist_cli import task_fuzzy_date
+
+    expected = task_fuzzy_date.resolve_until("mon")
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    _run(capsys, "add", "Something", "--task", "--dir", str(tmp_path))
+
+    code, _, err = _run(capsys, "defer", "X1", "--until", "mon", "--agent", "--dir", str(tmp_path))
+    assert code != 0
+    assert "owner" in err
+
+    code, out, _ = _run(capsys, "defer", "X1", "--until", "mon", "--owner-said", "push to monday",
+                         "--agent", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    assert json.loads(out)["deferred_until"] == expected
+
+
 def test_no_decisions_dir_and_no_host_refuses_with_a_hint(tmp_path, capsys):
     code = cli.main(["task", "show", "--dir", str(tmp_path)])
     err = capsys.readouterr().err
