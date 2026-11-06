@@ -301,6 +301,11 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--clear", action="store_true")
     _add_common(p, write=True)
 
+    p = verbs.add_parser("order", help="put these nodes in this order by hand (first highest)")
+    p.add_argument("refs", nargs="+")
+    p.add_argument("--clear", action="store_true", help="back to the view's own order")
+    _add_common(p, write=True)
+
     p = verbs.add_parser("ask", help="needs the owner to rule -> needs decision")
     p.add_argument("ref")
     p.add_argument("--option", "-o", action="append", default=[], metavar="KEY=LABEL")
@@ -706,6 +711,23 @@ def _cmd_after(args) -> int:
     return 0
 
 
+def _cmd_order(args) -> int:
+    _mode, target = resolve_mode(args)
+    nodes = [_resolve_local(target, ref) for ref in args.refs]
+    if args.clear:
+        results = [target.unarrange(n.id) for n in nodes]
+    else:
+        results = target.arrange([n.id for n in nodes])
+    if args.json:
+        from formist_cli import task_json
+
+        print(json.dumps([task_json.to_json(n) for n in results], indent=2, ensure_ascii=False, default=str))
+        return 0
+    for r in results:
+        _print_node(r, False)
+    return 0
+
+
 def _cmd_ask(args) -> int:
     _mode, target = resolve_mode(args)
     node = _resolve_local(target, args.ref)
@@ -951,7 +973,8 @@ _VERBS = {
     "add": _cmd_add, "get": _cmd_get, "show": _cmd_show, "tree": _cmd_tree, "search": _cmd_search,
     "start": _cmd_start, "done": _cmd_done, "close": _cmd_close, "archive": _cmd_archive,
     "defer": _cmd_defer, "undefer": _cmd_undefer, "retitle": _cmd_retitle, "supersede": _cmd_supersede,
-    "assign": _cmd_assign, "flag": _cmd_flag, "after": _cmd_after, "ask": _cmd_ask, "push": _cmd_push,
+    "assign": _cmd_assign, "flag": _cmd_flag, "after": _cmd_after, "order": _cmd_order,
+    "ask": _cmd_ask, "push": _cmd_push,
     "read": _cmd_read, "queue": _cmd_queue, "note": _cmd_note, "edit": _cmd_edit,
     "progress": _cmd_progress, "steps": _cmd_steps, "step": _cmd_step, "beat": _cmd_beat,
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,

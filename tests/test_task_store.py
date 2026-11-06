@@ -130,6 +130,28 @@ def test_flag_milestone_needs_due(store):
     assert flagged.milestone is True
 
 
+def test_order_arrange_and_unarrange(store):
+    a = store.create("A", "agent · author", task=True)
+    b = store.create("B", "agent · author", task=True)
+    c = store.create("C", "agent · author", task=True)
+
+    arranged = store.arrange([b.id, a.id, c.id])
+    by_id = {n.id: n for n in arranged}
+    assert by_id[b.id].order == -3
+    assert by_id[a.id].order == -2
+    assert by_id[c.id].order == -1
+
+    # Re-arranging to the identical order is a no-op (no spurious write).
+    before = store.get(a.id).updated_at
+    store.arrange([b.id, a.id, c.id])
+    assert store.get(a.id).updated_at == before
+
+    cleared = store.unarrange(a.id)
+    assert cleared.order is None
+    # Clearing twice is a no-op, not an error.
+    store.unarrange(a.id)
+
+
 def test_after_and_is_startable(store):
     blocker = store.create("Blocker", "agent · author", task=True)
     dependent = store.create("Dependent", "agent · author", task=True, after=[str(blocker.id)])

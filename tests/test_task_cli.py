@@ -71,6 +71,21 @@ def test_show_lists_available_nodes(tmp_path, monkeypatch, capsys):
     assert "Task one" in out
 
 
+def test_order_through_cli(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    _run(capsys, "add", "A", "--task", "--dir", str(tmp_path), "--json")
+    _run(capsys, "add", "B", "--task", "--dir", str(tmp_path), "--json")
+    code, out, _ = _run(capsys, "order", "X2", "X1", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    ordered = json.loads(out)
+    assert [n["order"] for n in ordered] == [-2, -1]
+
+    code, out, _ = _run(capsys, "order", "X1", "--clear", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    assert json.loads(out)[0]["order"] is None
+
+
 def test_no_decisions_dir_and_no_host_refuses_with_a_hint(tmp_path, capsys):
     code = cli.main(["task", "show", "--dir", str(tmp_path)])
     err = capsys.readouterr().err

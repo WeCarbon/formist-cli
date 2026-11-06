@@ -568,6 +568,36 @@ class LocalStore:
 
         return self.mutate(id_, change)
 
+    def arrange(self, ids: list[int]) -> list[Node]:
+        """``nod order`` — ``Store.arrange``: put these nodes in this order
+        by hand, the first highest. ``order = i - len(ids)`` so the first
+        gets the most negative number and the last gets ``-1``, always
+        sorting above anything with no manual order (default 0). Only
+        nodes whose order actually changes get written."""
+        n = len(ids)
+        results = []
+        for i, id_ in enumerate(ids):
+            target = i - n
+
+            def change(fresh: Node, target=target):
+                if fresh.order == target:
+                    return None, None
+                fresh.order = target
+                return fresh, None
+
+            results.append(self.mutate(id_, change))
+        return results
+
+    def unarrange(self, id_: int) -> Node:
+        """``nod order --clear`` — ``Store.unarrange``."""
+        def change(fresh: Node):
+            if fresh.order is None:
+                return None, None
+            fresh.order = None
+            return fresh, None
+
+        return self.mutate(id_, change)
+
     # -- defer / wait -----------------------------------------------------
 
     def defer(self, id_: int, by: str, role: str | None = None, until: str | None = None,
