@@ -108,8 +108,16 @@ class LocalStore:
 
         return task_project.read_project_config(self.layout)
 
-    def letter(self) -> str | None:
-        return self._project_config().get("letter")
+    def letter(self) -> str:
+        """The project's display letter (``W`` in ``W305``); ``X`` when it
+        has none — a real port of ``store.ts``'s ``letterOf``, which
+        NEVER returns ``None`` (``format_ref``'s own ``letter or
+        DEFAULT_LETTER`` fallback only masks this at render time; a raw
+        ``i.letter == r.letter`` comparison, as ``find_ref`` does for every
+        ``after``/``supersedes`` cross-reference, needs the real value)."""
+        from formist_cli import task_project
+
+        return task_project.project_letter(self.layout)
 
     def project_key(self) -> str:
         return os.path.basename(self.layout.project_root)
@@ -1274,6 +1282,14 @@ class LocalStore:
         from formist_cli import task_views
 
         return task_views.apply_show_scope(self.all_nodes(), scope, stale)
+
+    def check(self) -> list:
+        """``nod check`` — validates every node. ``--fix`` is not ported
+        (gap, tracked under C1140): every problem here is reported, none
+        auto-repaired."""
+        from formist_cli import task_check
+
+        return task_check.check_project(self.layout, self.project_key(), self.letter())
 
     def changes(self, since: str) -> list[dict]:
         """``nod changes`` — simplified: derived from every node's own

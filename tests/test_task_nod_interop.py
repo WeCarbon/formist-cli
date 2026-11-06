@@ -182,6 +182,88 @@ def test_view_add_storage_matches_nod(interop_env, capsys):
     assert "fm-made" in [v["id"] for v in reread["views"]]
 
 
+def test_check_matches_nod_across_every_problem_shape(interop_env, capsys):
+    """Hand-writes one file per problem ``check`` flags — a duplicate id,
+    an id/filename mismatch, a bad default, a repeated option key, an
+    archived-without-answer decision, an orphan approval record, a
+    missing id reservation, and an ``after`` cycle written in inline
+    flow-sequence style (``after: ["X8"]``) — and diffs `fm task check
+    --json` against the real `nod check --json` on the identical
+    directory. Found two real bugs while building this: ``task_yaml``
+    didn't parse flow-sequence scalars at all (a block-style list is all
+    `nod` itself ever writes, but a hand-edited file like this one can
+    use either, and a full YAML parser reads both), and ``LocalStore``'s
+    ``letter()`` returned ``None`` instead of defaulting to ``"X"``,
+    which broke `after`-cycle resolution for every project that never
+    set an explicit letter — both fixed; see ``test_task_check.py`` and
+    ``test_task_store.py::test_letter_defaults_to_x_and_cross_refs_resolve``."""
+    tmp_path, env = interop_env
+
+    def write(rel, frontmatter, body="\nBody.\n"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"---\n{frontmatter}\n---\n{body}", encoding="utf-8")
+
+    def reserve(id_):
+        d = tmp_path / "decisions" / ".ids"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / str(id_)).touch()
+
+    write("decisions/active/1-clean.md",
+          "id: 1\ntitle: Clean task\nauthor: agent · interop test\nstatus: in_progress\n"
+          "created: 2026-11-01T10:00:00+08:00")
+    reserve(1)
+    write("decisions/active/2-bad-options.md",
+          'id: 2\ntitle: Bad options\nauthor: agent · interop test\nkind: decision\n'
+          'status: needs_decision\ndefault: "9"\ncreated: 2026-11-01T10:00:00+08:00',
+          body="\n## 选项\n\n### 1 · A\n\nbody a\n\n### 1 · A dup\n\nbody a2\n")
+    reserve(2)
+    write("decisions/active/3-mismatch.md",
+          "id: 99\ntitle: Mismatched id\nauthor: agent · interop test\nstatus: not_started\n"
+          "created: 2026-11-01T10:00:00+08:00")
+    reserve(3)
+    write("decisions/archived/4-archived-no-answer.md",
+          "id: 4\ntitle: Archived no answer\nauthor: agent · interop test\nkind: decision\n"
+          "status: needs_decision\ncreated: 2026-11-01T10:00:00+08:00\n"
+          "archived_at: 2026-11-02T10:00:00+08:00",
+          body="\n## 选项\n\n### 1 · A\n\n")
+    reserve(4)
+    write("decisions/active/5-approval-orphan.md",
+          'id: 5\ntitle: Orphan approval\nauthor: agent · interop test\nstatus: in_progress\n'
+          'created: 2026-11-01T10:00:00+08:00\n'
+          'approvals:\n  - target: missing.txt\n    hash: deadbeef\n    approve_on: ["1"]')
+    reserve(5)
+    write("decisions/active/6-no-reservation.md",
+          "id: 6\ntitle: No reservation\nauthor: agent · interop test\nstatus: not_started\n"
+          "created: 2026-11-01T10:00:00+08:00")
+    # Deliberately no reserve(6).
+    write("decisions/active/7-cycle-a.md",
+          'id: 7\ntitle: Cycle A\nauthor: agent · interop test\nstatus: not_started\n'
+          'created: 2026-11-01T10:00:00+08:00\nafter: ["X8"]')
+    reserve(7)
+    write("decisions/active/8-cycle-b.md",
+          'id: 8\ntitle: Cycle B\nauthor: agent · interop test\nstatus: not_started\n'
+          'created: 2026-11-01T10:00:00+08:00\nafter: ["X7"]')
+    reserve(8)
+
+    # Not `_nod`/`_fm`: both assert a zero exit code, but a project with
+    # real errors in it is exactly what `check` is supposed to exit 1 on.
+    nod_result = subprocess.run(
+        [NOD, "check", "--dir", str(tmp_path), "--json"], env=env, check=False,
+        capture_output=True, text=True, timeout=15,
+    )
+    assert nod_result.returncode == 1
+    nod_problems = sorted(json.loads(nod_result.stdout), key=lambda p: (p["level"], p["file"], p["message"]))
+
+    fm_code = tasks.main(["check", "--dir", str(tmp_path), "--json"])
+    fm_out = capsys.readouterr().out
+    assert fm_code == 1
+    fm_problems = sorted(json.loads(fm_out), key=lambda p: (p["level"], p["file"], p["message"]))
+
+    assert fm_problems == nod_problems
+    assert len(fm_problems) == 8  # belt and suspenders: every shape actually fired
+
+
 def test_round_trip_every_fixture_through_both_tools(interop_env):
     """Belt and suspenders: every fixture file this repo ships round-trips
     through a real `nod get --json` the same way it round-trips through

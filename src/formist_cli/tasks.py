@@ -473,6 +473,9 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true")
     _add_common(p)
 
+    p = verbs.add_parser("check", help="validate every node")
+    _add_common(p)
+
     p = verbs.add_parser("changes", help="everything after --since")
     p.add_argument("--since", required=True)
     _add_common(p)
@@ -1121,6 +1124,37 @@ def _cmd_briefs(args) -> int:
     return 0
 
 
+def _cmd_check(args) -> int:
+    _mode, target = resolve_mode(args)
+    problems, total = target.check()
+    errors = [p for p in problems if p.level == "error"]
+    if args.json:
+        print(json.dumps([{"level": p.level, "file": p.file, "message": p.message} for p in problems],
+                          ensure_ascii=False))
+        return 1 if errors else 0
+
+    # The same warning across dozens of entries is one fact, not fifty.
+    by_message: dict[str, list] = {}
+    for p in problems:
+        by_message.setdefault(p.message, []).append(p)
+    for message, group in by_message.items():
+        mark = "✗" if group[0].level == "error" else "!"
+        for p in group[:5]:
+            print(f"{mark} {p.file} — {message}")
+        if len(group) > 5:
+            extra = len(group) - 5
+            if extra == 1:
+                print(f'  …{extra} more entry is also "{message}"')
+            else:
+                print(f'  …{extra} more entries are also "{message}"')
+
+    if problems:
+        print(f"\n{total} entries, {len(errors)} errors, {len(problems) - len(errors)} warnings")
+    else:
+        print(f"{total} entries, no problems")
+    return 1 if errors else 0
+
+
 def _cmd_changes(args) -> int:
     mode, target = resolve_mode(args)
     if mode != "local":
@@ -1278,6 +1312,6 @@ _VERBS = {
     "read": _cmd_read, "queue": _cmd_queue, "note": _cmd_note, "edit": _cmd_edit,
     "progress": _cmd_progress, "steps": _cmd_steps, "step": _cmd_step, "beat": _cmd_beat,
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,
-    "briefs": _cmd_briefs, "changes": _cmd_changes, "monitor": _cmd_monitor,
+    "briefs": _cmd_briefs, "check": _cmd_check, "changes": _cmd_changes, "monitor": _cmd_monitor,
     "wait": _cmd_wait, "watch": _cmd_watch,
 }

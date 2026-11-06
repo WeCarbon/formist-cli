@@ -190,12 +190,66 @@ def _unquote(raw: str) -> str:
     return raw
 
 
+def _split_flow_items(inner: str) -> list[str]:
+    """Top-level comma split inside ``[...]``, respecting quotes and nested
+    brackets (so a comma inside a quoted string, e.g. ``["a, b"]``, is not
+    mistaken for an item separator)."""
+    items: list[str] = []
+    depth = 0
+    quote: str | None = None
+    current: list[str] = []
+    i = 0
+    n = len(inner)
+    while i < n:
+        c = inner[i]
+        if quote:
+            current.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:
+                current.append(inner[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ('"', "'"):
+            quote = c
+            current.append(c)
+        elif c in "[{":
+            depth += 1
+            current.append(c)
+        elif c in "]}":
+            depth -= 1
+            current.append(c)
+        elif c == "," and depth == 0:
+            items.append("".join(current))
+            current = []
+        else:
+            current.append(c)
+        i += 1
+    if current or items:
+        items.append("".join(current))
+    return items
+
+
+def _parse_flow_sequence(raw: str) -> list:
+    """``[a, "b, c"]`` style inline sequences — nod never *writes* these
+    (always block style), but a full YAML parser reads them, so a
+    hand-edited file nod accepts must not silently misparse under fm."""
+    inner = raw[1:-1].strip()
+    if not inner:
+        return []
+    return [resolve_scalar(part.strip()) for part in _split_flow_items(inner)]
+
+
 def resolve_scalar(raw: str) -> object:
     """A scalar's value, typed per the core schema — unless quoted, which
     always stays a string regardless of what it looks like."""
     raw = raw.strip()
     if raw[:1] in ('"', "'"):
         return _unquote(raw)
+    if raw.startswith("[") and raw.endswith("]"):
+        return _parse_flow_sequence(raw)
     if raw in _NULL_WORDS:
         return None
     if raw in _TRUE_WORDS:

@@ -364,3 +364,24 @@ def test_attach_and_approve(store, tmp_path):
     attachment_path.write_text("changed")
     code, _ = store.approved_check(approved.id, str(attachment_path))
     assert code == 1
+
+
+def test_letter_defaults_to_x_and_cross_refs_resolve(store):
+    """Regression (found while testing `check`/C1140): ``letter()`` used
+    to return ``None`` when no ``decs.json`` letter was configured — the
+    common case. ``format_ref`` masks this with its own ``letter or "X"``
+    fallback at render time, but ``find_ref``'s raw ``i.letter ==
+    r.letter`` comparison does not, so every ``after``/``supersedes``
+    cross-reference silently failed to resolve (``dependencies_of``
+    fell back to the unresolved ref string) whenever a project had no
+    explicit letter — which is every project that never ran `fm task
+    config letter`. Real nod's `letterOf` never returns null."""
+    from formist_cli import task_status
+
+    assert store.letter() == "X"
+
+    a = store.create("A", "agent · author", task=True)
+    b = store.create("B", "agent · author", task=True, after=["X1"])
+    nodes = store.all_nodes()
+    deps = task_status.dependencies_of(next(n for n in nodes if n.id == b.id), nodes)
+    assert deps == [next(n for n in nodes if n.id == a.id)]

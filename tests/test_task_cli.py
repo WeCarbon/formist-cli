@@ -154,6 +154,62 @@ def test_local_and_host_together_is_refused(tmp_path, capsys):
     assert "don't mix" in err
 
 
+def test_check_through_cli_json_and_text(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    _run(capsys, "add", "A plain task", "--task", "--body", "Some body text.", "--dir", str(tmp_path))
+
+    code, out, _ = _run(capsys, "check", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    assert json.loads(out) == []
+
+    code, out, _ = _run(capsys, "check", "--dir", str(tmp_path))
+    assert code == 0
+    assert "1 entries, no problems" in out
+
+
+def test_check_groups_repeated_messages_through_cli(tmp_path, monkeypatch, capsys):
+    """6 broken entries sharing the same message collapse to 5 lines
+    plus a "…1 more entry" summary line, matching ``check.ts``'s own
+    dedup-by-message grouping."""
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    layout = task_paths.find_layout(str(tmp_path))
+    import os
+
+    for i in range(1, 7):
+        with open(os.path.join(layout.active_dir, f"{i}.md"), "w", encoding="utf-8") as fh:
+            fh.write(f"---\nid: {i}\ntitle: No author {i}\nstatus: not_started\n"
+                      "created: 2026-11-01T10:00:00+08:00\n---\nBody.\n")
+        os.makedirs(layout.ids_dir, exist_ok=True)
+        open(os.path.join(layout.ids_dir, str(i)), "w").close()
+
+    code, out, _ = _run(capsys, "check", "--dir", str(tmp_path))
+    assert code == 0
+    lines = out.splitlines()
+    author_lines = [l for l in lines if l.startswith("!") and "no author" in l]
+    assert len(author_lines) == 5
+    assert any("…1 more entry is also" in l for l in lines)
+    assert "6 entries, 0 errors, 6 warnings" in out
+
+
+def test_check_exit_code_1_on_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    layout = task_paths.find_layout(str(tmp_path))
+    import os
+
+    with open(os.path.join(layout.active_dir, "1.md"), "w", encoding="utf-8") as fh:
+        fh.write('---\nid: 1\ntitle: Cycle\nauthor: agent · cli test\nstatus: not_started\n'
+                  'created: 2026-11-01T10:00:00+08:00\nafter: ["X1"]\n---\nBody.\n')
+    os.makedirs(layout.ids_dir, exist_ok=True)
+    open(os.path.join(layout.ids_dir, "1"), "w").close()
+
+    code, out, _ = _run(capsys, "check", "--dir", str(tmp_path))
+    assert code == 1
+    assert "dependency cycle" in out
+
+
 def test_resolve_mode_ignores_a_stray_token_without_fm_use(tmp_path, monkeypatch):
     """A token file left over from unrelated `fm` testing must not flip
     `fm task` into cloud mode on its own — only an actual `fm use` default
