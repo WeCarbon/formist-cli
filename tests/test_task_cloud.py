@@ -196,7 +196,7 @@ def test_changes_returns_the_events_list(store):
     api_stub._responses = [{
         "since": "2026-01-01T00:00:00+00:00", "until": "2026-01-02T00:00:00+00:00",
         "next_since": "2026-01-02T00:00:00+00:00",
-        "events": [{"ref": "X1", "project": "p", "title": "A", "entry_author": "a", "at": "...", "event": "created", "role": "agent", "by": "a"}],
+        "events": [{"ref": "X1", "project": "p", "title": "A", "entry_author": "a", "at": "...", "kind": "created", "role": "agent", "by": "a"}],
     }]
     events = cs.changes("2026-01-01T00:00:00+00:00")
     assert len(events) == 1
@@ -204,18 +204,22 @@ def test_changes_returns_the_events_list(store):
     assert method == "GET" and path.endswith("/nodes/changes") and params == {"since": "2026-01-01T00:00:00+00:00"}
 
 
-def test_changes_fills_kind_from_event_when_kind_is_absent(store):
-    """The route's own discriminator field is `event`, not `kind` the way
-    LocalStore.changes's events are keyed — found by reading the actual
-    route, not assuming "simplified mirror" meant "same field names"."""
+def test_changes_passes_kind_and_note_kind_through_unchanged(store):
+    """``kind`` (feat/noddit-tell 70886dc53) is already the six-value
+    discriminator ``LocalStore.changes``'s own events use — no
+    translation needed. A ``kind="note"`` row's finer activity type
+    lives in the separate ``note_kind`` field, left as-is (an earlier
+    server revision used ``event`` for the discriminator instead,
+    needing a backfill here — removed along with that revision)."""
     cs, api_stub = store
     api_stub._responses = [{"events": [
-        {"ref": "X1", "at": "t1", "event": "completed"},
-        {"ref": "X2", "at": "t2", "event": "note", "kind": "ask"},
+        {"ref": "X1", "at": "t1", "kind": "completed"},
+        {"ref": "X2", "at": "t2", "kind": "note", "note_kind": "ask"},
     ]}]
     events = cs.changes("2026-01-01T00:00:00+00:00")
-    assert events[0]["kind"] == "completed"  # filled in from `event`
-    assert events[1]["kind"] == "ask"  # the richer, already-present kind wins
+    assert events[0]["kind"] == "completed"
+    assert events[1]["kind"] == "note"
+    assert events[1]["note_kind"] == "ask"
 
 
 # ===========================================================================

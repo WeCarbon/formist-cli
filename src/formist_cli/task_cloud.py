@@ -432,23 +432,19 @@ class CloudStore:
         task changes` has no ``--since``-advancing loop to feed them
         to).
 
-        Each event's discriminator field is ``event`` here
-        (``created``/``answered``/``note``/``completed``/``closed``/
-        ``reopened``), not ``kind`` the way ``LocalStore.changes``'s own
-        events are keyed — a genuine shape difference the contract's
-        "simplified MIRROR, not byte-identical" already warned about,
-        found by reading the route rather than assuming "mirror" meant
-        "same field names". ``_cmd_changes`` prints ``e.get('kind')``
-        for either mode, so every event here gets a ``kind`` filled in
-        from ``event`` with ``setdefault`` — a ``note``/``answered`` row
-        already carries its own, more specific ``kind`` (the activity's
-        real kind, e.g. ``ask``/``deferred``), which this keeps rather
-        than overwriting."""
+        ``kind`` is the six-value discriminator (``created``/
+        ``answered``/``note``/``completed``/``closed``/``reopened``) —
+        same field name ``LocalStore.changes``'s own events use, no
+        translation needed here (feat/noddit-tell 70886dc53 moved the
+        server onto this name; an earlier revision used ``event``
+        instead, which needed an ``event``-to-``kind`` backfill here —
+        removed along with that revision). A ``kind="note"`` row's
+        finer activity type (e.g. ``ask``/``deferred``) is in
+        ``note_kind``, a separate field — ``_cmd_changes``'s own
+        printing reads that when present, same as this method leaves
+        it untouched rather than folding it into ``kind``."""
         data = self._get("/changes", {"since": since})
-        events = data.get("events", [])
-        for e in events:
-            e.setdefault("kind", e.get("event"))
-        return events
+        return data.get("events", [])
 
     # -- tell (C1130) ----------------------------------------------------------
     def _tell_base(self) -> str:

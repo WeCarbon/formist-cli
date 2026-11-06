@@ -687,10 +687,23 @@ def test_search_through_cli_reaches_cloud_mode(cloud, capsys):
 
 def test_changes_through_cli_reaches_cloud_mode(cloud, capsys):
     calls, responses, _stream_lines = cloud
-    responses.append({"events": [{"ref": "X1", "at": "2026-01-01T00:00:00+00:00", "event": "created"}]})
+    responses.append({"events": [{"ref": "X1", "at": "2026-01-01T00:00:00+00:00", "kind": "created"}]})
     code, out, _err = _run(
         capsys, "changes", "--since", "2026-01-01T00:00:00+00:00", "--host", "formist", "--space", SPACE,
     )
     assert code == 0
     assert "X1" in out and "created" in out
+    assert calls[0][1].endswith("/nodes/changes")
+
+
+def test_changes_through_cli_prefers_note_kind_for_a_note_row(cloud, capsys):
+    calls, responses, _stream_lines = cloud
+    responses.append({"events": [
+        {"ref": "X1", "at": "2026-01-01T00:00:00+00:00", "kind": "note", "note_kind": "ask"},
+    ]})
+    code, out, _err = _run(
+        capsys, "changes", "--since", "2026-01-01T00:00:00+00:00", "--host", "formist", "--space", SPACE,
+    )
+    assert code == 0
+    assert "ask" in out
     assert calls[0][1].endswith("/nodes/changes")

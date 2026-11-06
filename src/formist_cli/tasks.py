@@ -1300,7 +1300,13 @@ def _cmd_changes(args) -> int:
         print(json.dumps({"since": args.since, "events": events}, indent=2, ensure_ascii=False))
         return 0
     for e in events:
-        print(f"{e['at']}  {e['ref']}  {e.get('kind')}")
+        # cloud events: `kind` is the six-value discriminator (created/
+        # answered/note/completed/closed/reopened); a `kind="note"` row's
+        # finer activity type (ask/deferred/...) is the separate `note_kind`
+        # field, more specific and preferred for display when present —
+        # matching how local mode's own "kind" is already the specific
+        # note kind, not a generic category.
+        print(f"{e['at']}  {e['ref']}  {e.get('note_kind') or e.get('kind')}")
     return 0
 
 
