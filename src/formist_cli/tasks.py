@@ -1294,9 +1294,7 @@ def _cmd_check(args) -> int:
 
 
 def _cmd_changes(args) -> int:
-    mode, target = resolve_mode(args)
-    if mode != "local":
-        raise TasksError("`fm task changes` is local-mode only for now")
+    _mode, target = resolve_mode(args)
     events = target.changes(args.since)
     if args.json:
         print(json.dumps({"since": args.since, "events": events}, indent=2, ensure_ascii=False))
@@ -1340,14 +1338,23 @@ def _cmd_tell(args) -> int:
         return 0
     if not args.text:
         raise TasksError("`fm task tell` needs the owner's words, or --read/--finish/--list")
-    result = target.tell(
-        args.text, author=_author(args), attach=args.attach or None, under=args.under,
-        important=args.important,
-    )
+    # `nod tell`'s own default ("--author ... 默认 owner"): this is a relay
+    # of the OWNER's words, so with nothing given it signs as the owner,
+    # not whatever this agent's own NODDIT_AUTHOR happens to be — unlike
+    # every other write verb, which uses _author(args) and raises with
+    # neither.
+    author = getattr(args, "author", None) or "owner"
+    result = target.tell(args.text, author=author, attach=args.attach or None, under=args.under,
+                          important=args.important)
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"sent: {result.get('id', '?')}")
+        routed = result.get("routed")
+        tail = f" (routed: {routed})" if routed else ""
+        print(f"sent: {result.get('id', '?')}{tail}")
+        done = result.get("done")
+        if done:
+            print(f"filed as: {', '.join(done.get('refs') or [])}")
     return 0
 
 

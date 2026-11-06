@@ -169,6 +169,141 @@ def test_queue_refs_lists_queue_nodes(store):
 
 
 # ===========================================================================
+# search (C1130)
+# ===========================================================================
+def test_search_joins_words_into_one_q_and_lists_nodes(store):
+    cs, api_stub = store
+    api_stub._responses = [{"nodes": [_node(id=3, ref="X3", title="Ship it")]}]
+    hits = cs.search(["ship", "it"])
+    assert [n.id for n in hits] == [3]
+    method, path, params = api_stub.calls[0]
+    assert method == "GET" and path.endswith("/nodes/search")
+    assert params == {"q": "ship it"}
+
+
+def test_search_include_archived_sends_all_true(store):
+    cs, api_stub = store
+    api_stub._responses = [{"nodes": []}]
+    cs.search(["x"], include_archived=True)
+    assert api_stub.calls[0][2] == {"q": "x", "all": "true"}
+
+
+# ===========================================================================
+# changes (C1130)
+# ===========================================================================
+def test_changes_returns_the_events_list(store):
+    cs, api_stub = store
+    api_stub._responses = [{
+        "since": "2026-01-01T00:00:00+00:00", "until": "2026-01-02T00:00:00+00:00",
+        "next_since": "2026-01-02T00:00:00+00:00",
+        "events": [{"ref": "X1", "project": "p", "title": "A", "entry_author": "a", "at": "...", "event": "created", "role": "agent", "by": "a"}],
+    }]
+    events = cs.changes("2026-01-01T00:00:00+00:00")
+    assert len(events) == 1
+    method, path, params = api_stub.calls[0]
+    assert method == "GET" and path.endswith("/nodes/changes") and params == {"since": "2026-01-01T00:00:00+00:00"}
+
+
+def test_changes_fills_kind_from_event_when_kind_is_absent(store):
+    """The route's own discriminator field is `event`, not `kind` the way
+    LocalStore.changes's events are keyed — found by reading the actual
+    route, not assuming "simplified mirror" meant "same field names"."""
+    cs, api_stub = store
+    api_stub._responses = [{"events": [
+        {"ref": "X1", "at": "t1", "event": "completed"},
+        {"ref": "X2", "at": "t2", "event": "note", "kind": "ask"},
+    ]}]
+    events = cs.changes("2026-01-01T00:00:00+00:00")
+    assert events[0]["kind"] == "completed"  # filled in from `event`
+    assert events[1]["kind"] == "ask"  # the richer, already-present kind wins
+
+
+# ===========================================================================
+# tell (C1130)
+# ===========================================================================
+def _tell(**over):
+    base = {
+        "id": "t-1", "text": "please check the budget", "under": None, "author": "owner",
+        "important": False, "created_at": "2026-01-01T00:00:00+00:00", "routed": "session",
+        "done": None, "node": None, "chat_id": None,
+    }
+    base.update(over)
+    return base
+
+
+def test_tell_posts_text_author_under_important(store):
+    cs, api_stub = store
+    api_stub._responses = [_tell()]
+    result = cs.tell("please check the budget", author="owner", under="X5", important=True)
+    assert result["id"] == "t-1"
+    method, path, body = api_stub.calls[0]
+    assert method == "POST" and path.endswith("/tell")
+    assert body == {"text": "please check the budget", "author": "owner", "under": "X5", "important": True}
+
+
+def test_tell_refuses_attach_naming_the_reason(store):
+    cs, _api = store
+    with pytest.raises(task_cloud.CloudNotAvailable, match="attachments"):
+        cs.tell("x", attach=["/some/file"])
+
+
+def test_tell_cloud_routing_carries_done_node_and_chat_id(store):
+    cs, api_stub = store
+    api_stub._responses = [_tell(
+        routed="cloud", done={"at": "2026-01-01T00:00:01+00:00", "refs": ["X9"]},
+        node=_node(id=9, ref="X9"), chat_id="chat-1",
+    )]
+    result = cs.tell("do a thing")
+    assert result["routed"] == "cloud"
+    assert result["done"]["refs"] == ["X9"]
+    assert result["chat_id"] == "chat-1"
+
+
+def test_tell_list_unread_only_by_default(store):
+    cs, api_stub = store
+    api_stub._responses = [{"items": [_tell(id="t-1")]}]
+    items = cs.tell_list()
+    assert [i["id"] for i in items] == ["t-1"]
+    method, path, params = api_stub.calls[0]
+    assert method == "GET" and path.endswith("/tell") and params == {"unread": "1"}
+
+
+def test_tell_list_include_finished_sends_unread_0(store):
+    cs, api_stub = store
+    api_stub._responses = [{"items": []}]
+    cs.tell_list(include_finished=True)
+    assert api_stub.calls[0][2] == {"unread": "0"}
+
+
+def test_tell_read_finds_the_matching_id_from_the_full_list(store):
+    """No GET /tell/{id} route — this reads the full list and picks one,
+    matching `nod tell --read`'s own "print one, change nothing"."""
+    cs, api_stub = store
+    api_stub._responses = [{"items": [_tell(id="t-1", text="first"), _tell(id="t-2", text="second")]}]
+    result = cs.tell_read("t-2")
+    assert result["text"] == "second"
+    assert api_stub.calls[0][2] == {"unread": "0"}  # reads everything, not just unread
+
+
+def test_tell_read_raises_not_found_for_an_unknown_id(store):
+    from formist_cli.task_store import NotFoundError
+
+    cs, api_stub = store
+    api_stub._responses = [{"items": []}]
+    with pytest.raises(NotFoundError):
+        cs.tell_read("nope")
+
+
+def test_tell_finish_posts_refs(store):
+    cs, api_stub = store
+    api_stub._responses = [_tell(id="t-1", done={"at": "...", "refs": ["X1", "X2"]})]
+    result = cs.tell_finish("t-1", ["X1", "X2"])
+    assert result["done"]["refs"] == ["X1", "X2"]
+    method, path, body = api_stub.calls[0]
+    assert method == "POST" and path.endswith("/tell/t-1/finish") and body == {"refs": ["X1", "X2"]}
+
+
+# ===========================================================================
 # create / edit
 # ===========================================================================
 def test_create_posts_add_node_shape(store):
@@ -397,14 +532,12 @@ def test_defer_as_human_needs_no_owner_said(store):
 # ===========================================================================
 @pytest.mark.parametrize("call", [
     lambda cs: cs.show("open"),
-    lambda cs: cs.search(["x"]),
     lambda cs: cs.arrange([1, 2]),
     lambda cs: cs.unarrange(1),
     lambda cs: cs.attach(),
     lambda cs: cs.approved_check(),
     lambda cs: cs.expand(),
     lambda cs: cs.check(),
-    lambda cs: cs.changes("2026-01-01"),
     lambda cs: cs.edit_note(5, 2, text="x"),
 ])
 def test_not_yet_available_verbs_refuse_clearly(store, call):

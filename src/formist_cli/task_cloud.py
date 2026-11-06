@@ -393,8 +393,17 @@ class CloudStore:
             "vocabulary from `show`'s own scopes — see the module docstring",
         )
 
-    def search(self, words, include_archived: bool = False):
-        raise CloudNotAvailable("search")
+    def search(self, words, include_archived: bool = False) -> list[CloudNode]:
+        """``GET /nodes/search?q=`` (C1130): every word of ``q`` matched
+        against title or body, case-insensitive; ``all=true`` also
+        searches archived nodes (noddit's own default excludes them —
+        ``include_archived`` is the CLI's ``--all``, same spelling local
+        mode uses)."""
+        params = {"q": " ".join(words)}
+        if include_archived:
+            params["all"] = "true"
+        data = self._get("/search", params)
+        return [CloudNode(n) for n in data["nodes"]]
 
     def arrange(self, ids):
         raise CloudNotAvailable("order")
@@ -414,28 +423,81 @@ class CloudStore:
     def check(self):
         raise CloudNotAvailable("check", reason="there is no decisions/ tree in cloud mode")
 
-    def changes(self, since):
-        raise CloudNotAvailable("changes")
+    def changes(self, since: str) -> list[dict]:
+        """``GET /nodes/changes?since=`` (C1130): ``{since, until,
+        next_since, events[]}`` — only ``events`` is returned here,
+        matching ``LocalStore.changes``'s own return shape (a plain
+        list `_cmd_changes` iterates); ``until``/``next_since`` (the
+        route's own pagination cursor) are not surfaced yet (gap: `fm
+        task changes` has no ``--since``-advancing loop to feed them
+        to).
 
-    # -- tell: not landed yet (contract §4 names the shape, not the route) ---
-    _TELL_REASON = (
-        "contract §4 names the shape (POST /tell, GET /tell?unread=, "
-        "POST /tell/{id}/finish) but no route exists yet — this is the "
-        "C1053/C1139 ask for C1130's server side"
-    )
+        Each event's discriminator field is ``event`` here
+        (``created``/``answered``/``note``/``completed``/``closed``/
+        ``reopened``), not ``kind`` the way ``LocalStore.changes``'s own
+        events are keyed — a genuine shape difference the contract's
+        "simplified MIRROR, not byte-identical" already warned about,
+        found by reading the route rather than assuming "mirror" meant
+        "same field names". ``_cmd_changes`` prints ``e.get('kind')``
+        for either mode, so every event here gets a ``kind`` filled in
+        from ``event`` with ``setdefault`` — a ``note``/``answered`` row
+        already carries its own, more specific ``kind`` (the activity's
+        real kind, e.g. ``ask``/``deferred``), which this keeps rather
+        than overwriting."""
+        data = self._get("/changes", {"since": since})
+        events = data.get("events", [])
+        for e in events:
+            e.setdefault("kind", e.get("event"))
+        return events
+
+    # -- tell (C1130) ----------------------------------------------------------
+    def _tell_base(self) -> str:
+        return f"/projects/{self.project_id}/tell"
 
     def tell(self, text: str, *, author: str | None = None, attach=None, under: str | None = None,
               important: bool = False) -> dict:
-        raise CloudNotAvailable("tell", reason=self._TELL_REASON)
+        """``POST /tell``. ``attach`` has no server field (the route body
+        is ``text``/``author``/``under``/``important`` only) — attachments
+        aren't landed at all yet (contract §4.1's own note), so this
+        refuses explicitly rather than silently dropping what was asked
+        for."""
+        if attach:
+            raise CloudNotAvailable(
+                "tell --attach", reason="attachments aren't landed server-side yet (contract §4.1)",
+            )
+        body = _drop_none({"text": text, "author": author, "under": under, "important": important})
+        return api.post(self.ctx.target, self._tell_base(), body, token=self.ctx.token)
 
     def tell_read(self, id_: str) -> dict:
-        raise CloudNotAvailable("tell --read", reason=self._TELL_REASON)
+        """No ``GET /tell/{id}`` route — reads the full list
+        (``unread=0``, every message, not just unfinished ones) and
+        picks the one asked for, matching ``nod tell --read``'s own
+        "print one message, change nothing" contract without a
+        single-item route to call."""
+        items = self.tell_list(include_finished=True)
+        for item in items:
+            if str(item.get("id")) == str(id_):
+                return item
+        from formist_cli.task_store import NotFoundError
+
+        raise NotFoundError(f"no tell message {id_!r}")
 
     def tell_finish(self, id_: str, refs: list[str]) -> dict:
-        raise CloudNotAvailable("tell --finish", reason=self._TELL_REASON)
+        return api.post(self.ctx.target, f"{self._tell_base()}/{id_}/finish", {"refs": refs}, token=self.ctx.token)
 
     def tell_list(self, include_finished: bool = False) -> list[dict]:
-        raise CloudNotAvailable("tell --list", reason=self._TELL_REASON)
+        """``GET /tell?unread=`` -> ``TellList`` = ``{"items": [...]}``.
+        ``unread`` is always passed explicitly (never omitted): the
+        route's own default (query param absent) is ``False`` — no
+        filter, every message — which reads backwards against its own
+        docstring ("default: unhandled only"); rather than depend on
+        which of those two is actually right, this always sends
+        ``unread=1`` (unfinished only) or ``unread=0`` (every message,
+        ``fm task tell --list --all``) explicitly, exactly the two
+        values the brief's own example used."""
+        params = {"unread": "0" if include_finished else "1"}
+        data = api.get(self.ctx.target, self._tell_base(), token=self.ctx.token, params=params)
+        return data["items"]
 
     # -- live agent sessions (contract §7) ------------------------------------
     def register_session(self, client_session: str, *, client: str = "claude-code", label: str | None = None,

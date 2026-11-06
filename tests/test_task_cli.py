@@ -484,11 +484,24 @@ def test_tell_in_local_mode_refuses_with_the_no_registry_reason(tmp_path, monkey
     assert "no multi-project main-session registry" in err
 
 
-def test_tell_in_cloud_mode_refuses_naming_the_missing_route(cloud, capsys):
-    code, _out, err = _run(capsys, "tell", "please check the budget",
+def test_tell_through_cli_reaches_cloud_mode(cloud, capsys):
+    """`fm task tell` in cloud mode now reaches POST /tell for real
+    (C1130's routes landed) — the client-shape work from before is now
+    live, not a refusal."""
+    calls, responses, _stream_lines = cloud
+    responses.append({
+        "id": "t-1", "text": "please check the budget", "under": None, "author": "owner",
+        "important": False, "created_at": "2026-01-01T00:00:00+00:00", "routed": "cloud",
+        "done": {"at": "2026-01-01T00:00:01+00:00", "refs": ["X9"]},
+        "node": _node_json(id=9, ref="X9"), "chat_id": "chat-1",
+    })
+    code, out, _err = _run(capsys, "tell", "please check the budget",
                             "--author", "owner", "--host", "formist", "--space", SPACE)
-    assert code == 2
-    assert "POST /tell" in err
+    assert code == 0
+    assert "routed: cloud" in out
+    assert "filed as: X9" in out
+    assert calls[0][0] == "POST" and calls[0][1].endswith("/tell")
+    assert calls[0][2] == {"text": "please check the budget", "author": "owner", "important": False}
 
 
 def test_tell_needs_text_or_a_subcommand_flag(tmp_path, monkeypatch, capsys):
@@ -657,3 +670,27 @@ def test_a_human_running_start_records_no_session_state(tmp_path, monkeypatch):
     from formist_cli import task_sessions
 
     assert task_sessions.current_node() is None
+
+
+# ===========================================================================
+# search / changes through cloud mode (C1130)
+# ===========================================================================
+def test_search_through_cli_reaches_cloud_mode(cloud, capsys):
+    calls, responses, _stream_lines = cloud
+    responses.append({"nodes": [_node_json(id=3, ref="X3", title="Ship it")]})
+    code, out, _err = _run(capsys, "search", "ship", "it", "--host", "formist", "--space", SPACE, "--json")
+    assert code == 0
+    assert json.loads(out)[0]["ref"] == "X3"
+    assert calls[0][0] == "GET" and calls[0][1].endswith("/nodes/search")
+    assert calls[0][2] == {"q": "ship it"}
+
+
+def test_changes_through_cli_reaches_cloud_mode(cloud, capsys):
+    calls, responses, _stream_lines = cloud
+    responses.append({"events": [{"ref": "X1", "at": "2026-01-01T00:00:00+00:00", "event": "created"}]})
+    code, out, _err = _run(
+        capsys, "changes", "--since", "2026-01-01T00:00:00+00:00", "--host", "formist", "--space", SPACE,
+    )
+    assert code == 0
+    assert "X1" in out and "created" in out
+    assert calls[0][1].endswith("/nodes/changes")
