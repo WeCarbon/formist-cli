@@ -1572,11 +1572,30 @@ def main(
     commands: dict | None = None,
     extra_errors: tuple[type[BaseException], ...] = (),
     check_privileges=None,
+    requires_admin=None,
     prepare=None,
 ) -> int:
     """Run one command. ``parser``/``commands``/``extra_errors`` let another
-    front end (such as a repository's own developer tool) reuse this dispatch."""
-    args = (parser or build_parser()).parse_args(argv)
+    front end (such as a repository's own developer tool) reuse this dispatch.
+
+    ``requires_admin`` lets that front end's OWN table govern the --admin
+    FLAG gate below too, the same way ``check_privileges`` already governs
+    the scope check that follows it. Without this, a caller whose command
+    names do not collide with any of `fm`'s own (every evdev command before
+    C1105/C1114) never noticed: ``formist_cli.privileges.requires_admin``
+    answers False for a name it has never heard of, so the flag gate was a
+    silent no-op for evdev throughout, with only the scope check (`evdev`'s
+    own ``check_privileges``) actually enforcing anything. It stopped being
+    harmless the moment evdev started reusing `fm`'s OWN command names
+    (`users`, `whatsapp`, ...): with this still unparameterized, moving
+    those ten from LEVEL_ADMIN to LEVEL_LOCAL in `fm`'s table -- correct for
+    `fm`, where they are redirect stubs now -- would have silently waived
+    the "--admin flag required even if the credential already has the
+    scope" friction for evdev's real versions of the same ten, which is
+    not a relaxation this change is supposed to make.
+    """
+    effective_parser = parser or build_parser()
+    args = effective_parser.parse_args(argv)
     table = _COMMANDS if commands is None else commands
     try:
         if prepare is not None:
@@ -1587,10 +1606,12 @@ def main(
         # stored credential's scopes say; a MIXED command (e.g. `fm spaces`,
         # `fm files merge`) gates its own admin-only subject/subcommand
         # itself, since this table entry cannot see which one is about to run.
-        if privileges.requires_admin(args.command) and not getattr(args, "admin", False):
+        if (requires_admin or privileges.requires_admin)(args.command) and not getattr(
+            args, "admin", False
+        ):
             print(
-                f"error: `fm {args.command}` needs --admin (platform administrators "
-                "only).",
+                f"error: `{effective_parser.prog} {args.command}` needs --admin "
+                "(platform administrators only).",
                 file=sys.stderr,
             )
             return 2
