@@ -123,7 +123,7 @@ def test_to_json_passes_the_raw_dict_through_unchanged():
 
     raw = _node(title="Round trips")
     n = task_cloud.CloudNode(raw)
-    assert task_json.to_json(n) is raw
+    assert task_json.to_json(n) is raw  # pyright: ignore[reportArgumentType] -- intentional duck type
 
 
 # ===========================================================================
@@ -540,7 +540,6 @@ def test_defer_as_human_needs_no_owner_said(store):
     lambda cs: cs.unarrange(1),
     lambda cs: cs.attach(),
     lambda cs: cs.approved_check(),
-    lambda cs: cs.expand(),
     lambda cs: cs.check(),
     lambda cs: cs.edit_note(5, 2, text="x"),
 ])
@@ -548,6 +547,14 @@ def test_not_yet_available_verbs_refuse_clearly(store, call):
     cs, _api = store
     with pytest.raises(task_cloud.CloudNotAvailable):
         call(cs)
+
+
+def test_expand_posts_the_full_brief(store):
+    cs, api_stub = store
+    cs.expand(5, "A full plan", title="Better title")
+    method, path, body = api_stub.calls[0]
+    assert method == "POST" and path.endswith("/5/expand")
+    assert body == {"body": "A full plan", "title": "Better title"}
 
 
 # ===========================================================================

@@ -62,7 +62,7 @@ other `fm task` batch this session):
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
 from formist_cli import api
 from formist_cli.api import ApiError
@@ -161,7 +161,7 @@ class CloudStore:
     def _put(self, suffix: str, body: dict) -> Any:
         return api.put(self.ctx.target, self._base() + suffix, _drop_none(body), token=self.ctx.token)
 
-    def _verb(self, ref: str, verb: str, **body: Any) -> CloudNode:
+    def _verb(self, ref: str | int, verb: str, **body: Any) -> CloudNode:
         """``POST /nodes/{ref}/{verb}`` — the simple-lifecycle-verb route
         (contract §4.1's ``VerbIn``: ``author``, ``note``, ``reason``,
         ``until``, ``on``, ``parent``, ``title``, ``by``, ``session_id``)."""
@@ -417,8 +417,11 @@ class CloudStore:
     def approved_check(self, *args, **kwargs):
         raise CloudNotAvailable("approved")
 
-    def expand(self, *args, **kwargs):
-        raise CloudNotAvailable("expand", reason="not landed")
+    def expand(self, id_: int, description: str, title: str | None = None) -> CloudNode:
+        payload = {"body": description}
+        if title is not None:
+            payload["title"] = title
+        return CloudNode(self._post(f"/{id_}/expand", payload))
 
     def check(self):
         raise CloudNotAvailable("check", reason="there is no decisions/ tree in cloud mode")
@@ -462,7 +465,7 @@ class CloudStore:
                 "tell --attach", reason="attachments aren't landed server-side yet (contract §4.1)",
             )
         body = _drop_none({"text": text, "author": author, "under": under, "important": important})
-        return api.post(self.ctx.target, self._tell_base(), body, token=self.ctx.token)
+        return cast(dict, api.post(self.ctx.target, self._tell_base(), body, token=self.ctx.token))
 
     def tell_read(self, id_: str) -> dict:
         """No ``GET /tell/{id}`` route — reads the full list
@@ -479,7 +482,10 @@ class CloudStore:
         raise NotFoundError(f"no tell message {id_!r}")
 
     def tell_finish(self, id_: str, refs: list[str]) -> dict:
-        return api.post(self.ctx.target, f"{self._tell_base()}/{id_}/finish", {"refs": refs}, token=self.ctx.token)
+        return cast(
+            dict,
+            api.post(self.ctx.target, f"{self._tell_base()}/{id_}/finish", {"refs": refs}, token=self.ctx.token),
+        )
 
     def tell_list(self, include_finished: bool = False) -> list[dict]:
         """``GET /tell?unread=`` -> ``TellList`` = ``{"items": [...]}``.
@@ -492,8 +498,8 @@ class CloudStore:
         ``fm task tell --list --all``) explicitly, exactly the two
         values the brief's own example used."""
         params = {"unread": "0" if include_finished else "1"}
-        data = api.get(self.ctx.target, self._tell_base(), token=self.ctx.token, params=params)
-        return data["items"]
+        data = cast(dict[str, Any], api.get(self.ctx.target, self._tell_base(), token=self.ctx.token, params=params))
+        return cast(list[dict], data["items"])
 
     # -- live agent sessions (contract §7) ------------------------------------
     def register_session(self, client_session: str, *, client: str = "claude-code", label: str | None = None,
@@ -506,7 +512,7 @@ class CloudStore:
             "client_session": client_session, "client": client, "label": label,
             "author": author, "cwd_hash": cwd_hash, "current": current, "ended": ended,
         })
-        return api.post(self.ctx.target, path, payload, token=self.ctx.token)
+        return cast(dict, api.post(self.ctx.target, path, payload, token=self.ctx.token))
 
     # -- the monitor stream (contract §5) -------------------------------------
     #: Generous relative to the server's 15s SSE heartbeat
@@ -551,7 +557,7 @@ class CloudStore:
                     last_heartbeat = _time.monotonic()
                     try:
                         self.register_session(client_session, author=author)
-                    except Exception:  # noqa: BLE001 - a heartbeat miss must not drop the stream
+                    except Exception:  # noqa: BLE001,S110 - a heartbeat miss must not drop the stream
                         pass
                 if event["event"] != "line":
                     continue

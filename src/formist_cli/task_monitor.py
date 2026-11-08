@@ -77,7 +77,25 @@ def has_open_work_for(nodes: list[Node], author: str) -> bool:
     return False
 
 
-def _next_step(ref: str, kind: str) -> str:
+def _language() -> str:
+    """Use the same public Noddit language setting as the installed CLI."""
+    if value := os.environ.get("NODDIT_LANG"):
+        return value
+    home = os.environ.get("NODDIT_HOME") or os.path.join(os.path.expanduser("~"), ".decs")
+    try:
+        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
+            return str(json.load(fh).get("lang") or "en")
+    except (OSError, ValueError):
+        return "en"
+
+
+def _next_step(ref: str, kind: str, lang: str) -> str:
+    if lang == "zh-Hans":
+        if kind == NOTE_KIND["deferred"]:
+            return f"→ 先停下 {ref}，等它回来"
+        if kind == NOTE_KIND["undeferred"]:
+            return f"→ 从停下的地方接着做 {ref}"
+        return f'→ fm task read {ref} --ack "<你打算怎么做>"'
     if kind == NOTE_KIND["deferred"]:
         return f"→ stop work on {ref} until it comes back"
     if kind == NOTE_KIND["undeferred"]:
@@ -85,30 +103,49 @@ def _next_step(ref: str, kind: str) -> str:
     return f'→ fm task read {ref} --ack "<what you\'ll do>"'
 
 
-def format_note_event(node: Node, note, is_reopen: bool) -> str:
+def format_note_event(node: Node, note, is_reopen: bool, *, lang: str | None = None) -> str:
     """``{{ref}} {{what}}: {{title}}{{ —— text}} {{next step}}  since={{at}}``
     (C1138 research spec §1, row 1)."""
     ref = format_ref(node.id, node.letter)
+    lang = lang or _language()
+    answer = node.answer
+    same_moment = False
+    if lang == "zh-Hans":
+        if note.kind == NOTE_KIND["answered"]:
+            same_moment = answer is not None and answer.at[:19] == note.at[:19]
+            choice = answer.choice if answer is not None and same_moment else None
+            what = f"负责人答复 {choice}" if choice else "负责人答复"
+        elif is_reopen:
+            what = "负责人回复，节点从归档拉回"
+        else:
+            what = f"负责人 {note.kind}"
+        # Noddit flattens the full answer activity, including the chosen
+        # option label and the owner's free-text note, onto the monitor line.
+        text = " ".join(note.text.split())[:80]
+        body = f"{ref} {what}：{node.title}"
+        if text:
+            body += f" —— {text}"
+        return f"{body} {_next_step(ref, note.kind, lang)}  since={note.at}"
     if note.kind == NOTE_KIND["answered"]:
         # `note.at` only carries second precision (the heading text is
         # truncated there); `node.answer.at` keeps milliseconds. Compare
         # at second granularity, or this would almost never match.
-        same_moment = node.answer and node.answer.at[:19] == note.at[:19]
-        choice = node.answer.choice if same_moment else None
+        same_moment = answer is not None and answer.at[:19] == note.at[:19]
+        choice = answer.choice if answer is not None and same_moment else None
         what = f"owner answered {choice}" if choice else "owner answered"
     elif is_reopen:
         what = "owner replied, node pulled back from archive"
     else:
         what = f"owner {_KIND_EN.get(note.kind, note.kind)}"
-    if note.kind == NOTE_KIND["answered"] and same_moment and node.answer.note:
-        text = node.answer.note
+    if note.kind == NOTE_KIND["answered"] and same_moment and answer is not None and answer.note:
+        text = answer.note
     else:
         text = note.summary or note.text.split("\n", 1)[0].strip()
     text = text[:80]
     body = f"{ref} {what}: {node.title}"
     if text:
         body += f" —— {text}"
-    body += f" {_next_step(ref, note.kind)}  since={note.at}"
+    body += f" {_next_step(ref, note.kind, lang)}  since={note.at}"
     return body
 
 
@@ -121,7 +158,9 @@ def _parse_epoch(iso: str | None) -> float | None:
         return None
 
 
-def collect_node_events(nodes: list[Node], since_t: float, author: str | None) -> list[tuple[float, str, str]]:
+def collect_node_events(
+    nodes: list[Node], since_t: float, author: str | None, *, lang: str | None = None
+) -> list[tuple[float, str, str]]:
     """Every human-note / brief event at or after ``since_t`` an agent
     should act on, as ``(at_epoch, ref, line)`` tuples the caller sorts.
     Mirrors monitor.ts's "an agent's own note doesn't count" — agent-role
@@ -139,6 +178,7 @@ def collect_node_events(nodes: list[Node], since_t: float, author: str | None) -
     from formist_cli.task_intake import brief_state, original_words
 
     since_t -= 1.0
+    lang = lang or _language()
     out: list[tuple[float, str, str]] = []
     for n in nodes:
         if author and not same_agent(n.author, author):
@@ -149,11 +189,18 @@ def collect_node_events(nodes: list[Node], since_t: float, author: str | None) -
             if at_t >= since_t:
                 words = original_words(n) or n.title
                 extra = f" —— {words}" if words != n.title else ""
-                out.append((at_t, ref, (
-                    f"DECS-BRIEF {ref} the owner filed a brief: {n.title}{extra} — "
-                    f"fm task claim {ref}, expand and split it, then fm task ask to have the owner confirm  "
-                    f"since={n.created}"
-                )))
+                if lang == "zh-Hans":
+                    out.append((at_t, ref, (
+                        f"DECS-BRIEF {ref} 负责人新派了：{n.title}{extra} —— "
+                        f"fm task claim {ref} 接走，展开、拆分后用 fm task ask 请负责人确认  "
+                        f"since={n.created}"
+                    )))
+                else:
+                    out.append((at_t, ref, (
+                        f"DECS-BRIEF {ref} the owner filed a brief: {n.title}{extra} — "
+                        f"fm task claim {ref}, expand and split it, then fm task ask to have the owner confirm  "
+                        f"since={n.created}"
+                    )))
         for note in n.notes:
             if note.role != "human":
                 continue
@@ -161,25 +208,44 @@ def collect_node_events(nodes: list[Node], since_t: float, author: str | None) -
             if at_t is None or at_t < since_t:
                 continue
             is_reopen = (not n.archived) and n.reopened_at == note.at
-            out.append((at_t, ref, format_note_event(n, note, is_reopen)))
+            out.append((at_t, ref, format_note_event(n, note, is_reopen, lang=lang)))
     return out
 
 
-def collect_clock_events(fired_undeferred: list[Node], fired_reminded: list[Node], fired_checkback: list[Node]) -> list[str]:
+def collect_clock_events(
+    fired_undeferred: list[Node],
+    fired_reminded: list[Node],
+    fired_checkback: list[Node],
+    *,
+    lang: str | None = None,
+) -> list[str]:
+    lang = lang or _language()
     lines = []
     for n in fired_undeferred:
         ref = format_ref(n.id, n.letter)
-        lines.append(f"NODDIT-UNDEFERRED {ref} is back from deferral: {n.title} → pick it back up where you left off")
+        if lang == "zh-Hans":
+            lines.append(f"NODDIT-UNDEFERRED {ref} 延迟到期，回来了：{n.title} → 从停下的地方接着做")
+        else:
+            lines.append(f"NODDIT-UNDEFERRED {ref} is back from deferral: {n.title} → pick it back up where you left off")
     for n in fired_reminded:
         ref = format_ref(n.id, n.letter)
-        lines.append(f"NODDIT-REMIND {ref}: time to tell the owner — {n.title} → tell the owner, then fm task done {ref}")
+        if lang == "zh-Hans":
+            lines.append(f"NODDIT-REMIND {ref}：到点了，告诉负责人——{n.title} → 告诉负责人，然后 fm task done {ref}")
+        else:
+            lines.append(f"NODDIT-REMIND {ref}: time to tell the owner — {n.title} → tell the owner, then fm task done {ref}")
     for n in fired_checkback:
         ref = format_ref(n.id, n.letter)
-        lines.append(
-            f"NODDIT-CHECK-BACK {ref}: time to check on {n.waiting_on} — {n.title} → "
-            f"still waiting: fm task defer {ref} --on \"{n.waiting_on}\" --until <date>; "
-            f"cleared: fm task start {ref}"
-        )
+        if lang == "zh-Hans":
+            lines.append(
+                f"NODDIT-CHECK-BACK {ref}：到日子了，去问问 {n.waiting_on}——{n.title} → "
+                f"还在等：fm task hold {ref} --until <日期>；等到了：fm task start {ref}"
+            )
+        else:
+            lines.append(
+                f"NODDIT-CHECK-BACK {ref}: time to check on {n.waiting_on} — {n.title} → "
+                f"still waiting: fm task defer {ref} --on \"{n.waiting_on}\" --until <date>; "
+                f"cleared: fm task start {ref}"
+            )
     return lines
 
 
@@ -253,10 +319,11 @@ def run_pass(store, author: str | None, since: str) -> tuple[list[str], str]:
         nodes = []
 
     since_t = _parse_epoch(since) or 0.0
-    events = collect_node_events(nodes, since_t, author)
+    lang = _language()
+    events = collect_node_events(nodes, since_t, author, lang=lang)
     events.sort(key=lambda e: e[0])
     lines.extend(line for _, _, line in events)
-    lines.extend(collect_clock_events(fired_undeferred, fired_reminded, fired_checkback))
+    lines.extend(collect_clock_events(fired_undeferred, fired_reminded, fired_checkback, lang=lang))
 
     if author and not has_open_work_for(nodes, author):
         lines.append("DECS-DONE nothing of yours is open any more: stop, don't re-arm.")
