@@ -508,6 +508,11 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--since", required=True)
     _add_common(p)
 
+    p = verbs.add_parser("mirror", help="push changed local nodes and deletions to a mirror Section")
+    p.add_argument("--section", required=True, help="destination mirror Section id or letter")
+    p.add_argument("--full", action="store_true", help="re-send every live local node")
+    _add_common(p)
+
     p = verbs.add_parser(
         "tell", help="the owner's own words, straight to the space's main agent (contract §4's `tell` row)",
     )
@@ -597,13 +602,14 @@ def _task_user_errors() -> tuple[type[BaseException], ...]:
     from formist_cli.targets import TargetError
     from formist_cli.task_attach import AttachError
     from formist_cli.task_cloud import CloudError
+    from formist_cli.task_mirror import MirrorError
     from formist_cli.task_questions import QuestionsError
     from formist_cli.task_store import StoreError
     from formist_cli.task_title import TitleTooLong
     from formist_cli.tokens import TokenError
 
     return (
-        TasksError, StoreError, QuestionsError, AttachError, TitleTooLong,
+        TasksError, StoreError, QuestionsError, AttachError, MirrorError, TitleTooLong,
         CloudError, ApiError, PrefsError, TargetError, TokenError,
     )
 
@@ -1510,6 +1516,20 @@ def _cmd_watch(args) -> int:
         return 0
 
 
+def _cmd_mirror(args) -> int:
+    from formist_cli import task_mirror
+
+    result = task_mirror.sync(args)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"mirrored {result['changed']} changed, {result['deleted']} deleted; "
+            f"last synced {result['last_synced_at']}"
+        )
+    return 0
+
+
 def _now_iso() -> str:
     from formist_cli.task_store import now_stamp
 
@@ -1633,6 +1653,6 @@ _VERBS = {
     "progress": _cmd_progress, "steps": _cmd_steps, "step": _cmd_step, "beat": _cmd_beat,
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,
     "briefs": _cmd_briefs, "check": _cmd_check, "changes": _cmd_changes, "monitor": _cmd_monitor,
-    "wait": _cmd_wait, "watch": _cmd_watch, "tell": _cmd_tell,
+    "wait": _cmd_wait, "watch": _cmd_watch, "tell": _cmd_tell, "mirror": _cmd_mirror,
     "plugin-session-start": _cmd_plugin_session_start, "plugin-prompt-refs": _cmd_plugin_prompt_refs,
 }
