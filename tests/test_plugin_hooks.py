@@ -47,6 +47,12 @@ def test_detect_refs_empty_known_letters_widens_to_any_single_digit_too():
     assert plugin_hooks.detect_refs("see W5 please", "") == ["W5"]
 
 
+def test_detect_refs_keeps_source_qualified_refs_including_their_source_and_stale_letter():
+    """Finding (C1125): the old word scanner saw only `C1052`, losing the
+    source which distinguishes mirrored node namespaces."""
+    assert plugin_hooks.detect_refs("check local:Z5 then web:C1052", "XD") == ["local:Z5", "web:C1052"]
+
+
 def test_known_letters_for_reads_the_project_letter(tmp_path):
     decisions = tmp_path / "decisions"
     decisions.mkdir()

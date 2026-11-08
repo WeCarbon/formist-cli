@@ -93,13 +93,14 @@ for the exact flags.
 - Each monitor line is one thing to act on, ending with its own next step.
 """
 
-#: A ref is `<LETTER><digits>` with no letter/digit touching outside it
-#: (so "C1052" matches, "ABC123" and "C1052x" do not) — the same shape
-#: ``task_ref.py``'s own ``_REF_RE`` resolves, duplicated here rather than
-#: imported: this hook must run with no local project resolved yet (it
-#: doesn't know the space's letter in cloud mode), so it is a plain text
-#: scan, not a real ref resolution.
-_REF_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z])(\d{1,5})(?![A-Za-z0-9])")
+#: A ref is either `<LETTER><digits>` or a source-qualified
+#: `<source>:<LETTER?><digits>`.  The latter is unambiguous even without a
+#: letter, and must reach the prompt reminder so a cross-source operation is
+#: recorded against the right node.  This stays a text scan rather than
+#: importing ``task_ref``: hooks run before a local source is known.
+_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:(?:[A-Za-z0-9][A-Za-z0-9_-]*:)([A-Z]?)(\d{1,5})|([A-Z])(\d{1,5}))(?![A-Za-z0-9])"
+)
 
 
 def run_fm_json(args: list[str], *, timeout: float = 8.0) -> object | None:
@@ -195,8 +196,10 @@ def detect_refs(prompt: str, known_letters: str) -> list[str]:
     positive here costs one reminder line, not a wrong write."""
     seen: list[str] = []
     for m in _REF_RE.finditer(prompt):
-        letter, digits = m.group(1), m.group(2)
-        if len(digits) > 1 or not known_letters or letter in known_letters:
+        scoped = m.group(2) is not None
+        letter = m.group(1) if scoped else m.group(3)
+        digits = m.group(2) if scoped else m.group(4)
+        if scoped or len(digits) > 1 or not known_letters or letter in known_letters:
             ref = m.group(0)
             if ref not in seen:
                 seen.append(ref)

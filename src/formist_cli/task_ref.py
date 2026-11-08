@@ -1,4 +1,4 @@
-"""Node refs: ``<letter><number>`` — a port of noddit's ``core/ref.ts``."""
+"""Node refs: ``<source>:<letter><number>`` (or the local short form)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,18 @@ def format_ref(id_: int, letter: str | None = None) -> str:
 class ParsedRef:
     id: int
     letter: str | None = None
-    project: str | None = None
+    source: str | None = None
+
+    @property
+    def project(self) -> str | None:
+        """Compatibility name for callers predating source-qualified refs.
+
+        A source is the thing which owns an id namespace.  Today that is a
+        local decisions project, and later it can be a mirrored cloud
+        section.  Keep the old property while callers move to the less
+        misleading name.
+        """
+        return self.source
 
 
 class RefError(ValueError):
@@ -26,7 +37,7 @@ class RefError(ValueError):
 
 
 def parse_ref(raw: str) -> ParsedRef:
-    """Accepted forms: ``305 W305 w305 D305 W:305 web:305 web:D305``.
+    """Accepted forms: ``305 W305 w305 D305 W:305 web:305 web:C305``.
 
     Ported byte-for-byte including one asymmetry noted in the C1052 research
     spec: the "head is a project letter" check tests the RAW head against
@@ -46,14 +57,16 @@ def parse_ref(raw: str) -> ParsedRef:
     id_ = int(m.group(2))
     letter = m.group(1).upper() if m.group(1) else None
 
-    if head is not None and re.match(r"^[A-Z]$", head):
-        if letter and letter != "D" and letter != head:
-            raise RefError(f"two different letters in ref: {raw!r}")
+    if head is not None and re.match(r"^[A-Z]$", head) and not letter:
+        # Preserve the older ``W:305`` spelling for a letter-qualified local
+        # reference.  When the tail has its own letter, ``W:C305`` is an
+        # unambiguous source-qualified reference instead.
         return ParsedRef(id=id_, letter=head)
     if head:
-        if letter and letter != "D":
-            raise RefError(f"a project name and a letter don't mix: {raw!r}")
-        return ParsedRef(id=id_, project=head)
+        # The source selects the id namespace; the letter is display-only.
+        # Deliberately retain it even when stale so resolution can find by
+        # number and callers can print the canonical letter as a correction.
+        return ParsedRef(id=id_, letter=letter, source=head)
     if letter:
         return ParsedRef(id=id_, letter=letter)
     return ParsedRef(id=id_)

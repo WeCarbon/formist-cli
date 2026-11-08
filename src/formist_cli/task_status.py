@@ -102,8 +102,11 @@ def find_ref(raw: str, from_project: str, from_letter: str | None, items: list[N
     except RefError:
         return None
     pool = [i for i in items if i.id == r.id]
-    if r.project:
-        return next((i for i in pool if i.project == r.project), None)
+    if r.source:
+        # A source owns the number namespace.  Its display letter is not an
+        # identity check: a renamed source can still be found by number, and
+        # rendering the returned node gives the caller the current letter.
+        return next((i for i in pool if i.project == r.source), None)
     if r.letter:
         lettered = [i for i in pool if i.letter == r.letter]
         if lettered:

@@ -152,6 +152,11 @@ class LocalStore:
         except RefError as e:
             raise StoreError(str(e)) from e
         nodes = self.all_nodes()
+        if r.source and r.source != self.project_key():
+            raise NotFoundError(
+                f"{r.source}:{r.id} belongs to a different source; "
+                f"this local project is {self.project_key()!r}"
+            )
         matches = [n for n in nodes if n.id == r.id]
         if not matches:
             raise NotFoundError(f"{format_ref(r.id, self.letter())} does not exist")
