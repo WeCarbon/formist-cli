@@ -27,7 +27,7 @@ def test_same_agent_matches_name_before_dot():
 
 
 def test_has_open_work_for_true_while_a_node_is_open(store):
-    n = store.create("Something", "lane · doing stuff", task=True)
+    store.create("Something", "lane · doing stuff", task=True)
     nodes = store.all_nodes()
     assert task_monitor.has_open_work_for(nodes, "lane") is True
 
@@ -53,15 +53,16 @@ def test_has_open_work_for_true_for_unclaimed_brief_under_owned_node(store):
     assert task_monitor.has_open_work_for(nodes, "lane") is True
 
 
-def test_run_pass_reports_a_human_answer_and_not_before(store):
+def test_run_pass_reports_a_human_answer_and_not_before(store, monkeypatch):
+    monkeypatch.setenv("NODDIT_LANG", "en")
     n = store.create("Pick one", "lane · x", options=[Option(key="1", label="A"), Option(key="2", label="B")])
     early_since = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat()
-    lines, since = task_monitor.run_pass(store, "lane", early_since)
+    lines, _since = task_monitor.run_pass(store, "lane", early_since)
     assert lines == []
 
     past_since = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
     store.answer(n.id, choice="1", note_text="go with A", by="owner", role="human")
-    lines2, since2 = task_monitor.run_pass(store, "lane", past_since)
+    lines2, _since2 = task_monitor.run_pass(store, "lane", past_since)
     assert len(lines2) == 1
     assert "owner answered 1" in lines2[0]
     assert "go with A" in lines2[0]
@@ -91,7 +92,7 @@ def test_run_pass_reports_undeferred_reminded_and_checkback(store):
     deferred = store.create("Deferred", "lane · x", task=True)
     store.defer(deferred.id, "owner", until=past)
 
-    reminded = store.create("Remind me", "lane · x", task=True, remind_at=past)
+    store.create("Remind me", "lane · x", task=True, remind_at=past)
 
     waiting = store.create("Waiting", "lane · x", task=True)
     store.hold(waiting.id, "Carol", "lane · x", until=past)
@@ -115,6 +116,7 @@ def test_clock_sweep_notes_are_signed_nod_not_fm(store):
 
 
 def test_monitor_cli_persists_cursor_across_separate_invocations(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NODDIT_LANG", "en")
     monkeypatch.setenv("NODDIT_AUTHOR", "lane · x")
     tasks.main(["init", str(tmp_path)])
     tasks.main(["add", "Decide", "--option", "1=A", "--dir", str(tmp_path), "--json"])

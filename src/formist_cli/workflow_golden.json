@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "locale": "zh-Hans",
+  "agent": "lane · parity",
+  "cases": [
+    {
+      "id": "ask_answer_read",
+      "title": "Choose venue",
+      "option": {"key": "1", "label": "Hall"},
+      "answer_note": "Hall is covered",
+      "states": ["not_started", "in_progress", "needs_decision", "decided", "in_progress"],
+      "monitor": "{{ref}} 负责人答复 1：Choose venue —— 1 —— Hall Hall is covered → {{cli}} read {{ref}} --ack \"<你打算怎么做>\""
+    },
+    {
+      "id": "brief_claim_expand_ask",
+      "title": "Book catering",
+      "original": "Book catering",
+      "expanded": "Compare three caterers and record price, capacity and dietary coverage.",
+      "states": ["not_started", "in_progress", "in_progress", "needs_decision"],
+      "monitor": "DECS-BRIEF {{ref}} 负责人新派了：Book catering —— {{cli}} claim {{ref}} 接走，展开、拆分后用 {{cli}} ask 请负责人确认"
+    },
+    {
+      "id": "reminder_due",
+      "title": "Tell the owner",
+      "monitor": "NODDIT-REMIND {{ref}}：到点了，告诉负责人——Tell the owner → 告诉负责人，然后 {{cli}} done {{ref}}"
+    },
+    {
+      "id": "wait_check_back",
+      "title": "Waiting vendor",
+      "waiting_on": "Carol",
+      "state": "waiting",
+      "monitor": "NODDIT-CHECK-BACK {{ref}}：到日子了，去问问 Carol——Waiting vendor → 还在等：{{cli}} hold {{ref}} --until <日期>；等到了：{{cli}} start {{ref}}"
+    },
+    {
+      "id": "defer_due",
+      "title": "Deferred task",
+      "state": "not_started",
+      "monitor": "NODDIT-UNDEFERRED {{ref}} 延迟到期，回来了：Deferred task → 从停下的地方接着做"
+    }
+  ]
+}
