@@ -94,6 +94,21 @@ def test_add_get_lifecycle_through_cli(tmp_path, monkeypatch, capsys):
     assert json.loads(out)["status"] == "completed"
 
 
+def test_get_source_qualified_stale_letter_returns_the_canonical_ref(tmp_path, monkeypatch, capsys):
+    """C1125's user-facing hint is the canonical ref in `fm task get`.
+
+    Resolving by source plus number must not reject an old display letter,
+    otherwise a source rename makes the node inaccessible.
+    """
+    monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
+    _run(capsys, "init", str(tmp_path))
+    _run(capsys, "add", "A plain task", "--task", "--dir", str(tmp_path), "--json")
+
+    code, out, _ = _run(capsys, "get", f"{tmp_path.name}:Z1", "--dir", str(tmp_path), "--json")
+    assert code == 0
+    assert json.loads(out)["ref"] == "X1"
+
+
 def test_push_human_defaults_by_to_owner(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NODDIT_AUTHOR", "agent · cli test")
     _run(capsys, "init", str(tmp_path))

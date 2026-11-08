@@ -385,3 +385,15 @@ def test_letter_defaults_to_x_and_cross_refs_resolve(store):
     nodes = store.all_nodes()
     deps = task_status.dependencies_of(next(n for n in nodes if n.id == b.id), nodes)
     assert deps == [next(n for n in nodes if n.id == a.id)]
+
+
+def test_source_qualified_ref_is_limited_to_this_local_project_and_hints_stale_letter(store):
+    """Finding (C1125): LocalStore previously ignored a source qualifier,
+    so `another-project:C1` could mutate local node 1.  A source now gates
+    lookup, while its letter remains display-only and the returned node's
+    canonical letter is the correction for a stale spelling."""
+    node = store.create("A", "agent · author", task=True)
+    assert store.resolve(f"{store.project_key()}:Z{node.id}").id == node.id
+    assert store.resolve(f"{store.project_key()}:Z{node.id}").letter == store.letter()
+    with pytest.raises(task_store.NotFoundError, match="different source"):
+        store.resolve(f"another-project:C{node.id}")
