@@ -513,6 +513,11 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--full", action="store_true", help="re-send every live local node")
     _add_common(p)
 
+    p = verbs.add_parser("import", help="plan or apply a restartable local-project import")
+    p.add_argument("--section", required=True, help="destination Section id or letter")
+    p.add_argument("--apply", metavar="PLAN_TOKEN", help="apply only this freshly returned plan token")
+    _add_common(p, write=True)
+
     p = verbs.add_parser(
         "tell", help="the owner's own words, straight to the space's main agent (contract §4's `tell` row)",
     )
@@ -603,13 +608,14 @@ def _task_user_errors() -> tuple[type[BaseException], ...]:
     from formist_cli.task_attach import AttachError
     from formist_cli.task_cloud import CloudError
     from formist_cli.task_mirror import MirrorError
+    from formist_cli.task_import import ImportError
     from formist_cli.task_questions import QuestionsError
     from formist_cli.task_store import StoreError
     from formist_cli.task_title import TitleTooLong
     from formist_cli.tokens import TokenError
 
     return (
-        TasksError, StoreError, QuestionsError, AttachError, MirrorError, TitleTooLong,
+        TasksError, StoreError, QuestionsError, AttachError, MirrorError, ImportError, TitleTooLong,
         CloudError, ApiError, PrefsError, TargetError, TokenError,
     )
 
@@ -1530,6 +1536,11 @@ def _cmd_mirror(args) -> int:
     return 0
 
 
+def _cmd_import(args) -> int:
+    from formist_cli import task_import
+    return task_import.run(args)
+
+
 def _now_iso() -> str:
     from formist_cli.task_store import now_stamp
 
@@ -1653,6 +1664,6 @@ _VERBS = {
     "progress": _cmd_progress, "steps": _cmd_steps, "step": _cmd_step, "beat": _cmd_beat,
     "attach": _cmd_attach, "approved": _cmd_approved, "claim": _cmd_claim, "expand": _cmd_expand,
     "briefs": _cmd_briefs, "check": _cmd_check, "changes": _cmd_changes, "monitor": _cmd_monitor,
-    "wait": _cmd_wait, "watch": _cmd_watch, "tell": _cmd_tell, "mirror": _cmd_mirror,
+    "wait": _cmd_wait, "watch": _cmd_watch, "tell": _cmd_tell, "mirror": _cmd_mirror, "import": _cmd_import,
     "plugin-session-start": _cmd_plugin_session_start, "plugin-prompt-refs": _cmd_plugin_prompt_refs,
 }
