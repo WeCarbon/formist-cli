@@ -51,8 +51,15 @@ SUBJECTS = (
     "list", "members", "conversations", "delete-conversation",
     "skills", "delete-skill", "invitations", "delete-invitation",
     "usage", "rename", "delete", "transfer-ownership",
-    "create", "add-member",
+    "create", "add-member", "set-logo",
 )
+
+#: ``set-logo`` is handled before the mutating-subject dispatch below even
+#: looks at it (see :func:`run`): it is not a space CRUD op, it is
+#: `formist_cli.projects`'s own write, reached here only so the noun lives in
+#: one place (``fm project`` is now a deprecated alias of ``fm spaces
+#: set-logo``). Kept out of ``_MUTATING_SUBJECTS``/``_run_write`` on purpose,
+#: since that dispatch is spaces.py's own CRUD surface, not this one.
 DEFAULT_SUBJECT = "list"
 
 #: Every project-role string the server accepts for ``--role``. Checked here
@@ -104,7 +111,9 @@ def canonical_subject(subject: str | None) -> str:
             "under it (--admin)\n"
             "  transfer-ownership  move OWNER to a different existing member (--admin)\n"
             "  add-member          assign an existing platform user (by email) to "
-            "a space (--admin)"
+            "a space (--admin)\n"
+            "  set-logo            upload a local image as the space's logo (no "
+            "--admin needed; `fm project` is the deprecated alias)"
         )
     return value
 
@@ -399,6 +408,10 @@ def _add_arguments(parser: argparse.ArgumentParser) -> None:
         help=f"`add-member`: one of {', '.join(_ROLES)} (default: USER), "
              "case-insensitive",
     )
+    parser.add_argument(
+        "--apply", action="store_true",
+        help="`set-logo`: perform the upload (default: dry run)",
+    )
     add_admin_flag(parser)
 
 
@@ -425,9 +438,35 @@ def _require_space(args) -> str:
     return require_space_id(space_id)
 
 
+def _run_set_logo(args):
+    """`fm spaces set-logo <path> [<space_id>] --space <id> [--apply]`.
+
+    The real implementation is `formist_cli.projects.run` (``fm project`` is
+    now this subject's deprecated alias, same module, same behaviour). The
+    two generic positional slots this command already carries,
+    ``space_id``/``child_id``, are reused with `project`'s own order --
+    path first, then an alternative to ``--space`` second -- exactly the
+    way ``child_id`` already means a different thing per subject
+    (``_CHILD_LABEL``). A fresh ``Namespace`` is built rather than mutating
+    ``args`` in place, since ``args.space_id`` keeps meaning "the target
+    space" for every OTHER subject and must not be renamed out from under it.
+    """
+    import argparse as _argparse
+
+    from formist_cli import projects as projects_mod
+
+    adapted = _argparse.Namespace(**vars(args))
+    adapted.subject = "set-logo"
+    adapted.path = getattr(args, "space_id", None)
+    adapted.space_id = getattr(args, "child_id", None)
+    return projects_mod.run(adapted, label="fm spaces set-logo")
+
+
 def run(args) -> int:
     subject = canonical_subject(getattr(args, "subject", None))
     admin = bool(getattr(args, "admin", False))
+    if subject == "set-logo":
+        return _run_set_logo(args)
     if subject in _MUTATING_SUBJECTS:
         return _run_write(subject, args)
 

@@ -36,9 +36,19 @@ import json
 import sys
 from dataclasses import replace
 
-from formist_cli import airtable as airtable_mod
-from formist_cli import alerts as alerts_mod
-from formist_cli import api, context, logs, prefs, privileges, skill_library, skills, space_plan, tokens, users
+from formist_cli import (
+    api,
+    cli_support,
+    context,
+    logs,
+    prefs,
+    privileges,
+    skill_library,
+    skills,
+    space_plan,
+    tokens,
+    users,
+)
 from formist_cli import chat as chat_mod
 from formist_cli import chats as chats_mod
 from formist_cli import connectors as connectors_mod
@@ -54,16 +64,13 @@ from formist_cli import messages as messages_mod
 from formist_cli import participants as participants_mod
 from formist_cli import projects as projects_mod
 from formist_cli import resolve as resolve_mod
-from formist_cli import settings as settings_mod
 from formist_cli import spaces as spaces_mod
+from formist_cli import tasks as tasks_mod
 from formist_cli import update as update_mod
 from formist_cli import uploads as uploads_mod
-from formist_cli import usage_tokens as usage_tokens_mod
-from formist_cli import whatsapp as whatsapp_mod
 from formist_cli.airtable import AirtableError
 from formist_cli.alerts import AlertsError
 from formist_cli.chats import ChatsError
-from formist_cli import cli_support
 from formist_cli.cli_support import as_dict
 from formist_cli.diff import DiffError
 from formist_cli.export import ExportError
@@ -75,6 +82,7 @@ from formist_cli.participants import ParticipantsError
 from formist_cli.prefs import PrefsError
 from formist_cli.projects import ProjectsError
 from formist_cli.resolve import ResolutionError
+from formist_cli.settings import SettingsError
 from formist_cli.spaces import SpacesError
 from formist_cli.targets import (
     DEFAULT_HOST,
@@ -232,10 +240,6 @@ def build_parser() -> argparse.ArgumentParser:
              "region's, in one call (" + cli_support.ADMIN_FLAG_HELP + ")",
     )
 
-    p = sub.add_parser("instance", help="build + migration identity (Tier 1 endpoint)")
-    _add_env(p)
-    cli_support.add_admin_flag(p)
-
     spaces_mod.add_parser(sub)
 
     p = sub.add_parser(
@@ -310,13 +314,55 @@ def build_parser() -> argparse.ArgumentParser:
     _add_env(p)
     _add_space(p)
 
-    # Parser and body live in logs.py: cli.py gets an import and a dispatch
-    # entry and nothing else.
-    logs.add_parser(sub)
-    users.add_parser(sub)
-    space_plan.add_parser(sub)
     skill_library.add_install_parser(sub)
     skills.add_parser(sub)
+
+    p = sub.add_parser(
+        "skill",
+        help="skill operations: add, update, attach, install-package (all WRITE)",
+        description=(
+            "Groups the four skill-writing commands under one noun; each is "
+            "the exact behaviour of its old top-level name, kept as a "
+            "deprecated alias through the next release:\n\n"
+            "  fm skill add <source> --space <id> [--apply]                "
+            "(was `fm skills-add`)\n"
+            "  fm skill update <source> --skill <id|name> --space <id> [--apply]  "
+            "(was `fm skills-update`)\n"
+            "  fm skill attach <skill> <file> --space <id> [--apply]       "
+            "(was `fm skill-attach`)\n"
+            "  fm skill install-package <package> --space <id> [--apply]  "
+            "(was `fm skill-library-install`)\n\n"
+            "Each is DRY RUN by default; run the old command's own --help "
+            "(e.g. `fm skills-add --help`) for the full contract, which has "
+            "not changed."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p, for_write=True)
+    _add_space(p)
+    p.add_argument("subject", help=f"one of: {', '.join(_SKILL_SUBJECTS)}")
+    p.add_argument(
+        "arg1", nargs="?", default=None,
+        help="add/update: source directory or .zip. attach: skill id or exact "
+        "name. install-package: the package id",
+    )
+    p.add_argument(
+        "arg2", nargs="?", default=None,
+        help="attach only: path to the local file",
+    )
+    p.add_argument("--skill", default=None, help="update: skill id (UUID) or exact name")
+    p.add_argument(
+        "--folder-path", default=uploads_mod.DEFAULT_FOLDER_PATH,
+        help="attach: folder path recorded alongside the uploaded file",
+    )
+    p.add_argument("--owner", default=None, help="attach: free-text team label")
+    p.add_argument(
+        "--file-id", dest="file_id", default=None,
+        help="attach: attach this already-uploaded file id instead of "
+        "uploading the file again",
+    )
+    p.add_argument("--apply", action="store_true", help="perform the write (default: dry run)")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
 
     p = sub.add_parser(
         "doctor",
@@ -373,46 +419,64 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", help="exact name; omit to list the kind")
     p.add_argument("--json", action="store_true", help="machine-readable output")
 
+    chats_mod.add_parser(sub)
+
+    # Replaces `chat_mod.add_parser(sub)`: `chats_mod.add_parser(sub)` above
+    # (the plural, kept as a deprecated alias of `list`) still runs
+    # separately and is untouched.
     p = sub.add_parser(
-        "update",
-        help="bulk data change: dry-run always, apply with the plan token",
+        "chat",
+        help="a space's chats: `list` them, or `send` into one (WRITE)",
         description=(
-            "Applies a batch of data changes transactionally, or reports what would "
-            "happen. A dry run ALWAYS runs first and prints a plan token; --apply "
-            "takes that token and re-runs the dry run to check it still matches "
-            "before committing.\n\n"
-            "Payload ops use the endpoint's own vocabulary ($action, $kind, $id, "
-            "$set, $expect, $ref, $replace_data, $hard) plus one fm-side addition: "
-            "$name, resolved to an id here, seconds before the write, against the "
-            "environment being written. The name is copied into $expect so the "
-            "server re-checks the resolution against the row itself.\n\n"
-            "A $set naming `data` (STAKEHOLDER / CUSTOM's free-form blob) MERGES "
-            "into the row's existing value by default -- {'country': 'AE'} changes "
-            "only `country`. Add \"$replace_data\": true to an op to replace the "
-            "whole blob instead; that is the only way to remove a key.\n\n"
-            "$action \"delete\" is SOFT -- restorable from the space's Trash, "
-            "like the UI. $hard is refused for a kind with a Trash entry (purge "
-            "from there instead) and required for the two that have none "
-            "(FILE_LINK, SESSION_PARTICIPANT).\n\n"
-            + update_mod.NOT_DEPLOYED_NOTE
+            "  fm chat list [chat_id] [--kind ..] [--archived] [--latest] "
+            "[--messages] [--all-messages] [--limit N] [--json]   (was `fm chats`)\n"
+            "  fm chat send [chat_id] [--model ..] [--effort ..] [--message TEXT] [--json]\n\n"
+            "`list` reads (member route, see `fm chats --help`); `send` opens "
+            "the interactive REPL, or with --message sends one turn "
+            "non-interactively and exits (see the old `fm chat --help`). "
+            "Neither behaviour changed, only the names they are reached "
+            "under.\n\n"
+            "A bare `fm chat [chat_id]` (no subject) still works exactly as "
+            "it always did -- equivalent to `fm chat send [chat_id]` -- since "
+            "`chat` is not an alias here, it is the same name carrying one "
+            "more way to spell the same thing."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _add_env(p, for_write=True)
+    _add_env(p)
     _add_space(p)
-    cli_support.add_admin_flag(p)
-    p.add_argument("payload", help="path to a JSON file of ops")
     p.add_argument(
-        "--apply",
-        metavar="PLAN_TOKEN",
-        help="commit, if this token still matches a fresh dry run of this plan",
+        "subject_or_id", nargs="?", default=None,
+        help="`list` or `send`, or (legacy, no subject) a chat UUID to "
+        "continue/show directly",
+    )
+    p.add_argument(
+        "second_arg", nargs="?", default=None,
+        help="the chat UUID, when `subject_or_id` is `list` or `send`",
+    )
+    p.add_argument("--kind", help="list: background-agent | user-chat (default: both)")
+    p.add_argument("--archived", action="store_true", help="list: list archived chats")
+    p.add_argument(
+        "--latest", action="store_true",
+        help="list: address the newest matching chat instead of naming an id",
+    )
+    p.add_argument(
+        "--messages", action="store_true", help="list: also print the transcript (one page)"
+    )
+    p.add_argument(
+        "--all-messages", dest="all_messages", action="store_true",
+        help="list: page the WHOLE transcript, however long",
+    )
+    p.add_argument("--limit", type=int, default=50, help="list: page size")
+    p.add_argument("--model", default=None, help="send: override the chat's model for this run")
+    p.add_argument(
+        "--effort", default=None, help="send: low|medium|high|xhigh (ignored by models with no knob)"
+    )
+    p.add_argument(
+        "--message", default=None, metavar="TEXT",
+        help="send: send this one message non-interactively and exit when the run finishes",
     )
     p.add_argument("--json", action="store_true", help="machine-readable output")
-
-
-    chats_mod.add_parser(sub)
-
-    chat_mod.add_parser(sub)
 
 
     export_mod.add_parser(sub)
@@ -421,16 +485,9 @@ def build_parser() -> argparse.ArgumentParser:
     diff_mod.add_parser(sub)
 
 
-    airtable_mod.add_parser(sub)
     participants_mod.add_parser(sub)
 
-    usage_tokens_mod.add_parser(sub)
-
-    alerts_mod.add_parser(sub)
-    settings_mod.add_parser(sub)
-
     messages_mod.add_parser(sub)
-    whatsapp_mod.add_parser(sub)
 
     uploads_mod.add_parser(sub)
 
@@ -439,6 +496,20 @@ def build_parser() -> argparse.ArgumentParser:
     files_mod.add_parser(sub)
     projects_mod.add_parser(sub)
     connectors_mod.add_connector_parser(sub)
+    tasks_mod.add_parser(sub)
+
+    # Moved to curist-server's `fmdev` (evdev renamed), C1105/C1114: these ten
+    # had no non-admin meaning in `fm` at all (no caller's-own-data reading,
+    # unlike `fm spaces`/`fm health`/etc, which keep their --admin branch
+    # right here), so there is nothing here for an external customer to run.
+    # `fmdev` builds its own, identical parsers for these by calling
+    # `add_instance_parser`/`add_update_parser` and the modules' own
+    # `add_parser` directly -- formist_cli stays the one place this shape is
+    # defined. `fm` keeps a one-release stub under each name so a script
+    # still running the old command gets a clear redirect instead of
+    # argparse's bare "invalid choice".
+    for name in _MOVED_TO_FMDEV:
+        _add_moved_to_fmdev_stub(sub, name)
 
     return parser
 
@@ -650,6 +721,20 @@ def cmd_health(args) -> int:
     return 1 if _print_health_block(target.name, payload) else 0
 
 
+def add_instance_parser(sub) -> None:
+    """Public (no leading underscore) because `fm` no longer registers this
+    itself -- `instance` is one of the ten commands that moved to
+    curist-server's `fmdev` (C1105/C1114), which calls this directly to
+    build the exact same parser `fm instance` used to have, and then
+    :func:`cmd_instance`, unchanged, to run it. Kept here rather than moved
+    out entirely so evdev/fmdev, like every other `fm`-reused command,
+    stays a thin caller of formist_cli rather than a second copy of it.
+    """
+    p = sub.add_parser("instance", help="build + migration identity (Tier 1 endpoint)")
+    _add_env(p)
+    cli_support.add_admin_flag(p)
+
+
 def cmd_instance(args) -> int:
     eff = _effective(args, need_space=False)
     target = eff.target
@@ -824,7 +909,7 @@ def cmd_audit_log(args) -> int:
     return 0
 
 
-def cmd_connectors(args) -> int:
+def cmd_connectors(args, *, label: str = "fm connectors grants") -> int:
     """A space's connectors, what each one's last sync run actually did, or
     `grants` for what they may do.
 
@@ -840,6 +925,10 @@ def cmd_connectors(args) -> int:
     did), and `dur` is how long the run held the tick. The tick is
     strictly serial, so a large number here on one connector explains
     every other connector running late.
+
+    ``label`` names this call in the --admin refusal message: this is also
+    reached from `fm connector list`/`fm connector grants` (:func:`cmd_connector`),
+    which should name itself, not the deprecated `fm connectors` alias.
     """
     subject = (getattr(args, "subject", None) or connectors_mod.DEFAULT_SUBJECT).strip().lower()
     if subject not in connectors_mod.SUBJECTS:
@@ -850,7 +939,7 @@ def cmd_connectors(args) -> int:
     if subject == "grants":
         # No member-level equivalent: the grant view (consented scopes, auth
         # status, expiry) is platform-admin only, always.
-        privileges.require_admin_flag("fm connectors grants", admin)
+        privileges.require_admin_flag(label, admin)
         return connectors_mod.run_grants(args, _effective(args))
     eff = _effective(args)
     target, space = eff.target, eff.space
@@ -894,6 +983,33 @@ def cmd_connectors(args) -> int:
         if run.get("error"):
             print(f"      error: {run['error']}")
     return 0
+
+
+#: Every subject `fm connector` answers to, now that `fm connectors`' two
+#: (list, grants) are folded in alongside its own (reauth, sync). Checked
+#: here, once, rather than in two different modules that would each only see
+#: half the vocabulary.
+_CONNECTOR_ALL_SUBJECTS = connectors_mod.SUBJECTS + connectors_mod.CONNECTOR_SUBJECTS
+
+
+def cmd_connector(args) -> int:
+    """`fm connector list|grants|reauth|sync` -- the noun-group command
+    `fm connectors` (list/grants) and `fm connector` (reauth/sync) are now
+    folded into. Routes to the two ORIGINAL, unchanged handlers rather than
+    re-implementing either: `list`/`grants` reuse :func:`cmd_connectors`
+    (the `space_id`-vs-connection-id positional is the same reuse-the-generic-
+    slot trick `fm spaces`/`fm whatsapp` already use, documented on
+    ``arg``'s own help text), `reauth`/`sync` reuse
+    `connectors_mod.run_connector` exactly as `fm connector` always has.
+    """
+    subject = (getattr(args, "subject", None) or "").strip().lower()
+    if subject not in _CONNECTOR_ALL_SUBJECTS:
+        raise connectors_mod.connector_subject_error(getattr(args, "subject", None))
+    if subject in connectors_mod.SUBJECTS:
+        if getattr(args, "arg", None) and not getattr(args, "space_id", None):
+            args.space_id = args.arg
+        return cmd_connectors(args, label="fm connector grants")
+    return connectors_mod.run_connector(args)
 
 
 def cmd_entity_fields(args) -> int:
@@ -1147,6 +1263,48 @@ def cmd_get(args) -> int:
     return 0
 
 
+def add_update_parser(sub) -> None:
+    """Public, same reason as :func:`add_instance_parser`: `update` is one
+    of the ten commands that moved to curist-server's `fmdev`; this builds
+    the exact parser `fm update` used to have, for `fmdev` to call.
+    """
+    p = sub.add_parser(
+        "update",
+        help="bulk data change: dry-run always, apply with the plan token",
+        description=(
+            "Applies a batch of data changes transactionally, or reports what would "
+            "happen. A dry run ALWAYS runs first and prints a plan token; --apply "
+            "takes that token and re-runs the dry run to check it still matches "
+            "before committing.\n\n"
+            "Payload ops use the endpoint's own vocabulary ($action, $kind, $id, "
+            "$set, $expect, $ref, $replace_data, $hard) plus one fm-side addition: "
+            "$name, resolved to an id here, seconds before the write, against the "
+            "environment being written. The name is copied into $expect so the "
+            "server re-checks the resolution against the row itself.\n\n"
+            "A $set naming `data` (STAKEHOLDER / CUSTOM's free-form blob) MERGES "
+            "into the row's existing value by default -- {'country': 'AE'} changes "
+            "only `country`. Add \"$replace_data\": true to an op to replace the "
+            "whole blob instead; that is the only way to remove a key.\n\n"
+            "$action \"delete\" is SOFT -- restorable from the space's Trash, "
+            "like the UI. $hard is refused for a kind with a Trash entry (purge "
+            "from there instead) and required for the two that have none "
+            "(FILE_LINK, SESSION_PARTICIPANT).\n\n"
+            + update_mod.NOT_DEPLOYED_NOTE
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_env(p, for_write=True)
+    _add_space(p)
+    cli_support.add_admin_flag(p)
+    p.add_argument("payload", help="path to a JSON file of ops")
+    p.add_argument(
+        "--apply",
+        metavar="PLAN_TOKEN",
+        help="commit, if this token still matches a fresh dry run of this plan",
+    )
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+
+
 def cmd_update(args) -> int:
     """Dry-run a bulk change, then apply it only against the token that dry run gave.
 
@@ -1231,46 +1389,182 @@ def _items(payload: object) -> list[dict]:
     return []
 
 
+# ===========================================================================
+# Moved to curist-server's `fmdev` (C1105/C1114): one-release stubs
+# ===========================================================================
+
+#: No non-admin meaning in `fm` at all -- unlike `spaces`/`health`/`proposals`/
+#: `audit-log`/`connector`/`files`, which keep a member-level default here and
+#: only gate their --admin branch, these ten are refused locally before the
+#: --admin check even runs, so a customer install of `fm` never reaches the
+#: server for them either way. `messages`/`participants` are NOT here: they
+#: stay in `fm` unchanged, retiring with C1073/C1110 instead.
+_MOVED_TO_FMDEV = (
+    "instance", "users", "logs", "space-plan", "usage-tokens",
+    "alerts", "settings", "update", "airtable", "whatsapp",
+)
+
+
+def _add_moved_to_fmdev_stub(sub, name: str) -> None:
+    p = sub.add_parser(
+        name,
+        help="MOVED to curist-server's `fmdev`; kept one release as a redirect",
+        description=(
+            f"`fm {name}` moved to curist-server's `fmdev` and no longer runs "
+            f"here: run `fmdev {name}` instead (needs the curist-server repo "
+            "checked out, or ask whoever operates it). This redirect is kept "
+            "through the next release only, after which `fm` stops "
+            f"recognising `{name}` at all."
+        ),
+    )
+    # Must absorb whatever the caller passed -- flags the real command used
+    # to accept included -- without erroring on an unrecognised option:
+    # the point of a redirect is to print it and exit, not to re-validate
+    # arguments for a command that is not going to run. `nargs=REMAINDER`
+    # on a positional does NOT do this: argparse classifies a leading
+    # option-looking token (`fm whatsapp --env ae`, which was this exact
+    # command's own documented example) as an unmatched option before a
+    # positional ever gets to claim it, so `parse_args` still raises
+    # "unrecognized arguments". Overriding `parse_known_args` on this one
+    # parser INSTANCE (not the shared `SubcommandParser` class every other
+    # subcommand uses) is what `_SubParsersAction.__call__` actually
+    # consults, and it both sets `args.command` before calling this and
+    # only raises "unrecognized arguments" on whatever this returns as
+    # leftover -- so returning none, unconditionally, is what makes every
+    # shape of the old invocation land on the redirect instead of an error.
+    p.parse_known_args = lambda args=None, namespace=None: (argparse.Namespace(), [])
+
+
+def cmd_moved_to_fmdev(args) -> int:
+    name = args.command
+    print(
+        f"`fm {name}` moved to curist-server's `fmdev`. Run `fmdev {name}` "
+        "instead. This redirect is kept through the next release only.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+# ===========================================================================
+# Noun-group commands: `fm skill` and `fm chat`
+#
+# Each groups commands that used to be unrelated-looking top-level names
+# under one noun with several subjects, the same "generic positional slot
+# reused per subject, flags unioned, meaning resolved in the handler"
+# pattern `fm spaces`/`fm whatsapp`/`fm connector` already use -- not
+# argparse's nested subparsers, which cannot express "this token is either
+# one of a few keywords or an arbitrary id" without the same kind of
+# pre-dispatch logic anyway. The four old modules' own handlers are called
+# UNCHANGED; this is routing, not a second implementation.
+# ===========================================================================
+
+_SKILL_SUBJECTS = ("add", "update", "attach", "install-package")
+
+
+def cmd_skill(args) -> int:
+    subject = (getattr(args, "subject", None) or "").strip().lower()
+    if subject == "add":
+        args.source = args.arg1
+        return skills.cmd_skills_add(args)
+    if subject == "update":
+        args.source = args.arg1
+        return skills.cmd_skills_update(args)
+    if subject == "attach":
+        args.skill = args.arg1
+        args.file = args.arg2
+        return uploads_mod.cmd_skill_attach(args)
+    if subject == "install-package":
+        args.package = args.arg1
+        return skill_library.run_install(args)
+    raise skills.SkillGroupError(
+        f"unknown subcommand {getattr(args, 'subject', None)!r}. "
+        f"Valid: {', '.join(_SKILL_SUBJECTS)}."
+    )
+
+
+def cmd_chat_grouped(args) -> int:
+    first = args.subject_or_id
+    if first == "list":
+        args.chat_id = args.second_arg
+        return chats_mod.cmd_chats(args)
+    if first == "send":
+        args.chat_id = args.second_arg
+        return chat_mod.cmd_chat(args)
+    # Legacy shape: no subject given, so `first` IS the chat id (or None, to
+    # start a new chat) -- `fm chat [chat_id]`'s behaviour before `list`/
+    # `send` existed, kept working rather than aliased away (see
+    # `_add_chat_parser`'s own description of why `chat` is not an alias).
+    if first is not None:
+        print(
+            "note: `fm chat <id>` without a subject is the older spelling of "
+            "`fm chat send <id>`; both work, this one through the next "
+            "release only.",
+            file=sys.stderr,
+        )
+    args.chat_id = first
+    return chat_mod.cmd_chat(args)
+
+
+def _deprecated_alias(old_command: str, new_group: str, handler):
+    """Wraps a kept-for-one-release alias's ORIGINAL handler: prints the
+    deprecation note (`cli_support.warn_deprecated_alias`) then runs it
+    completely unchanged. One release after this one, the `_COMMANDS` entry
+    this wraps is deleted, not just the wrapper.
+    """
+
+    def wrapped(args):
+        cli_support.warn_deprecated_alias(old_command, new_group)
+        return handler(args)
+
+    return wrapped
+
+
 _COMMANDS = {
     "login": cmd_login,
     "logout": cmd_logout,
     "whoami": cmd_whoami,
     "health": cmd_health,
-    "instance": cmd_instance,
     "spaces": spaces_mod.run,
     "proposals": cmd_proposals,
     "audit-log": cmd_audit_log,
-    "connectors": cmd_connectors,
+    "connectors": _deprecated_alias("connectors", "connector list|grants", cmd_connectors),
     "entity-fields": cmd_entity_fields,
     "doctor": cmd_doctor,
     "use": cmd_use,
     "get": cmd_get,
-    "chats": chats_mod.cmd_chats,
-    "chat": chat_mod.cmd_chat,
+    "chats": _deprecated_alias("chats", "chat list", chats_mod.cmd_chats),
+    "chat": cmd_chat_grouped,
     "export": export_mod.cmd_export,
     "import": importer_mod.cmd_import,
-    "update": cmd_update,
-    "logs": logs.run,
-    "users": users.run,
-    "space-plan": space_plan.run,
-    "skill-library-install": skill_library.run_install,
-    "skills-add": skills.cmd_skills_add,
-    "skills-update": skills.cmd_skills_update,
+    "skill-library-install": _deprecated_alias(
+        "skill-library-install", "skill install-package", skill_library.run_install
+    ),
+    "skills-add": _deprecated_alias("skills-add", "skill add", skills.cmd_skills_add),
+    "skills-update": _deprecated_alias("skills-update", "skill update", skills.cmd_skills_update),
+    "skill": cmd_skill,
     "diff": diff_mod.cmd_diff,
-    "airtable": airtable_mod.cmd_airtable,
     "participants": participants_mod.cmd_participants,
     "upload": uploads_mod.cmd_upload,
-    "skill-attach": uploads_mod.cmd_skill_attach,
-    "usage-tokens": usage_tokens_mod.run,
-    "alerts": alerts_mod.run,
-    "settings": settings_mod.run,
+    "skill-attach": _deprecated_alias("skill-attach", "skill attach", uploads_mod.cmd_skill_attach),
     "kb": kb_mod.run,
     "meeting": meetings_mod.run,
     "files": files_mod.cmd_files,
-    "project": projects_mod.run,
-    "connector": connectors_mod.run_connector,
+    "project": _deprecated_alias("project", "spaces set-logo", projects_mod.run),
+    "connector": cmd_connector,
     "messages": messages_mod.run,
-    "whatsapp": whatsapp_mod.run,
+    "task": tasks_mod.run,
+    # Moved to curist-server's `fmdev` (C1105/C1114); one-release redirect
+    # stubs, not the real commands -- see `_MOVED_TO_FMDEV`'s own comment.
+    "instance": cmd_moved_to_fmdev,
+    "users": cmd_moved_to_fmdev,
+    "logs": cmd_moved_to_fmdev,
+    "space-plan": cmd_moved_to_fmdev,
+    "usage-tokens": cmd_moved_to_fmdev,
+    "alerts": cmd_moved_to_fmdev,
+    "settings": cmd_moved_to_fmdev,
+    "update": cmd_moved_to_fmdev,
+    "airtable": cmd_moved_to_fmdev,
+    "whatsapp": cmd_moved_to_fmdev,
 }
 
 
@@ -1281,11 +1575,30 @@ def main(
     commands: dict | None = None,
     extra_errors: tuple[type[BaseException], ...] = (),
     check_privileges=None,
+    requires_admin=None,
     prepare=None,
 ) -> int:
     """Run one command. ``parser``/``commands``/``extra_errors`` let another
-    front end (such as a repository's own developer tool) reuse this dispatch."""
-    args = (parser or build_parser()).parse_args(argv)
+    front end (such as a repository's own developer tool) reuse this dispatch.
+
+    ``requires_admin`` lets that front end's OWN table govern the --admin
+    FLAG gate below too, the same way ``check_privileges`` already governs
+    the scope check that follows it. Without this, a caller whose command
+    names do not collide with any of `fm`'s own (every evdev command before
+    C1105/C1114) never noticed: ``formist_cli.privileges.requires_admin``
+    answers False for a name it has never heard of, so the flag gate was a
+    silent no-op for evdev throughout, with only the scope check (`evdev`'s
+    own ``check_privileges``) actually enforcing anything. It stopped being
+    harmless the moment evdev started reusing `fm`'s OWN command names
+    (`users`, `whatsapp`, ...): with this still unparameterized, moving
+    those ten from LEVEL_ADMIN to LEVEL_LOCAL in `fm`'s table -- correct for
+    `fm`, where they are redirect stubs now -- would have silently waived
+    the "--admin flag required even if the credential already has the
+    scope" friction for evdev's real versions of the same ten, which is
+    not a relaxation this change is supposed to make.
+    """
+    effective_parser = parser or build_parser()
+    args = effective_parser.parse_args(argv)
     table = _COMMANDS if commands is None else commands
     try:
         if prepare is not None:
@@ -1296,10 +1609,12 @@ def main(
         # stored credential's scopes say; a MIXED command (e.g. `fm spaces`,
         # `fm files merge`) gates its own admin-only subject/subcommand
         # itself, since this table entry cannot see which one is about to run.
-        if privileges.requires_admin(args.command) and not getattr(args, "admin", False):
+        if (requires_admin or privileges.requires_admin)(args.command) and not getattr(
+            args, "admin", False
+        ):
             print(
-                f"error: `fm {args.command}` needs --admin (platform administrators "
-                "only).",
+                f"error: `{effective_parser.prog} {args.command}` needs --admin "
+                "(platform administrators only).",
                 file=sys.stderr,
             )
             return 2
@@ -1354,12 +1669,15 @@ USER_ERRORS = (
     SpacesError,
     UsageTokensError,
     AlertsError,
+    SettingsError,
     WhatsAppError,
     KbError,
     MeetingsError,
     ProjectsError,
+    skills.SkillGroupError,
     privileges.PrivilegeError,
     login_mod.LoginError,
+    *tasks_mod._task_user_errors(),
 )
 
 

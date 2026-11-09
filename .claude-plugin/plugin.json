@@ -1,0 +1,9 @@
+{
+  "name": "fm-task",
+  "displayName": "fm task",
+  "version": "0.1.0",
+  "description": "fm task is the AI's task and decision hub: injects usage rules and open work at session start, reminds the model to log the owner's words when they name a node, and keeps a monitor running against the current decisions/ directory (local mode) or Formist space (cloud mode, C1053/C1139).",
+  "author": { "name": "WeCarbon" },
+  "license": "MIT",
+  "repository": "https://github.com/WeCarbon/formist-cli"
+}

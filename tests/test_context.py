@@ -258,10 +258,14 @@ class TestNoCommandPaysARoundTripToLearnItHasNoToken:
          "task", "--name", "x"],
         ["export", "--host", "evane", "--space", "452093ea-7b91-491e-88b6-3285edd48a31",
          "--out", "OUT"],
-        # --admin: without it, `fm users` now refuses even earlier (the new
-        # --admin gate, which has its own tests), and this parametrize's point
-        # is the TOKEN guard specifically.
-        ["users", "--admin", "--host", "evane"],
+        # --admin: without it, `fm messages` now refuses even earlier (the
+        # new --admin gate, which has its own tests), and this parametrize's
+        # point is the TOKEN guard specifically. (Was `users`; moved to
+        # curist-server's `fmdev`, C1105/C1114, and is now a LEVEL_LOCAL
+        # redirect stub that never reaches this guard at all. `participants`
+        # does not fit either: `cmd_participants` never passes
+        # `need_token=True`, so it is not a case this guard covers.)
+        ["messages", "--admin", "--host", "evane"],
     ]
 
     @pytest.mark.parametrize("argv", COMMANDS, ids=lambda a: a[0])

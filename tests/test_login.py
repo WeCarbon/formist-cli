@@ -379,8 +379,10 @@ def test_an_admin_command_is_refused_before_any_socket(monkeypatch):
         raise AssertionError("a socket was opened for a command that cannot succeed")
 
     monkeypatch.setattr(urllib.request, "urlopen", explode)
+    # "users" moved to curist-server's `fmdev` (C1105/C1114) and is now a
+    # LEVEL_LOCAL redirect stub; "participants" is still LEVEL_ADMIN in `fm`.
     with pytest.raises(privileges.PrivilegeError):
-        privileges.check("users", tokens.load_meta("127.0.0.1:8160").get("scopes"))
+        privileges.check("participants", tokens.load_meta("127.0.0.1:8160").get("scopes"))
 
 
 # --- $FORMIST_TOKEN --------------------------------------------------------------------
@@ -499,9 +501,14 @@ class TestEnvTokenIsNeverStoredOrRefreshed:
 
 
 class TestLocalScopesDeferToTheServerForAnEnvToken:
+    """"instance" moved to curist-server's `fmdev` (C1105/C1114) and is now
+    a LEVEL_LOCAL redirect stub, so it can no longer stand in for "a LEVEL_
+    ADMIN command" here; "participants" is still LEVEL_ADMIN in `fm`.
+    """
+
     def test_a_stale_files_non_admin_scopes_do_not_block_an_env_token(self, monkeypatch):
-        """`fm instance` with FORMIST_TOKEN set must not be refused locally on the
-        basis of a DIFFERENT credential's recorded scopes: the local pre-check
+        """`fm participants` with FORMIST_TOKEN set must not be refused locally on
+        the basis of a DIFFERENT credential's recorded scopes: the local pre-check
         cannot know what the env token was granted, so it must defer to the
         server (which will 403 with the real refusal if it truly lacks admin)."""
         login.store_payload(
@@ -512,7 +519,7 @@ class TestLocalScopesDeferToTheServerForAnEnvToken:
         )
         monkeypatch.setenv(tokens.ENV_TOKEN_VAR, "crst_at_fromenv")
         assert tokens.local_scopes("127.0.0.1:8160") is None
-        privileges.check("instance", tokens.local_scopes("127.0.0.1:8160"))  # must not raise
+        privileges.check("participants", tokens.local_scopes("127.0.0.1:8160"))  # must not raise
 
     def test_without_an_env_token_the_file_scopes_are_still_used(self, monkeypatch):
         login.store_payload(
@@ -523,7 +530,7 @@ class TestLocalScopesDeferToTheServerForAnEnvToken:
         )
         assert tokens.local_scopes("127.0.0.1:8160") == ["evane:kb", "evane:cli"]
         with pytest.raises(privileges.PrivilegeError):
-            privileges.check("instance", tokens.local_scopes("127.0.0.1:8160"))
+            privileges.check("participants", tokens.local_scopes("127.0.0.1:8160"))
 
 
 class TestEnvTokenRedaction:

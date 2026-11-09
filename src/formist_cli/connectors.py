@@ -34,6 +34,7 @@ import sys
 import time
 
 from formist_cli import api, context
+from formist_cli.cli_support import add_admin_flag
 from formist_cli.cli_support import as_dict as _shared_as_dict
 from formist_cli.cli_support import build_standalone_parser as _build_standalone_parser
 from formist_cli.cli_support import render_grant_rows
@@ -176,9 +177,16 @@ DEFAULT_POLL_INTERVAL = 5
 DEFAULT_POLL_TIMEOUT = 900
 
 
-def _connector_subject_error(subject: object) -> ConnectorsError:
+def connector_subject_error(subject: object) -> ConnectorsError:
+    """Shared by `run_connector` (reauth/sync only, this module's own original
+    scope) and `cli.cmd_connector` (the full list/grants/reauth/sync
+    vocabulary `fm connector` answers to since `fm connectors` folded in).
+    """
     return ConnectorsError(
-        f"unknown subcommand {subject!r}. Valid: {', '.join(CONNECTOR_SUBJECTS)}.\n"
+        f"unknown subcommand {subject!r}. Valid: list, grants, "
+        f"{', '.join(CONNECTOR_SUBJECTS)}.\n"
+        "  list           the space's connectors (id, kind, status), the default\n"
+        "  grants         identity, scopes, auth status, expiry (always needs --admin)\n"
         "  reauth <cid>   re-authorize an existing OUTLOOK connection (device-code, WRITE)\n"
         "  sync   <cid>   trigger a real sync for one connector NOW (WRITE)"
     )
@@ -217,8 +225,16 @@ def _add_connector_arguments(parser: argparse.ArgumentParser) -> None:
 
     _add_env(parser, for_write=True)
     _add_space(parser)
-    parser.add_argument("subject", help=f"one of: {', '.join(CONNECTOR_SUBJECTS)}")
-    parser.add_argument("arg", nargs="?", default=None, help="the connection/connector id (UUID)")
+    parser.add_argument(
+        "subject",
+        help=f"one of: list, grants, {', '.join(CONNECTOR_SUBJECTS)} "
+        "(list/grants are reads; `fm connectors` is their deprecated alias)",
+    )
+    parser.add_argument(
+        "arg", nargs="?", default=None,
+        help="reauth/sync: the connection/connector id (UUID). list/grants: an "
+        "alternative to --space",
+    )
     parser.add_argument(
         "--provider", default="outlook",
         help="reauth: informational only, today only OUTLOOK supports device-code reauth",
@@ -237,6 +253,7 @@ def _add_connector_arguments(parser: argparse.ArgumentParser) -> None:
         help="reauth: give up after this many seconds",
     )
     parser.add_argument("--json", action="store_true", help="raw JSON instead of a report")
+    add_admin_flag(parser)
 
 
 def build_connector_standalone_parser() -> argparse.ArgumentParser:
@@ -351,7 +368,7 @@ def _run_sync(ctx, args) -> int:
 def run_connector(args) -> int:
     subject = (getattr(args, "subject", None) or "").strip().lower()
     if subject not in CONNECTOR_SUBJECTS:
-        raise _connector_subject_error(getattr(args, "subject", None))
+        raise connector_subject_error(getattr(args, "subject", None))
     ctx = context.resolve(args, for_write=True, need_space=True, need_token=True)
     if subject == "reauth":
         return _run_reauth(ctx, args)

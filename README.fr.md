@@ -36,9 +36,9 @@ données montre toujours d'abord ce qu'elle ferait ; valider est une étape à p
   a résolus, et d'où ils viennent : une option, une valeur par défaut mémorisée, ou rien du
   tout. Une mauvaise cible se repère en lisant l'écran, pas par ses conséquences.
 - **Simulation par défaut.** Une commande qui modifie des données affiche d'abord ce qu'elle
-  ferait et attend `--apply`. `fm update`, qui applique un lot de changements en une fois,
-  revérifie que le plan correspond toujours avant de valider, pour qu'une lecture périmée ne
-  devienne jamais une écriture erronée.
+  ferait et attend `--apply`. `fm participants dedupe`, qui fusionne un groupe de lignes en
+  double, revérifie que le plan correspond toujours avant de valider, pour qu'une lecture
+  périmée ne devienne jamais une écriture erronée.
 - **Un identifiant par déploiement.** `fm login` enregistre un identifiant OAuth avec les
   droits `0600`, un fichier par déploiement, de sorte que se connecter à un environnement de
   test ne touche jamais la production. `FORMIST_TOKEN` en fournit un pour la CI : utilisé tel
@@ -109,8 +109,8 @@ valeur par défaut (`formist`) est utilisée.
 ### Écritures
 
 La plupart des commandes qui modifient des données s'exécutent d'abord en simulation et
-affichent ce qu'elles feraient ; ajoutez `--apply` pour valider. `fm update`, qui applique un
-lot de changements de façon transactionnelle, fonctionne un peu différemment : la simulation
+affichent ce qu'elles feraient ; ajoutez `--apply` pour valider. `fm participants dedupe`, qui
+fusionne un groupe de lignes en double, fonctionne un peu différemment : la simulation
 affiche un jeton de plan, et `--apply <jeton>` relance la simulation pour confirmer que le plan
 correspond toujours avant de valider. Quelques actions irréversibles, comme
 `fm spaces --admin delete`, n'ont aucune simulation et le précisent dans leur propre `--help`.

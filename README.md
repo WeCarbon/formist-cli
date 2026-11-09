@@ -32,8 +32,8 @@ changes data always shows what it would do first; committing is a separate, expl
   and where each came from, a flag, a remembered default, or nothing, so a wrong target is caught
   by reading the screen, not by its effect.
 - **Dry run by default.** A command that changes data prints what it would do and waits for
-  `--apply`. `fm update`, which applies a batch of changes at once, re-checks the plan still
-  matches before committing, so a stale read can't turn into a wrong write.
+  `--apply`. `fm participants dedupe`, which merges a group of duplicate rows, re-checks the plan
+  still matches before committing, so a stale read can't turn into a wrong write.
 - **A credential per deployment.** `fm login` stores an OAuth credential at `0600`, one file per
   host, so signing in to a staging deployment never touches production. `FORMIST_TOKEN` supplies
   one for CI: used as-is, never written to disk, never refreshed.
@@ -99,7 +99,7 @@ remembered host: name it with `--host`, or the default (`formist`) is used.
 ### Writes
 
 Most commands that change data run as a dry run first and print what they would do; add
-`--apply` to commit. `fm update`, which applies a batch of changes transactionally, is slightly
+`--apply` to commit. `fm participants dedupe`, which merges a group of duplicate rows, is slightly
 different: the dry run prints a plan token, and `--apply <token>` re-runs the dry run to confirm
 the plan still matches before committing. A handful of actions with no undo, such as `fm spaces
 --admin delete`, have no dry run at all and say so in their own `--help`.
