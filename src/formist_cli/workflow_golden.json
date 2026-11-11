@@ -17,7 +17,7 @@
       "original": "Book catering",
       "expanded": "Compare three caterers and record price, capacity and dietary coverage.",
       "states": ["not_started", "in_progress", "in_progress", "needs_decision"],
-      "monitor": "DECS-BRIEF {{ref}} 负责人新派了：Book catering —— {{cli}} claim {{ref}} 接走，展开、拆分后用 {{cli}} ask 请负责人确认"
+      "monitor": "DECS-BRIEF {{ref}} 负责人新派了：Book catering —— {{cli}} claim {{ref}} 接走，展开、拆分，把计划写到节点上就开工"
     },
     {
       "id": "reminder_due",

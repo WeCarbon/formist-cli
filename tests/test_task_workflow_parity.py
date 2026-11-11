@@ -171,7 +171,16 @@ def test_installed_nod_public_output_matches_the_shared_monitor_goldens(tmp_path
         brief = _case(corpus, "brief_claim_expand_ask")
         nod("add", brief["title"], "--brief", "--author", "owner")
         reminder = _case(corpus, "reminder_due")
-        nod("add", reminder["title"], "--remind", "2026-01-01T00:00:00+08:00", "--author", corpus["agent"])
+        reminder_due_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        nod(
+            "add",
+            reminder["title"],
+            "--remind",
+            reminder_due_at,
+            "--force",
+            "--author",
+            corpus["agent"],
+        )
 
         found: list[str] = []
         deadline = time.monotonic() + 10

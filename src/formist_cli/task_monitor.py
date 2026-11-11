@@ -192,13 +192,13 @@ def collect_node_events(
                 if lang == "zh-Hans":
                     out.append((at_t, ref, (
                         f"DECS-BRIEF {ref} 负责人新派了：{n.title}{extra} —— "
-                        f"fm task claim {ref} 接走，展开、拆分后用 fm task ask 请负责人确认  "
+                        f"fm task claim {ref} 接走，展开、拆分，把计划写到节点上就开工  "
                         f"since={n.created}"
                     )))
                 else:
                     out.append((at_t, ref, (
                         f"DECS-BRIEF {ref} the owner filed a brief: {n.title}{extra} — "
-                        f"fm task claim {ref}, expand and split it, then fm task ask to have the owner confirm  "
+                        f"fm task claim {ref}, expand and split it, write the plan on it, and start  "
                         f"since={n.created}"
                     )))
         for note in n.notes:

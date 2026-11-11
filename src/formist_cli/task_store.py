@@ -934,7 +934,9 @@ class LocalStore:
                 fresh.state = "in_progress"
             heading = task_serialize.note_heading(NOTE_KIND["claimed"], "agent", by, now_stamp(ms=True))
             fresh.body = task_serialize.append_section(
-                fresh.body, heading, "接了。展开、拆成子节点后请负责人确认，确认前不开工。",
+                fresh.body, heading,
+                "接了。展开、拆成子节点，把计划写到节点上就开工——只有真正要负责人才能定的选择、"
+                "花钱、或不可逆/对外的事才 nod ask。",
             )
             return fresh, None
 

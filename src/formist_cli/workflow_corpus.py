@@ -7,7 +7,7 @@ from hashlib import sha256
 from importlib.resources import files
 from typing import Any
 
-CORPUS_SHA256 = "4c44181cd69b92788ee2f876510fde464712c35adfd207ee8aaec9b5e5278cfe"
+CORPUS_SHA256 = "45e412a9d39c90ff6608994b992fdc43a358682fdec7546b1c78a865afe61923"
 
 
 def load() -> dict[str, Any]:
