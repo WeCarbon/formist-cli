@@ -72,6 +72,25 @@ def _attachment(path: str, node_dir: Path, root: Path) -> dict[str, Any]:
     return {"source": str(resolved.relative_to(root)), "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
+def _collect_attachments(
+    atts: list[dict[str, Any]], node_dir: Path, root: Path, attachments: dict[str, dict[str, Any]]
+) -> None:
+    """Resolves every local (non-URL) ``target`` in ``atts`` and REWRITES it
+    in place to the canonical ``decisions/attachments/...`` path the server
+    expects (``services.local_import._normalize_attachment_path`` on the
+    receiving end has no way to know this node's own file depth — it only
+    ever sees the payload this function is mutating, never the local
+    filesystem — so the client is the one place that can do this rewrite,
+    and it must do it before the target goes into the manifest, not after).
+    """
+    for att in atts:
+        target = att.get("target")
+        if isinstance(target, str) and not target.startswith(("http://", "https://")):
+            item = _attachment(target, node_dir, root)
+            attachments[item["sha256"]] = item
+            att["target"] = item["source"]
+
+
 def build_manifest(store: LocalStore, section: str) -> dict[str, Any]:
     """Create the exact stable payload sent to plan/apply, without a network call."""
     nodes = []
@@ -81,11 +100,11 @@ def build_manifest(store: LocalStore, section: str) -> dict[str, Any]:
         node_dir = Path(os.path.dirname(node.file)) if node.file else root
         payload = task_json.to_json(node)
         payload.pop("file", None)  # workstation path is not import data
-        for att in payload.get("attachments", []) + payload.get("body_attachments", []):
-            target = att.get("target")
-            if isinstance(target, str) and not target.startswith(("http://", "https://")):
-                item = _attachment(target, node_dir, root)
-                attachments[item["sha256"]] = item
+        _collect_attachments(payload.get("attachments") or [], node_dir, root, attachments)
+        _collect_attachments(payload.get("body_attachments") or [], node_dir, root, attachments)
+        for note in payload.get("notes") or []:
+            if isinstance(note, dict):
+                _collect_attachments(note.get("attachments") or [], node_dir, root, attachments)
         nodes.append({"source_node_id": node.id, "payload": payload, "sha256": digest(payload)})
     body = {"version": _VERSION, "section": section, "source_alias": f"local-{root.name}", "nodes": nodes, "attachments": sorted(attachments.values(), key=lambda a: a["sha256"])}
     body["manifest_hash"] = digest(body)

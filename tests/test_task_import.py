@@ -88,3 +88,15 @@ def test_build_manifest_collects_a_real_attachment_from_a_nested_node(tmp_path):
     assert len(manifest["attachments"]) == 1
     assert manifest["attachments"][0]["sha256"] == hashlib.sha256(b"attachment bytes").hexdigest()
     assert manifest["attachments"][0]["source"].startswith("decisions/attachments/")
+
+    # The second half of the same finding: the server validates each NODE's
+    # own `target` against `decisions/attachments/...` directly (it has no
+    # access to the local filesystem to re-derive the node's nesting depth),
+    # so the per-node payload sent in `manifest["nodes"]` must carry the
+    # REWRITTEN canonical path too, not the original node-file-relative href
+    # — otherwise the client resolves fine and the server still rejects it
+    # (observed live against a real server in the C1348 rehearsal).
+    [sent] = [n for n in manifest["nodes"] if n["source_node_id"] == child.id]
+    rewritten = sent["payload"]["body_attachments"][0]["target"]
+    assert rewritten == manifest["attachments"][0]["source"]
+    assert rewritten.startswith("decisions/attachments/")
