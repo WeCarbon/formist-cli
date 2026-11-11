@@ -43,8 +43,18 @@ def _write_queue(layout: Layout, ids: list[int]) -> None:
 
 
 def with_queue(layout: Layout, mutate) -> list[int]:
+    """The one place ``enqueue``/``dequeue`` funnel through — and so the
+    one place that must fail closed on an archived read-only project
+    (C1346): several ``LocalStore`` methods (``complete``/``close``/
+    ``dismiss``/``ask``/``deliver``) call ``dequeue`` BEFORE their own
+    ``mutate`` call, which would otherwise write ``decisions/queue.json``
+    even when the node edit itself is correctly refused — exactly the
+    kind of bypass C1330 warns a missed local write entry point leaves."""
     import time
 
+    from formist_cli import task_archive
+
+    task_archive.guard_write(layout)
     os.makedirs(layout.root, exist_ok=True)
     lock = _lock_path(layout)
     deadline = time.monotonic() + 5.0

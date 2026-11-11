@@ -38,7 +38,19 @@ def read_project_config(layout: Layout) -> dict:
     return out
 
 
-def write_project_config(layout: Layout, **patch) -> dict:
+def write_project_config(layout: Layout, *, _allow_when_archived: bool = False, **patch) -> dict:
+    """Writes ``decs.json``. A second, independent write path onto that
+    file besides ``LocalStore`` (``fm task config letter/name``) — fails
+    closed on an archived read-only project the same as every other
+    local write entry point (C1346), unless ``_allow_when_archived`` is
+    set. That escape hatch exists for exactly one caller:
+    ``task_archive.write_archive_marker``/``clear_archive_marker``, which
+    are themselves the authority that sets/clears the marker and would
+    otherwise be unable to ever call this function again once archived."""
+    if not _allow_when_archived:
+        from formist_cli import task_archive
+
+        task_archive.guard_write(layout)
     letter = patch.get("letter")
     if letter is not None and not _LETTER_RE.match(letter):
         raise ValueError(f"decs.json letter must be one A-Z letter, got {letter!r}")

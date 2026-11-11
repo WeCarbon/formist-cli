@@ -217,6 +217,9 @@ class LocalStore:
         matching every ``Store`` method that early-returns the unchanged
         node rather than re-stamping ``updated_at`` for nothing.
         """
+        from formist_cli import task_archive
+
+        task_archive.guard_write(self.layout)
         lock = self._lock_path(id_)
 
         def run():
@@ -298,6 +301,9 @@ class LocalStore:
         implemented (gap, tracked under C1052); explicit ``-o``/``--task``/
         ``--fyi`` flags are the supported path, which covers the
         overwhelming majority of real usage."""
+        from formist_cli import task_archive
+
+        task_archive.guard_write(self.layout)
         author = author.strip()
         if not author:
             raise StoreError("who is writing this? pass an author.")

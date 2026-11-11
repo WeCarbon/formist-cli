@@ -513,9 +513,24 @@ def add_parser(subparsers) -> argparse.ArgumentParser:
     p.add_argument("--full", action="store_true", help="re-send every live local node")
     _add_common(p)
 
-    p = verbs.add_parser("import", help="plan or apply a restartable local-project import")
-    p.add_argument("--section", required=True, help="destination Section id or letter")
+    p = verbs.add_parser(
+        "import", help="plan/apply a restartable local-project import, or archive/roll it back after one",
+    )
+    p.add_argument("--section", help="destination Section id or letter (plan/apply only, required then)")
     p.add_argument("--apply", metavar="PLAN_TOKEN", help="apply only this freshly returned plan token")
+    p.add_argument(
+        "--archive-local", metavar="RECEIPT_PATH",
+        help="mark this local source read-only, after this receipt's readback passed and a fresh backup verifies",
+    )
+    p.add_argument(
+        "--rollback", metavar="RECEIPT_PATH",
+        help="undo this receipt's cloud import via the server, and clear the local archive marker if it succeeds",
+    )
+    p.add_argument(
+        "--confirm",
+        help="--archive-local: this project's own display name; --rollback: the receipt's import_id "
+             "— a safety check against acting on the wrong receipt/project",
+    )
     _add_common(p, write=True)
 
     p = verbs.add_parser(
@@ -605,6 +620,7 @@ def _task_user_errors() -> tuple[type[BaseException], ...]:
     from formist_cli.api import ApiError
     from formist_cli.prefs import PrefsError
     from formist_cli.targets import TargetError
+    from formist_cli.task_archive import ArchiveError
     from formist_cli.task_attach import AttachError
     from formist_cli.task_cloud import CloudError
     from formist_cli.task_mirror import MirrorError
@@ -615,7 +631,7 @@ def _task_user_errors() -> tuple[type[BaseException], ...]:
     from formist_cli.tokens import TokenError
 
     return (
-        TasksError, StoreError, QuestionsError, AttachError, MirrorError, ImportError, TitleTooLong,
+        TasksError, StoreError, QuestionsError, AttachError, MirrorError, ImportError, ArchiveError, TitleTooLong,
         CloudError, ApiError, PrefsError, TargetError, TokenError,
     )
 

@@ -121,6 +121,28 @@ def _resume_attachment(ctx, source_root: str, item: dict[str, Any], state: dict[
 
 
 def run(args) -> int:
+    """Dispatches ``fm task import``'s three shapes: the default plan/
+    apply flow (below), and the two post-readback, archive-side verbs
+    this module shares with ``task_archive.py`` — ``--archive-local``
+    (mark the source read-only, only after a passed receipt and a
+    verified backup) and ``--rollback`` (undo the cloud import via the
+    server, and only then lift the marker). The three never mix: each
+    of ``--archive-local``/``--rollback`` takes a receipt PATH, not
+    ``--section``, and needs no fresh plan/apply of its own."""
+    archive_local = getattr(args, "archive_local", None)
+    rollback = getattr(args, "rollback", None)
+    if archive_local and rollback:
+        raise ImportError("--archive-local and --rollback don't mix: pick one.")
+    if archive_local:
+        return _run_archive_local(args)
+    if rollback:
+        return _run_rollback(args)
+    if not getattr(args, "section", None):
+        raise ImportError("--section is required for a plan/apply import (not --archive-local/--rollback)")
+    return _run_plan_apply(args)
+
+
+def _run_plan_apply(args) -> int:
     layout = task_paths.find_layout(getattr(args, "dir", None))
     if not layout: raise ImportError("no decisions/ directory found")
     store = LocalStore(layout); ctx0 = context.resolve(args, for_write=bool(args.apply), need_space=True, need_token=True)
@@ -128,6 +150,7 @@ def run(args) -> int:
     path = receipt_path(layout, target_key, manifest["manifest_hash"])
     def locked():
         receipt = read_receipt(path) or {"version": _VERSION, "import_id": import_id(layout.project_root, target_key, manifest["manifest_hash"]), "manifest_hash": manifest["manifest_hash"], "uploads": {}}
+        receipt["target_key"] = target_key  # so --archive-local/--rollback have a target without re-deriving ctx
         def save(): write_receipt(path, receipt)
         save()  # identity is durable before any network call
         request = {"import_id": receipt["import_id"], "manifest": manifest}
@@ -146,3 +169,96 @@ def run(args) -> int:
         receipt["readback"] = verified; receipt["verification"] = "passed"; save()
         print(json.dumps({"dry_run": False, "import_id": receipt["import_id"], "receipt": str(path), "readback": verified}, indent=2)); return 0
     return with_file_lock(str(path) + ".lock", locked, stale_seconds=300, wait_seconds=30)
+
+
+def _read_receipt_or_raise(receipt_path_arg: str) -> dict[str, Any]:
+    receipt = read_receipt(Path(receipt_path_arg))
+    if receipt is None:
+        raise ImportError(f"no receipt at {receipt_path_arg}")
+    return receipt
+
+
+def _run_archive_local(args) -> int:
+    """``fm task import --archive-local <receipt> --confirm <name>``: the
+    one path that may write the archive marker (task_archive.py's own
+    "the authority lives in the caller" note). Runs only after: the
+    receipt at this path has a passed readback, ``--confirm`` matches
+    this project's own display name (a safety check against archiving
+    the wrong folder), and a fresh backup has been made AND verified."""
+    from formist_cli import task_archive, task_project
+
+    confirm = getattr(args, "confirm", None)
+    if not confirm:
+        raise ImportError("--archive-local needs --confirm <this project's display name>")
+    layout = task_paths.find_layout(getattr(args, "dir", None))
+    if not layout:
+        raise ImportError("no decisions/ directory found")
+    receipt = _read_receipt_or_raise(args.archive_local)
+    if receipt.get("verification") != "passed":
+        raise ImportError(
+            "this receipt has not passed readback verification (see `fm task import --section ... --apply ...`); "
+            "refusing to archive"
+        )
+    display_name = task_project.project_display_name(layout)
+    if confirm != display_name:
+        raise ImportError(
+            f"--confirm {confirm!r} does not match this project's display name {display_name!r}; "
+            "refusing to archive the wrong folder"
+        )
+    if task_archive.is_archived_read_only(layout):
+        raise ImportError("this project is already archived read-only")
+    backup = task_archive.make_backup(layout)
+    task_archive.verify_backup(backup["backup_id"])  # belt-and-suspenders, right before writing the marker
+    target = receipt.get("target_key") or ""
+    marker = task_archive.write_archive_marker(
+        layout, import_id=receipt["import_id"], target=target, backup_id=backup["backup_id"],
+    )
+    print(json.dumps({
+        "archived": True, "import_id": receipt["import_id"], "backup_id": backup["backup_id"], "archive": marker,
+    }, indent=2))
+    return 0
+
+
+def _run_rollback(args) -> int:
+    """``fm task import --rollback <receipt> --confirm <import_id>``:
+    calls the server's rollback endpoint (fixed contract, agreed with
+    C1347's lane: ``POST /projects/{space}/local-imports/{import_id}/
+    rollback`` -> ``{rolled_back, reason, task_ids}``). Only on
+    ``rolled_back=true``, and only when this source is currently
+    archived under this same ``import_id``, does it clear the marker —
+    the response plus the matching local receipt is the proof
+    "unarchive needs a receipt" asks for, not the operator's say-so."""
+    from formist_cli import task_archive
+
+    confirm = getattr(args, "confirm", None)
+    if not confirm:
+        raise ImportError("--rollback needs --confirm <import_id>")
+    layout = task_paths.find_layout(getattr(args, "dir", None))
+    if not layout:
+        raise ImportError("no decisions/ directory found")
+    receipt = _read_receipt_or_raise(args.rollback)
+    import_id_ = receipt.get("import_id")
+    if confirm != import_id_:
+        raise ImportError(
+            f"--confirm {confirm!r} does not match this receipt's import_id {import_id_!r}; "
+            "refusing to roll back the wrong import"
+        )
+    ctx0 = context.resolve(args, for_write=True, need_space=True, need_token=True)
+    response = api.post(ctx0.target, f"/projects/{ctx0.space}/local-imports/{import_id_}/rollback", {}, token=ctx0.token)
+    if not isinstance(response, dict):
+        raise ImportError("rollback endpoint returned an invalid response")
+    rolled_back = bool(response.get("rolled_back"))
+    reason = response.get("reason")
+    task_ids = response.get("task_ids") or []
+    receipt["rollback"] = response
+    write_receipt(Path(args.rollback), receipt)
+    cleared = False
+    if rolled_back:
+        archive = task_archive.read_archive(layout)
+        if archive and archive.get("import_id") == import_id_ and archive.get("read_only"):
+            task_archive.clear_archive_marker(layout, verified=True)
+            cleared = True
+    print(json.dumps({
+        "rolled_back": rolled_back, "reason": reason, "task_ids": task_ids, "marker_cleared": cleared,
+    }, indent=2))
+    return 0

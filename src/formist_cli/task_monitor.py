@@ -284,6 +284,16 @@ def load_cursor(layout, author: str | None) -> str | None:
 
 
 def save_cursor(layout, author: str | None, cursor: str) -> None:
+    """``decisions/.monitor/<author>.json`` — a bookkeeping write UNDER
+    ``decisions/`` itself (not ``$NODDIT_HOME``, unlike ``task_sessions``'
+    own cursor-ish state), so it fails closed the same as every other
+    local write entry point once this project is archived read-only
+    (C1346). ``run_pass``'s own clock sweeps (below) already fail closed
+    through ``LocalStore.mutate``; this is the other write ``fm task
+    monitor`` makes on its own, outside any sweep."""
+    from formist_cli import task_archive
+
+    task_archive.guard_write(layout)
     path = _cursor_path(layout, author)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
