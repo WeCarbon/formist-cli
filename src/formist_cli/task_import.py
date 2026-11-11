@@ -40,10 +40,26 @@ def import_id(source_root: str, target: str, manifest_hash: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{os.path.realpath(source_root)}\0{target}\0{manifest_hash}"))
 
 
-def _attachment(path: str, root: Path) -> dict[str, Any]:
+def _attachment(path: str, node_dir: Path, root: Path) -> dict[str, Any]:
+    """Resolve one attachment ``target`` string to the file it names.
+
+    ``target`` is whatever ``attach_sources`` (``task_attach.py``) wrote onto
+    the node — ``os.path.relpath(dest_path, os.path.dirname(node.file))`` —
+    i.e. relative to THAT NODE'S OWN FILE, not the project root: a top-level
+    node's file lives in ``decisions/active/``, a child's in
+    ``decisions/active/<parent>/``, so the same ``decisions/attachments/N/x``
+    target is spelled ``../attachments/N/x`` one level down but
+    ``../../attachments/N/x`` two levels down. Resolving against a single
+    shared root (as this used to) finds nothing for most real attachments —
+    only an absolute (``--link``) target or a URL happens to need no base at
+    all, and both already skip this branch (see ``is_absolute()`` and
+    ``build_manifest``'s own ``http(s)://`` filter). ``root`` still fixes the
+    containment boundary (``decisions/attachments/`` of THIS project, never
+    anywhere else), independent of where the href resolved from.
+    """
     candidate = Path(path)
     if not candidate.is_absolute():
-        candidate = root / candidate
+        candidate = node_dir / candidate
     try:
         resolved = candidate.resolve(strict=True)
         attachments = (root / "decisions" / "attachments").resolve(strict=True)
@@ -60,16 +76,18 @@ def build_manifest(store: LocalStore, section: str) -> dict[str, Any]:
     """Create the exact stable payload sent to plan/apply, without a network call."""
     nodes = []
     attachments: dict[str, dict[str, Any]] = {}
+    root = Path(store.layout.project_root)
     for node in store.all_nodes():
+        node_dir = Path(os.path.dirname(node.file)) if node.file else root
         payload = task_json.to_json(node)
         payload.pop("file", None)  # workstation path is not import data
         for att in payload.get("attachments", []) + payload.get("body_attachments", []):
             target = att.get("target")
             if isinstance(target, str) and not target.startswith(("http://", "https://")):
-                item = _attachment(target, Path(store.layout.project_root))
+                item = _attachment(target, node_dir, root)
                 attachments[item["sha256"]] = item
         nodes.append({"source_node_id": node.id, "payload": payload, "sha256": digest(payload)})
-    body = {"version": _VERSION, "section": section, "source_alias": f"local-{Path(store.layout.project_root).name}", "nodes": nodes, "attachments": sorted(attachments.values(), key=lambda a: a["sha256"])}
+    body = {"version": _VERSION, "section": section, "source_alias": f"local-{root.name}", "nodes": nodes, "attachments": sorted(attachments.values(), key=lambda a: a["sha256"])}
     body["manifest_hash"] = digest(body)
     return body
 
