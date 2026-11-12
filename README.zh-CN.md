@@ -113,6 +113,51 @@ fm kb search "venue contract" --space <space-id>
 `meeting`、`project`、`connector`、`skills-add`、`skills-update`、`proposals`、
 `audit-log`、`connectors`、`files`,也都是以同样的方式读写你自己的空间。
 
+### 任务(`fm task`)
+
+`fm task` 内置了 [`nod`](https://github.com/wecarbon/noddit) 那套任务与决策跟踪器:一个节点就是
+一件事,AI 能直接做的是任务,需要负责人先拍板的是决策。它有两种模式:
+
+- **未登录**,在任意项目里:`fm task init` 会建一个 `decisions/` 文件夹,下面每条命令都从当前
+  目录往上找它,和 `git` 找 `.git` 的方式一样。什么都不会发出去。
+- **已登录**,配合 `fm login`:`fm task --host <部署>`(或者 `fm use` 记住的、带凭证的 host)会
+  改成调用那个空间的节点接口,这样一个团队就能通过 Formist/Evane 共用一套跟踪器,而不是各自
+  一份本地文件夹。不是每个子命令在云端都已经接通,没接通的会直接说明,不会瞎猜。
+
+```sh
+fm task init                                  # creates decisions/ here
+fm task add "Write the onboarding doc" --task # a new node
+fm task start X1                              # to do -> in progress
+fm task note X1 "found last year's draft"     # progress, without closing it
+fm task show active                           # every open node (bare `show` lists only ones needing a decision)
+fm task done X1 --note "doc is up"            # -> done
+```
+
+决策用的是同一套命令,只是把 `--task` 换成几个选项:
+
+```sh
+fm task add "Which domain for staging" -o 1="api-staging.example.com" -o 2="staging-api.example.com"
+fm task push X2 1 --note "matches the cert"   # the owner's answer, recorded on the node
+```
+
+每次写操作都要有作者:传 `--author "<你> · 在做什么"`,或者整个会话提前导出一次
+`NODDIT_AUTHOR`。`fm task whoami` 会报出一次写操作会签成谁:云端模式下是登录账号和空间,
+本地模式下就是写进每条笔记里的那个身份。`fm task briefs` 列出负责人派过、但还没人接手的活;
+`fm task claim <节点>` 接下一个。完整子命令列表看 `fm task --help`,每个子命令的参数看
+`fm task <子命令> --help`。
+
+#### Claude Code 插件
+
+这个 git 仓库本身(不是 `pipx` 装的那个包)同时也是一个 Claude Code 插件:`hooks/hooks.json`
+会在每个会话开始时注入 `fm task` 的用法规则和项目里还没完成的节点,`monitors/monitors.json`
+会起 `fm task monitor --here`,让负责人的答复能传到 AI 那里,不用它自己去轮询。这个插件还没
+发布到插件市场,所以要从仓库的副本里加载,而不是已安装的包:
+
+```sh
+git clone https://github.com/WeCarbon/formist-cli
+claude --plugin-dir formist-cli
+```
+
 ## 常见问题
 
 **用这个工具需要平台管理员权限吗?**

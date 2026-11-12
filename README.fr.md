@@ -126,6 +126,59 @@ l'état de santé sur chaque déploiement, et le reste, `chats`, `chat`, `kb`, `
 `meeting`, `project`, `connector`, `skills-add`, `skills-update`, `proposals`, `audit-log`,
 `connectors`, `files`, lit ou écrit votre propre espace de la même façon.
 
+### Tâches (`fm task`)
+
+`fm task` est un portage intégré du suivi des tâches et décisions de
+[`nod`](https://github.com/wecarbon/noddit) : un nœud est une unité de travail, une tâche quand
+un agent peut simplement la faire, une décision quand le responsable doit d'abord trancher. Il
+fonctionne selon deux modes :
+
+- **Déconnecté**, dans n'importe quel projet : `fm task init` crée un dossier `decisions/`, et
+  chaque commande ci-dessous le retrouve en remontant depuis le répertoire courant, comme `git`
+  retrouve `.git`. Rien ne quitte la machine.
+- **Connecté**, avec `fm login` : `fm task --host <déploiement>` (ou un déploiement mémorisé par
+  `fm use` avec un identifiant stocké) s'adresse à l'API de nœuds de cet espace à la place, pour
+  qu'une équipe partage un seul suivi via Formist/Evane plutôt qu'un dossier par clone. Toutes
+  les commandes n'ont pas encore de route côté serveur ; celles qui n'en ont pas le disent
+  plutôt que de deviner.
+
+```sh
+fm task init                                  # creates decisions/ here
+fm task add "Write the onboarding doc" --task # a new node
+fm task start X1                              # to do -> in progress
+fm task note X1 "found last year's draft"     # progress, without closing it
+fm task show active                           # every open node (bare `show` lists only ones needing a decision)
+fm task done X1 --note "doc is up"            # -> done
+```
+
+Une décision ressemble à la même chose, avec des options à la place de `--task` :
+
+```sh
+fm task add "Which domain for staging" -o 1="api-staging.example.com" -o 2="staging-api.example.com"
+fm task push X2 1 --note "matches the cert"   # the owner's answer, recorded on the node
+```
+
+Chaque écriture a besoin d'un auteur : passez `--author "<vous> · <ce que vous faites>"`, ou
+exportez `NODDIT_AUTHOR` une fois par session. `fm task whoami` indique sous quelle identité une
+écriture signerait : le compte et l'espace connectés une fois que `fm login`/`--host` résout le
+mode distant, sinon l'identité locale apposée sur chaque note. `fm task briefs` liste le travail
+déposé par le responsable que personne n'a encore pris ; `fm task claim <ref>` en prend un.
+Lancez `fm task --help` pour la liste complète des commandes et `fm task <commande> --help` pour
+ses options.
+
+#### Plugin Claude Code
+
+Le dépôt git, pas le paquet `pipx`, est aussi un plugin Claude Code : `hooks/hooks.json` injecte
+les règles d'usage de `fm task` et les nœuds encore ouverts du projet au début d'une session, et
+`monitors/monitors.json` démarre `fm task monitor --here` pour que les réponses du responsable
+atteignent l'agent sans qu'il ait à interroger en boucle. Il n'est pas publié sur un
+marketplace, donc chargez-le depuis un clone plutôt que depuis le paquet installé :
+
+```sh
+git clone https://github.com/WeCarbon/formist-cli
+claude --plugin-dir formist-cli
+```
+
 ## FAQ
 
 **Ai-je besoin des droits d'administration de la plateforme pour utiliser cet outil ?**

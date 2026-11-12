@@ -121,6 +121,55 @@ fm kb search "venue contract" --space <space-id>
 ‎`project`‏، ‎`connector`‏، ‎`skills-add`‏، ‎`skills-update`‏، ‎`proposals`‏،
 ‎`audit-log`‏، ‎`connectors`‏، ‎`files`‏، تقرأ أو تكتب مساحتك بنفس الطريقة.
 
+### المهام (`fm task`)
+
+يضمّ `fm task` نسخة مدمجة من أداة تتبع المهام والقرارات في
+[`nod`](https://github.com/wecarbon/noddit): العقدة هي وحدة عمل واحدة، مهمة إذا كان الوكيل
+يستطيع تنفيذها مباشرة، وقرار إذا احتاجت رأي المسؤول أولًا. تعمل بإحدى طريقتين:
+
+- **بلا تسجيل دخول**، في أي مشروع: يُنشئ `fm task init` مجلد `decisions/`، وكل أمر أدناه يجده
+  بالصعود من المجلد الحالي، بالطريقة نفسها التي يجد بها `git` مجلد `.git`. لا يُرسَل شيء إلى أي
+  مكان.
+- **مع تسجيل الدخول**، عبر `fm login`: يتوجّه `fm task --host <النشرة>` (أو نشرة حفظها
+  `fm use` مع بيانات اعتماد مخزّنة) إلى واجهة عُقد تلك المساحة بدلًا من ذلك، فيشترك فريق في
+  أداة تتبع واحدة عبر Formist/Evane بدل مجلد لكل نسخة محلية. ليس لكل أمر فرعي مسار على الخادم
+  بعد؛ ما لا يملك مسارًا يقول ذلك مباشرة بدل التخمين.
+
+```sh
+fm task init                                  # creates decisions/ here
+fm task add "Write the onboarding doc" --task # a new node
+fm task start X1                              # to do -> in progress
+fm task note X1 "found last year's draft"     # progress, without closing it
+fm task show active                           # every open node (bare `show` lists only ones needing a decision)
+fm task done X1 --note "doc is up"            # -> done
+```
+
+يبدو القرار بالشكل نفسه، باستبدال `--task` بخيارات:
+
+```sh
+fm task add "Which domain for staging" -o 1="api-staging.example.com" -o 2="staging-api.example.com"
+fm task push X2 1 --note "matches the cert"   # the owner's answer, recorded on the node
+```
+
+تحتاج كل عملية كتابة مؤلّفًا: مرّر `--author "<اسمك> · ما تفعله"`، أو صدّر `NODDIT_AUTHOR` مرة
+واحدة لكل جلسة. يوضّح `fm task whoami` باسم من تُسجَّل الكتابة: الحساب والمساحة المتصلة متى
+حلّ `fm login`/`--host` الوضع السحابي، وإلا فالهوية المحلية المطبوعة على كل ملاحظة. يسرد
+`fm task briefs` الأعمال التي ملفها المسؤول ولم يأخذها أحد بعد؛ ويأخذ `fm task claim <ref>`
+واحدة منها. شغّل `fm task --help` لقائمة الأوامر كاملة، و`fm task <command> --help` لخيارات
+كل أمر.
+
+#### إضافة Claude Code
+
+مستودع git نفسه، لا حزمة `pipx`، هو أيضًا إضافة لـ Claude Code: يحقن `hooks/hooks.json` قواعد
+استخدام `fm task` وعُقد المشروع غير المكتملة في بداية كل جلسة، ويشغّل `monitors/monitors.json`
+أمر `fm task monitor --here` حتى تصل ردود المسؤول إلى الوكيل دون أن يستطلعها بنفسه. لم تُنشر
+هذه الإضافة في أي سوق إضافات، فحمّلها من نسخة مستودع بدلًا من الحزمة المثبَّتة:
+
+```sh
+git clone https://github.com/WeCarbon/formist-cli
+claude --plugin-dir formist-cli
+```
+
 ## الأسئلة الشائعة
 
 **هل أحتاج صلاحية إدارة المنصة لاستخدام هذه الأداة؟**
