@@ -114,6 +114,56 @@ needs no login, `fm doctor` rolls health up across every deployment, and the res
 `skill-library-install`, `meeting`, `project`, `connector`, `skills-add`, `skills-update`,
 `proposals`, `audit-log`, `connectors`, `files`, read or write your own space the same way.
 
+### Tasks (`fm task`)
+
+`fm task` is a built-in port of [`nod`](https://github.com/wecarbon/noddit)'s task-and-decision
+tracker: a node is one piece of work, a task when an AI can just do it, a decision when the
+owner has to rule on it. It runs in one of two modes:
+
+- **Logged out**, in any project: `fm task init` creates a `decisions/` folder, and every
+  command below finds it by walking up from the current directory, the same way `git` finds
+  `.git`. Nothing leaves the machine.
+- **Logged in**, with `fm login`: `fm task --host <deployment>` (or a remembered `fm use` host
+  with a stored credential) talks to that space's node API instead, so a team shares one
+  tracker through Formist/Evane rather than a per-clone folder. Not every verb has a server
+  route yet; one that doesn't says so rather than guessing.
+
+```sh
+fm task init                                  # creates decisions/ here
+fm task add "Write the onboarding doc" --task # a new node
+fm task start X1                              # to do -> in progress
+fm task note X1 "found last year's draft"     # progress, without closing it
+fm task show active                           # every open node (bare `show` lists only ones needing a decision)
+fm task done X1 --note "doc is up"            # -> done
+```
+
+A decision looks the same, just with options instead of `--task`:
+
+```sh
+fm task add "Which domain for staging" -o 1="api-staging.example.com" -o 2="staging-api.example.com"
+fm task push X2 1 --note "matches the cert"   # the owner's answer, recorded on the node
+```
+
+Every write needs an author: pass `--author "<you> · <doing what>"` or export `NODDIT_AUTHOR`
+once per session. `fm task whoami` reports who a write would sign as: the signed-in account and
+space once `fm login`/`--host` resolves to cloud mode, otherwise the local identity stamped on
+each note. `fm task briefs` lists work the owner filed that nobody has picked up yet;
+`fm task claim <ref>` takes one. Run `fm task --help` for the full verb list and `fm task <verb>
+--help` for its flags.
+
+#### Claude Code plugin
+
+The git repo, not the `pipx` package, is also a Claude Code plugin: `hooks/hooks.json` injects
+the `fm task` usage rules and the project's open nodes at the start of a session, and
+`monitors/monitors.json` starts `fm task monitor --here` so the owner's replies reach the agent
+without it polling. It isn't published to a marketplace, so load it from a clone instead of the
+installed package:
+
+```sh
+git clone https://github.com/WeCarbon/formist-cli
+claude --plugin-dir formist-cli
+```
+
 ## FAQ
 
 **Do I need platform-admin access to use this?**
