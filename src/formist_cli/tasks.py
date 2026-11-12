@@ -680,10 +680,75 @@ def _cmd_config(args) -> int:
     return 0
 
 
+def _cloud_whoami(args) -> dict | None:
+    """The signed-in cloud identity for ``fm task whoami``'s ``--host``
+    (or ``fm use``'s remembered host, the same cloud-intent rule
+    :func:`resolve_mode` applies, via
+    :func:`_use_remembered_host_with_credential`) — or ``None`` when that
+    intent resolves to no stored credential, so the caller falls back to
+    the local, no-login identity (today's behaviour) instead of raising.
+
+    Unlike every other ``fm task`` verb, whoami must always answer
+    SOMETHING, logged in or not: before C1180 it printed the local
+    session uuid even after ``fm login``, which read as "not logged in"
+    when it was — the token was there, nothing here ever looked at it.
+    """
+    host = getattr(args, "host", None)
+    if not (host or _use_remembered_host_with_credential()):
+        return None
+
+    from formist_cli import context, prefs
+
+    try:
+        ctx = context.resolve(args, for_write=False, need_space=False, need_token=False)
+    except prefs.PrefsError:
+        return None
+    if not ctx.token:
+        return None
+
+    from formist_cli import api, login as login_mod
+    from formist_cli.api import ApiError
+    from formist_cli.targets import TargetError
+
+    email = None
+    user_id = None
+    try:
+        me = api.get(login_mod.auth_target(ctx.target), "/auth/me", token=ctx.token)
+    except (ApiError, TargetError, OSError):
+        me = None
+    if isinstance(me, dict):
+        email = me.get("email")
+        user_id = me.get("id")
+
+    return {
+        "host": ctx.target.name,
+        "email": email,
+        "user_id": user_id,
+        "space": ctx.space,
+        "space_source": ctx.space_source if ctx.space else None,
+    }
+
+
 def _cmd_whoami(args) -> int:
+    as_json = getattr(args, "json", False)
+    cloud = _cloud_whoami(args)
+    if cloud is not None:
+        session = task_identity.current_session()
+        if as_json:
+            print(json.dumps({"mode": "cloud", "session": session, **cloud}, indent=2))
+        else:
+            who = cloud["email"] or cloud["user_id"] or "(signed in, but the server did not say who)"
+            print(f"{who} ({cloud['host']})")
+            if cloud["space"]:
+                print(f"  space {cloud['space']}   [space: {cloud['space_source']}]")
+            if session:
+                print(f"  local session: {session}")
+        return 0
+
     identity = task_identity.current_identity()
-    if getattr(args, "json", False):
+    if as_json:
         print(json.dumps({
+            "mode": "local",
             "identity": identity, "author": task_identity.current_author(),
             "session": task_identity.current_session(),
         }, indent=2))

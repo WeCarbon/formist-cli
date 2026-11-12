@@ -722,3 +722,118 @@ def test_changes_through_cli_prefers_note_kind_for_a_note_row(cloud, capsys):
     assert code == 0
     assert "ask" in out
     assert calls[0][1].endswith("/nodes/changes")
+
+
+# ===========================================================================
+# whoami: cloud identity vs the local, no-login fallback (C1180)
+#
+# Before the fix, `_cmd_whoami` never looked at `--host`/the stored token at
+# all, so a logged-in operator still saw the bare local session uuid, which
+# read as "not logged in" when it wasn't. Each test below stores a REAL
+# token file (through `login.store_payload`, not a stubbed `context.resolve`
+# like the `cloud` fixture above) so the whole chain --host -> target ->
+# stored credential -> /auth/me is exercised, matching how the bug was
+# actually reproduced (`fm login --host <h>` then `fm task whoami --host
+# <h>`).
+# ===========================================================================
+def _store_token(monkeypatch, tmp_path, *, env="formist", email="user@example.com", user_id="u-1"):
+    from formist_cli import login, tokens
+
+    monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "fm-config"))
+    monkeypatch.delenv(tokens.ENV_TOKEN_VAR, raising=False)
+    login.store_payload(
+        env,
+        {"access_token": "crst_at_x", "refresh_token": "crst_rt_x", "scope": "", "expires_in": 3600},
+        client_id="cid-x",
+    )
+    return {"email": email, "id": user_id}
+
+
+def test_whoami_in_cloud_mode_shows_the_signed_in_email(tmp_path, monkeypatch, capsys):
+    from formist_cli import api
+
+    me = _store_token(monkeypatch, tmp_path)
+    monkeypatch.setattr(api, "get", lambda *a, **k: me)
+
+    code, out, _err = _run(capsys, "whoami", "--host", "formist")
+    assert code == 0
+    assert "user@example.com" in out
+    assert "formist" in out
+    # the old bug: the local session uuid used to be the ONLY thing printed
+    assert "no identity" not in out
+
+
+def test_whoami_in_cloud_mode_json_includes_email_and_space(tmp_path, monkeypatch, capsys):
+    from formist_cli import api
+
+    me = _store_token(monkeypatch, tmp_path)
+    monkeypatch.setattr(api, "get", lambda *a, **k: me)
+
+    code, out, _err = _run(capsys, "whoami", "--host", "formist", "--space", SPACE, "--json")
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["mode"] == "cloud"
+    assert payload["email"] == "user@example.com"
+    assert payload["space"] == SPACE
+
+
+def test_whoami_in_cloud_mode_without_a_bound_space_omits_the_space_line(tmp_path, monkeypatch, capsys):
+    from formist_cli import api
+
+    me = _store_token(monkeypatch, tmp_path)
+    monkeypatch.setattr(api, "get", lambda *a, **k: me)
+
+    code, out, _err = _run(capsys, "whoami", "--host", "formist")
+    assert code == 0
+    assert "space" not in out
+
+
+def test_whoami_in_cloud_mode_falls_back_to_the_host_when_auth_me_fails(tmp_path, monkeypatch, capsys):
+    """A stored-but-dead/expired token must not make whoami crash or lie —
+    it says it is signed in to the host and that the server would not say
+    who, instead of silently reverting to the local identity (which would
+    look like `fm login` never happened)."""
+    from formist_cli import api
+    from formist_cli.api import ApiError
+
+    _store_token(monkeypatch, tmp_path)
+
+    def _boom(*a, **k):
+        raise ApiError("401")
+
+    monkeypatch.setattr(api, "get", _boom)
+
+    code, out, _err = _run(capsys, "whoami", "--host", "formist")
+    assert code == 0
+    assert "formist" in out
+    assert "did not say who" in out
+
+
+def test_whoami_stays_in_local_mode_when_logged_out(tmp_path, monkeypatch, capsys):
+    """`--host` alone, with no stored credential for it, is "logged out":
+    whoami keeps today's behaviour (the local identity) rather than
+    refusing — unlike every other `fm task` cloud verb."""
+    monkeypatch.setenv("FORMIST_CONFIG_DIR", str(tmp_path / "fm-config"))
+    monkeypatch.setenv("NODDIT_IDENTITY", "agent#local-session-uuid")
+
+    code, out, _err = _run(capsys, "whoami", "--host", "formist")
+    assert code == 0
+    assert out.strip() == "agent#local-session-uuid"
+
+
+def test_whoami_cloud_mode_reached_through_a_remembered_host_without_host_flag(tmp_path, monkeypatch, capsys):
+    """The same cloud-intent rule `resolve_mode` uses (contract §6.3): an
+    `fm use` default with a stored credential is enough to reach cloud
+    mode even with no `--host` on the whoami call itself."""
+    from formist_cli import api, prefs
+
+    me = _store_token(monkeypatch, tmp_path, env="formist")
+    monkeypatch.setattr(api, "get", lambda *a, **k: me)
+    monkeypatch.setattr(
+        prefs, "load",
+        lambda: prefs.Prefs(space=SPACE, env="formist", space_region=None, set_at=None),
+    )
+
+    code, out, _err = _run(capsys, "whoami")
+    assert code == 0
+    assert "user@example.com" in out
