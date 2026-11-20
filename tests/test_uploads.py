@@ -236,21 +236,29 @@ class TestChunkedUploadSendsExactBytes:
         assert "audit_id" in completed
 
 
-class TestZeroByteUploadIsRefusedBeforeTheNetwork:
-    def test_an_empty_file_raises_and_makes_no_calls(self, tmp_path):
-        path = _write_file(tmp_path, "empty.pptx", b"")
+class TestZeroByteUploadIsSentAndTheServerDecides:
+    def test_an_empty_file_opens_a_session_with_no_chunks_and_completes(self, tmp_path):
+        path = _write_file(tmp_path, "empty.txt", b"")
         server = FakeServer()
-        with pytest.raises(UploadError, match="empty"):
-            upload_file(LOCAL, SPACE, path, token="t", post=server.post, put=server.put_bytes)
-        assert server.calls == [], "a refused upload must not touch the network at all"
+        completed = upload_file(LOCAL, SPACE, path, token="t", post=server.post, put=server.put_bytes)
+        assert completed["item"]["size"] == 0
+        methods = [m for m, _p in server.calls]
+        assert methods == ["POST", "POST"], server.calls  # open, complete; nothing to PUT
+        assert server.files[completed["item"]["id"]]["_bytes"] == b""
 
-    def test_the_control_a_nonempty_file_DOES_make_calls(self, tmp_path):
-        """Without this, an empty `server.calls == []` up above could just mean
-        the fake was never wired up correctly, not that the refusal fired."""
-        path = _write_file(tmp_path, "nonempty.pptx", b"x")
+    def test_a_server_refusal_of_an_empty_file_is_raised_not_hidden(self, tmp_path):
+        from formist_cli import api
+
+        path = _write_file(tmp_path, "empty.txt", b"")
         server = FakeServer()
-        upload_file(LOCAL, SPACE, path, token="t", post=server.post, put=server.put_bytes)
-        assert len(server.calls) > 0
+
+        def refusing_post(target, path_, body, **kw):
+            if path_.endswith("/sessions"):
+                raise api.ApiError("empty-upload", status=400)
+            return server.post(target, path_, body, **kw)
+
+        with pytest.raises(api.ApiError, match="empty-upload"):
+            upload_file(LOCAL, SPACE, path, token="t", post=refusing_post, put=server.put_bytes)
 
 
 class TestServerRecordedSizeIsVerifiedNotTrusted:

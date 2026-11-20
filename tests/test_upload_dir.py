@@ -52,8 +52,8 @@ class TestWalkUploadDir:
 
 # ===========================================================================
 # The fake transport: same shape as the plain-upload FakeServer, kept
-# minimal here: a directory upload's own logic (walking, per-file continue,
-# the empty-file label) is what these tests are for, not the chunk math
+# minimal here: a directory upload's own logic (walking, per-file continue)
+# is what these tests are for, not the chunk math
 # (already proven elsewhere).
 # ===========================================================================
 class FakeDirServer:
@@ -81,7 +81,7 @@ class FakeDirServer:
                 "upload_id": upload_id,
                 "chunk_size": max(total, 1),
                 "total_size": total,
-                "chunk_count": 1,
+                "chunk_count": 1 if total else 0,
                 "received_chunks": [],
                 "filename": body["filename"],
                 "content_type": body["content_type"],
@@ -91,7 +91,7 @@ class FakeDirServer:
         if "/complete" in path:
             upload_id = path.rsplit("/", 2)[1]
             session = self.sessions[upload_id]
-            data = self.chunks[upload_id][0]
+            data = self.chunks[upload_id].get(0, b"")
             file_id = str(uuid4())
             item = {"id": file_id, "name": session["filename"], "size": len(data)}
             return {"item": item, "audit_id": str(uuid4())}
@@ -198,23 +198,19 @@ class TestDirApply:
 # fm upload DIR --apply: failures are per-file, never abort the walk
 # ===========================================================================
 class TestDirApplyFailures:
-    def test_an_empty_file_is_labelled_and_failed_without_opening_a_session(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    def test_an_empty_file_is_uploaded_like_any_other(self, tmp_path, monkeypatch, capsys):
         (tmp_path / "good.txt").write_text("hello")
-        (tmp_path / "empty.txt").write_bytes(b"")
+        (tmp_path / "No rent paid yet.txt").write_bytes(b"")
         server = FakeDirServer()
         _patch_effective(monkeypatch, server)
 
         rc = uploads.cmd_upload(_dir_args(file=str(tmp_path), apply=True))
 
-        assert rc == 1
-        combined = "".join(capsys.readouterr())
-        assert "empty file (server refuses 0-byte uploads)" in combined
-        assert "empty.txt" in combined
-        # the client-side 0-byte refusal never opens a network connection for
-        # THAT file: good.txt's session is the only one opened.
-        assert {b["filename"] for b in server.open_bodies} == {"good.txt"}
+        assert rc == 0
+        out = capsys.readouterr()
+        assert "uploaded  No rent paid yet.txt" in out.out, out.out
+        assert "\n2 uploaded, 0 failed, 2 total" in out.out + out.err
+        assert {b["filename"] for b in server.open_bodies} == {"good.txt", "No rent paid yet.txt"}
 
     def test_a_server_refusal_on_one_file_does_not_stop_the_rest(self, tmp_path, monkeypatch, capsys):
         (tmp_path / "good.txt").write_text("hello")
@@ -234,8 +230,8 @@ class TestDirApplyFailures:
     def test_json_summary_lists_the_failure(self, tmp_path, monkeypatch, capsys):
         import json as json_mod
 
-        (tmp_path / "empty.txt").write_bytes(b"")
-        server = FakeDirServer()
+        (tmp_path / "bad.txt").write_text("will be refused")
+        server = FakeDirServer(fail_names=frozenset({"bad.txt"}))
         _patch_effective(monkeypatch, server)
 
         rc = uploads.cmd_upload(_dir_args(file=str(tmp_path), apply=True, json=True))
@@ -245,5 +241,5 @@ class TestDirApplyFailures:
         # success lines, which would otherwise precede it, never printed).
         payload = json_mod.loads(capsys.readouterr().out)
         assert payload["uploaded"] == 0
-        assert payload["failed"][0]["path"] == "empty.txt"
-        assert "empty file" in payload["failed"][0]["reason"]
+        assert payload["failed"][0]["path"] == "bad.txt"
+        assert "simulated refusal" in payload["failed"][0]["reason"]

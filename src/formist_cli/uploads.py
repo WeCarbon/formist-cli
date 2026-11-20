@@ -308,12 +308,12 @@ def upload_file(
     completion response (``{"item": <File dict>, "audit_id": ...}``,
     shape-identical to the one-shot route's).
 
-    Refuses a 0-byte source before opening a network connection: a
-    caller that uploads zero bytes and gets back a 200 is a real
-    failure mode, and the cheapest place to catch it is before any
-    bytes move. The size that actually landed is checked again
-    against the completion response at the end, for the same reason:
-    never trust what was sent, read back what arrived.
+    A 0-byte file is sent like any other (a session with no chunks, then
+    the completion): whether an empty file is acceptable is the server's
+    call, and an empty file whose name carries the information is a
+    legitimate upload. The size that actually landed is checked against
+    the completion response at the end: never trust what was sent, read
+    back what arrived.
 
     ``relative_path`` is this file's path inside a dropped directory
     (see :func:`open_session`). ``fm upload DIR`` is the caller that
@@ -323,8 +323,6 @@ def upload_file(
     if not file_path.is_file():
         raise UploadError(f"no such file: {file_path}")
     total_size = file_path.stat().st_size
-    if total_size <= 0:
-        raise UploadError(f"{file_path} is empty (0 bytes); refusing to upload it")
 
     filename = file_path.name
     opened = open_session(
@@ -587,14 +585,6 @@ _SKIPPED_UPLOAD_NAMES = frozenset({".DS_Store", "Thumbs.db", "__pycache__"})
 #: terminal.
 DIR_DRY_RUN_PREVIEW = 20
 
-#: The server refuses a 0-byte upload with 400 `empty-upload`, and
-#: `upload_file` already refuses one locally before opening a socket (see
-#: its docstring). A directory drop must not silently drop those rows from
-#: the count or invent placeholder content to get them past the refusal.
-#: This is just the label a directory upload's failure list uses so the
-#: reason is legible without chasing the exception text.
-EMPTY_FILE_REASON = "empty file (server refuses 0-byte uploads)"
-
 
 def walk_upload_dir(root: Path) -> list[Path]:
     """Every uploadable file under ``root``, recursively, in a stable
@@ -675,10 +665,6 @@ def cmd_upload_dir(args) -> int:
     failed: list[tuple[str, str]] = []
     for f in files:
         rel = relative_upload_path(root, f)
-        if f.stat().st_size == 0:
-            print(f"FAILED  {rel}  {EMPTY_FILE_REASON}", file=sys.stderr)
-            failed.append((rel, EMPTY_FILE_REASON))
-            continue
         try:
             completed = upload_file(
                 eff.target,
