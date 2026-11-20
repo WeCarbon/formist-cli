@@ -42,6 +42,13 @@ DEFAULT_TIMEOUT = 30
 #: failure.
 UPLOAD_TIMEOUT = 600
 
+#: Timeout for ONE resumable-upload chunk PUT (1 MiB by default). Not
+#: :data:`DEFAULT_TIMEOUT`: on 2026-11-20 (C1553/C1557) a busy server took
+#: longer than 30 s to answer chunks of 0.8-9.8 MB files, and every lane's
+#: whole batch died on the spot. Long enough to ride out a busy server, short
+#: enough that a dead connection is retried well inside the session's TTL.
+CHUNK_TIMEOUT = 120
+
 
 class ApiError(Exception):
     """An API call that failed, phrased for whoever has to fix it."""
@@ -702,6 +709,15 @@ def _send(
         raise _translate_body(exc, payload, target, path) from None
     except urllib.error.URLError as exc:
         raise ApiError(_unreachable(target, exc)) from None
+    except (TimeoutError, OSError) as exc:
+        # A read timeout AFTER the request was sent, or a connection reset
+        # mid-response, is a bare TimeoutError / OSError, never wrapped in
+        # URLError. Uncaught it bypassed every retry and per-file FAILED line
+        # and killed a whole `fm upload DIR` batch (C1553, 2026-11-20).
+        # status=None: a transport failure, which callers may retry.
+        raise ApiError(
+            f"no answer from {target.api_base}{path} ({type(exc).__name__}: {exc or 'timed out'})"
+        ) from None
 
     if not raw:
         return None
@@ -938,7 +954,7 @@ def put_bytes(
     *,
     token: str | None = None,
     content_type: str = "application/octet-stream",
-    timeout: int = DEFAULT_TIMEOUT,
+    timeout: int = CHUNK_TIMEOUT,
 ) -> object:
     """PUT raw bytes to ``path`` and return the decoded JSON body.
 

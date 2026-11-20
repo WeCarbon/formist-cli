@@ -226,15 +226,57 @@ def _put_chunk_with_retry(
     raise UploadError(f"chunk {index} failed after {retries} attempts: {last}") from last
 
 
+#: How many times a completion is re-asked on the SAME session.
+DEFAULT_COMPLETE_ATTEMPTS = 6
+_COMPLETE_BACKOFF_SECONDS = 5.0
+
+
 def complete_session(
-    target: Target, space: str, upload_id: str, *, token: str | None, post: Caller | None = None
+    target: Target,
+    space: str,
+    upload_id: str,
+    *,
+    token: str | None,
+    post: Caller | None = None,
+    attempts: int = DEFAULT_COMPLETE_ATTEMPTS,
 ) -> dict:
+    """Finish ``upload_id`` and return ``{"item": <File>, ...}``.
+
+    Completion is where the server assembles the file AND converts it to
+    markdown, so it can take minutes on a busy server; it gets the long
+    :data:`api.UPLOAD_TIMEOUT`, not the 30 s default (C1557, 2026-11-20).
+
+    It is retried ON THIS SESSION, never by starting a new upload: the server's
+    completion is idempotent (a session that already produced a File returns
+    that File) and answers 409 while a first attempt is still assembling. A
+    caller that instead re-sent the whole file opened a second session for the
+    same bytes, and the server converted and stored the file twice while still
+    finishing the first - the 2026-11-20 lanes' wrapper scripts did exactly
+    that. Retried: a transport failure (status None) and that 409. Anything
+    else is a verdict and raises at once.
+    """
+    # The real module for the constant and the exception type; `_api()` (which
+    # tests replace with a fake transport) only for the call itself.
+    from formist_cli import api
+
     post = post or _api().post
     path = f"{_upload_prefix(space)}/sessions/{upload_id}/complete"
-    result = post(target, path, {}, token=token)
-    if not isinstance(result, dict) or not isinstance(result.get("item"), dict):
-        raise UploadError(f"complete returned an unexpected shape: {result!r}")
-    return result
+    last: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            result = post(target, path, {}, token=token, timeout=api.UPLOAD_TIMEOUT)
+        except api.ApiError as exc:
+            status = getattr(exc, "status", None)
+            if status is not None and status != 409:
+                raise
+            last = exc
+            if attempt + 1 < attempts:
+                time.sleep(_COMPLETE_BACKOFF_SECONDS * (attempt + 1))
+            continue
+        if not isinstance(result, dict) or not isinstance(result.get("item"), dict):
+            raise UploadError(f"complete returned an unexpected shape: {result!r}")
+        return result
+    raise UploadError(f"complete did not finish after {attempts} attempts: {last}") from last
 
 
 def abort_session(
