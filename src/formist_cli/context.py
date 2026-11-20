@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from formist_cli import prefs, targets, tokens
+from formist_cli import api, prefs, targets, tokens
 from formist_cli.targets import Target
 
 
@@ -70,6 +70,7 @@ def resolve(
 
     token, origin = tokens.load_for(eff.target.name)
     if origin == tokens.ENV_TOKEN_ORIGIN:
+        api.set_reauthenticator(None)
         # Used exactly as supplied: no metadata file exists to read an
         # expiry from, and nothing here may write one, since refreshing
         # or storing an env-sourced credential would defeat the point
@@ -87,7 +88,9 @@ def resolve(
         # reads an empty `load_meta`, finds no `expires_at`, and silently
         # returns the stale token unchanged, which is exactly the bug a
         # borrowed, expired token used to hit (401, never refreshed).
-        token = _refresh_if_stale(origin or eff.target.name, token)
+        token_env = origin or eff.target.name
+        token = _refresh_if_stale(token_env, token)
+        api.set_reauthenticator(lambda _target, stale: reauthenticate(token_env, stale))
         if origin and origin != eff.target.name:
             # Borrowing a credential from another region's file is said
             # out loud rather than left as invisible state.
@@ -116,33 +119,61 @@ def resolve(
 _REFRESH_SKEW_SECONDS = 120
 
 
+def _is_stale(meta: dict) -> bool:
+    expires_at = meta.get("expires_at")
+    if not expires_at:
+        return False
+    try:
+        deadline = datetime.fromisoformat(str(expires_at))
+    except ValueError:
+        return False
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return deadline - timedelta(seconds=_REFRESH_SKEW_SECONDS) <= datetime.now(timezone.utc)
+
+
 def _refresh_if_stale(env: str, token: str | None) -> str | None:
     """Trade the refresh token for a fresh access token if the stored one is
     about to expire. Returns the token to use now.
 
-    Refreshing happens here, before any request is built, rather than
-    as a retry-on-401 in the API layer, so the credential is either
-    fresh or absent by the time a socket is opened.
+    Refreshing happens here, before any request is built, so the credential is
+    normally fresh by the time a socket is opened; a 401 mid-run is handled by
+    :func:`reauthenticate`.
+
+    Under :func:`tokens.refresh_lock`, and the file is read again inside it:
+    another process may have refreshed while this one waited, and trading the
+    same refresh token a second time would fail (the server rotates it).
 
     A failed refresh is not fatal: it leaves the old token in place
     and prints why, since raising here would break ``fm health``,
     which is public and must work when nothing else does.
     """
-    if not token:
+    if not token or not _is_stale(tokens.load_meta(env)):
         return token
-    meta = tokens.load_meta(env)
-    expires_at = meta.get("expires_at")
-    if not expires_at:
-        return token
-    try:
-        deadline = datetime.fromisoformat(str(expires_at))
-    except ValueError:
-        return token
-    if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=timezone.utc)
-    if deadline - timedelta(seconds=_REFRESH_SKEW_SECONDS) > datetime.now(timezone.utc):
-        return token
+    with tokens.refresh_lock(env):
+        if not _is_stale(tokens.load_meta(env)):
+            return tokens.load(env) or token
+        return _refresh_locked(env, token)
 
+
+def reauthenticate(env: str, stale: str) -> str | None:
+    """A token other than ``stale`` after the server refused it, or None.
+
+    First the file: another process that refreshed has already written the
+    replacement there. Otherwise one refresh. Called at most once per refused
+    request (``api._retry_once_on_401``).
+    """
+    with tokens.refresh_lock(env):
+        current = tokens.load(env)
+        if current and current != stale:
+            return current
+        fresh = _refresh_locked(env, stale)
+        return fresh if fresh and fresh != stale else None
+
+
+def _refresh_locked(env: str, token: str) -> str:
+    """The refresh exchange itself; the caller holds the lock."""
+    meta = tokens.load_meta(env)
     refresh_token = tokens.load_refresh(env)
     client_id = meta.get("client_id")
     if not refresh_token or not client_id:

@@ -28,10 +28,14 @@ file-based one needs a fresh ``fm login`` after 30 days.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import stat
+import tempfile
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -156,13 +160,67 @@ def store(env: str, token: str, meta: dict | None = None) -> Path:
     payload = json.dumps(
         {"env": env, "token": token, "stored_at": _now_iso(), **(meta or {})}, indent=2
     )
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    # Written beside the target and renamed over it: another `fm` reading the
+    # file at the same moment sees the old credential or the new one, never a
+    # truncated file. mkstemp creates it 0600.
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        os.write(fd, payload.encode())
+        try:
+            os.write(fd, payload.encode())
+        finally:
+            os.close(fd)
+        os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)  # 0600, belt and braces
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return path
+
+
+#: How long a refresh waits for another process's refresh to finish.
+REFRESH_LOCK_TIMEOUT_SECONDS = 60.0
+
+
+@contextlib.contextmanager
+def refresh_lock(env: str, *, timeout: float = REFRESH_LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
+    """Hold an exclusive lock on ``env``'s credential while refreshing it.
+
+    The server rotates on refresh: the old refresh token AND the old access token
+    stop working the moment one process trades them in. Two processes refreshing
+    the same file at once would each trade the same refresh token, and the loser
+    is left with nothing valid. Under this lock the second one re-reads the file
+    first and finds the first one's result. Advisory (``flock``); a platform
+    without it gets no lock, as before.
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - not POSIX
+        yield
+        return
+    directory = config_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = token_path(env).with_name(token_path(env).name + ".lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TokenError(
+                        f"another fm process has been refreshing the {env} credential "
+                        f"for over {timeout:.0f}s; try again"
+                    ) from None
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0600, belt and braces
-    return path
 
 
 def _refuse_loose_permissions(path: Path, env: str) -> None:

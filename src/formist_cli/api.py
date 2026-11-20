@@ -25,14 +25,18 @@ endpoint is protected in some new way.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import TypeVar
 
 from formist_cli.targets import Target, check_api_base, is_admin_env
+
+T = TypeVar("T")
 
 DEFAULT_TIMEOUT = 30
 
@@ -65,7 +69,10 @@ class ApiError(Exception):
 
 
 class NotAuthenticated(ApiError):
-    pass
+    # Always 401, including the local "no stored session" refusal: a caller that
+    # retries only transport failures (status None) must never retry this one.
+    def __init__(self, message: str, *, status: int | None = 401):
+        super().__init__(message, status=status)
 
 
 class StreamClosed(ApiError):
@@ -125,6 +132,61 @@ def _build_request(
     return request
 
 
+#: How this process gets a different, valid token after a 401: set by
+#: :func:`formist_cli.context.resolve` for a stored (refreshable) credential,
+#: left unset for an environment-supplied one. Called as ``(target, stale)``;
+#: returns the token to use instead, or None when there is none.
+_reauthenticate: Callable[[Target, str], str | None] | None = None
+
+#: Stale token -> the token that replaced it, so a caller still holding the old
+#: string (every call site passes ``token=`` explicitly) is not answered 401 once
+#: per request after the replacement exists.
+_replaced_tokens: dict[str, str] = {}
+
+
+def set_reauthenticator(fn: Callable[[Target, str], str | None] | None) -> None:
+    global _reauthenticate
+    _reauthenticate = fn
+    _replaced_tokens.clear()
+
+
+def _current_token(token: str | None) -> str | None:
+    seen: set[str] = set()
+    while token is not None and token in _replaced_tokens and token not in seen:
+        seen.add(token)
+        token = _replaced_tokens[token]
+    return token
+
+
+def _retry_once_on_401(fn: Callable[..., T]) -> Callable[..., T]:
+    """Retry a request ONCE with a different token after a 401.
+
+    A stored credential can be replaced under a running process: another `fm`
+    on the same machine refreshes it, and the server revokes the old access
+    token together with the old refresh token. The replacement is then in the
+    token file. Exactly one retry, and only with a token that differs from the
+    one just refused: a 401 that a new token does not fix is final, and
+    repeating it only adds authentication failures on the server.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(target: Target, *args, token: str | None = None, **kwargs) -> T:
+        token = _current_token(token)
+        try:
+            return fn(target, *args, token=token, **kwargs)
+        except NotAuthenticated:
+            if not token or _reauthenticate is None:
+                raise
+            fresh = _reauthenticate(target, token)
+            if not fresh or fresh == token:
+                raise
+            _replaced_tokens[token] = fresh
+            return fn(target, *args, token=fresh, **kwargs)
+
+    return wrapper
+
+
+@_retry_once_on_401
 def get(
     target: Target,
     path: str,
@@ -152,6 +214,7 @@ def get(
         return body
 
 
+@_retry_once_on_401
 def download(
     target: Target,
     path: str,
@@ -630,6 +693,7 @@ class Misdirected(ApiError):
         self.retry_at = retry_at
 
 
+@_retry_once_on_401
 def _send(
     target: Target,
     path: str,

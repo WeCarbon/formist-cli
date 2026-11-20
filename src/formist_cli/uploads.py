@@ -677,6 +677,20 @@ def cmd_upload_dir(args) -> int:
                 content_type=args.content_type,
                 relative_path=rel,
             )
+        except api_mod.NotAuthenticated as exc:
+            # Already retried once with a re-read or refreshed token
+            # (api._retry_once_on_401). Every remaining file would get the same
+            # 401, so stop here instead of sending them.
+            print(f"FAILED  {rel}  {exc}", file=sys.stderr)
+            failed.append((rel, str(exc)))
+            done = len(succeeded) + len(failed)
+            print(
+                f"stopping: the session was refused; {len(files) - done} file(s) not attempted",
+                file=sys.stderr,
+            )
+            for rest in files[done:]:
+                failed.append((relative_upload_path(root, rest), "not attempted: no valid session"))
+            break
         except (UploadError, api_mod.ApiError) as exc:
             print(f"FAILED  {rel}  {exc}", file=sys.stderr)
             failed.append((rel, str(exc)))
