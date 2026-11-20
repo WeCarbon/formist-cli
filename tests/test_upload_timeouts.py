@@ -1,10 +1,10 @@
-"""Upload transport failures (C1553 / C1557, Formist prod, 2026-11-20).
+"""Upload transport failures against a slow server.
 
-What happened: four lanes ran `fm upload DIR` into prod while the server was
+The failure: `fm upload DIR` ran while the server was
 stalled converting PDFs. A chunk PUT waited longer than its 30 s default
 timeout; urllib raised a bare `TimeoutError` (never wrapped in `URLError`),
 which `_send` did not catch, so it skipped the chunk retry AND the per-file
-FAILED line and killed each whole batch. The lanes' wrapper scripts then
+FAILED line and killed each whole batch. Wrapper scripts then
 re-ran the files from scratch: a NEW upload session per retry, while the
 server was still finishing the first one, so the same bytes were stored and
 converted again.

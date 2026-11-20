@@ -244,15 +244,14 @@ def complete_session(
 
     Completion is where the server assembles the file AND converts it to
     markdown, so it can take minutes on a busy server; it gets the long
-    :data:`api.UPLOAD_TIMEOUT`, not the 30 s default (C1557, 2026-11-20).
+    :data:`api.UPLOAD_TIMEOUT`, not the 30 s default.
 
     It is retried ON THIS SESSION, never by starting a new upload: the server's
     completion is idempotent (a session that already produced a File returns
     that File) and answers 409 while a first attempt is still assembling. A
     caller that instead re-sent the whole file opened a second session for the
     same bytes, and the server converted and stored the file twice while still
-    finishing the first - the 2026-11-20 lanes' wrapper scripts did exactly
-    that. Retried: a transport failure (status None) and that 409. Anything
+    finishing the first. Retried: a transport failure (status None) and that 409. Anything
     else is a verdict and raises at once.
     """
     # The real module for the constant and the exception type; `_api()` (which
